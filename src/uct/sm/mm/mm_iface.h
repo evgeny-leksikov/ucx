@@ -128,15 +128,15 @@ static UCS_F_ALWAYS_INLINE ucs_status_t
 uct_mm_iface_invoke_am(uct_mm_iface_t *iface, uint8_t am_id, void *data,
                        unsigned length, uct_mm_recv_desc_t *mm_desc)
 {
-    ucs_status_t status;
-    void *desc = mm_desc + 1;    /* point the desc to the user's headroom */
-
-    status = uct_iface_invoke_am(&iface->super, am_id, data, length, desc);
-    if (status != UCS_OK) {
+    if (iface->last_recv_desc == mm_desc) {
+        return uct_iface_invoke_am(&iface->super, am_id, data, length, 0);
+    } else {
+        void *desc = mm_desc + 1;
         /* save the iface of this desc for its later release */
         uct_recv_desc_iface(desc) = &iface->super.super;
+        return uct_iface_invoke_am(&iface->super, am_id, data, length,
+                                   UCT_AM_FLAG_DESC);
     }
-    return status;
 }
 
 

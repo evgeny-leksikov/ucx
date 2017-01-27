@@ -472,4 +472,3 @@ static UCS_CLASS_CLEANUP_FUNC(uct_rc_mlx5_ep_t)
 UCS_CLASS_DEFINE(uct_rc_mlx5_ep_t, uct_rc_ep_t);
 UCS_CLASS_DEFINE_NEW_FUNC(uct_rc_mlx5_ep_t, uct_ep_t, uct_iface_h);
 UCS_CLASS_DEFINE_DELETE_FUNC(uct_rc_mlx5_ep_t, uct_ep_t);
-

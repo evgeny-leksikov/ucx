@@ -212,6 +212,7 @@ static inline ucs_status_t uct_mm_iface_process_recv(uct_mm_iface_t *iface,
                            elem + 1, elem->length, "RX: AM_SHORT");
         status = uct_mm_iface_invoke_am(iface, elem->am_id, elem + 1, elem->length,
                                         iface->last_recv_desc);
+        ucs_assert(status != UCS_INPROGRESS);
     } else {
         /* read bcopy messages from the receive descriptors */
         VALGRIND_MAKE_MEM_DEFINED(elem->desc_chunk_base_addr + elem->desc_offset,

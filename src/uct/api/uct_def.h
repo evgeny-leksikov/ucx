@@ -52,6 +52,20 @@ enum uct_am_trace_type {
     UCT_AM_TRACE_TYPE_LAST
 };
 
+/**
+ * @ingroup UCT_AM
+ * @brief Flags for uct_am_callback.
+ */
+enum uct_am_cb_flags {
+
+    /**
+     * If this flag is enabled, then data is part of a descriptor which includes
+     * rx_headroom, and the callback may return UCS_INPROGRESS and hold on
+     * to that descriptor. Otherwise, the data can't be used outside the callback.
+     * If needed, the data must be copied-out.
+     */
+    UCT_AM_FLAG_DESC = UCS_BIT(0)
+};
 
 /**
  * @addtogroup UCT_RESOURCE
@@ -135,8 +149,7 @@ typedef struct uct_iov {
  * @param [in]  arg      User-defined argument.
  * @param [in]  data     Points to the received data.
  * @param [in]  length   Length of data.
- * @param [in]  desc     Points to the received descriptor, at the beginning of
- *                       the user-defined rx_headroom.
+ * @param [in]  flags    Mask with @ref uct_am_cb_flags
  *
  * @note This callback could be set and released
  *       by @ref uct_iface_set_am_handler function.
@@ -152,7 +165,7 @@ typedef struct uct_iov {
  *
  */
 typedef ucs_status_t (*uct_am_callback_t)(void *arg, void *data, size_t length,
-                                          void *desc);
+                                          unsigned flags);
 
 
 /**

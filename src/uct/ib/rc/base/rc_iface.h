@@ -140,7 +140,7 @@ typedef struct uct_rc_iface_ops {
     ucs_status_t         (*fc_handler)(uct_rc_iface_t *iface, unsigned qp_num,
                                        uct_rc_hdr_t *hdr, unsigned length,
                                        uint32_t imm_data, uint16_t lid,
-                                       void *desc);
+                                       unsigned flags);
 } uct_rc_iface_ops_t;
 
 
@@ -270,7 +270,7 @@ ucs_status_t uct_rc_iface_qp_connect(uct_rc_iface_t *iface, struct ibv_qp *qp,
 
 ucs_status_t uct_rc_iface_fc_handler(uct_rc_iface_t *iface, unsigned qp_num,
                                      uct_rc_hdr_t *hdr, unsigned length,
-                                     uint32_t imm_data, uint16_t lid, void *desc);
+                                     uint32_t imm_data, uint16_t lid, unsigned flags);
 
 ucs_status_t uct_rc_init_fc_thresh(uct_rc_fc_config_t *fc_cfg,
                                    uct_rc_iface_config_t *rc_cfg,

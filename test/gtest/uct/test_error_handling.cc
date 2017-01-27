@@ -35,7 +35,8 @@ public:
         connect();
     }
 
-    static ucs_status_t am_dummy_handler(void *arg, void *data, size_t length, void *desc) {
+    static ucs_status_t am_dummy_handler(void *arg, void *data, size_t length,
+                                         unsigned flags) {
         return UCS_OK;
     }
 
@@ -151,4 +152,3 @@ UCS_TEST_P(test_error_handling, purge_failed_ep)
 }
 
 UCT_INSTANTIATE_TEST_CASE(test_error_handling)
-
