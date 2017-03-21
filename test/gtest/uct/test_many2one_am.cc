@@ -31,7 +31,7 @@ public:
     }
 
     ucs_status_t am_handler(void *data, size_t length, unsigned flags) {
-        if (rand() % 4 == 0) {
+        if (ucs::rand() % 4 == 0) {
             receive_desc_t *my_desc;
             if (flags & UCT_AM_FLAG_DESC) {
                 my_desc = (receive_desc_t *)data - 1;
