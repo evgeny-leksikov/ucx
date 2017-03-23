@@ -84,12 +84,10 @@ public:
             } else {
                 my_desc = (receive_desc_t *)ucs_malloc(sizeof(*my_desc) + length,
                                                        "TODO: remove allocation");
+                memcpy(my_desc + 1, data, length);
                 my_desc->magic  = MAGIC_ALLOC;
             }
             my_desc->length = length;
-            if (my_desc->magic == MAGIC_ALLOC) {
-                memcpy(my_desc + 1, data, length);
-            }
             pthread_mutex_lock(&m_lock);
             m_backlog.push_back(my_desc);
             pthread_mutex_unlock(&m_lock);

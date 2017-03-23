@@ -60,9 +60,18 @@ enum uct_am_cb_flags {
 
     /**
      * If this flag is enabled, then data is part of a descriptor which includes
-     * rx_headroom, and the callback may return UCS_INPROGRESS and hold on
-     * to that descriptor. Otherwise, the data can't be used outside the callback.
-     * If needed, the data must be copied-out.
+     * the user-defined rx_headroom, and the callback may return UCS_INPROGRESS
+     * and hold on to that descriptor. Otherwise, the data can't be used outside
+     * the callback. If needed, the data must be copied-out.
+     *
+       @verbatim
+       descriptor    data
+       |             |
+       +-------------+-------------------------+
+       | rx_headroom | payload                 |
+       +-------------+-------------------------+
+       @endverbatim
+     *
      */
     UCT_AM_FLAG_DESC = UCS_BIT(0)
 };

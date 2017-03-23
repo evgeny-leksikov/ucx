@@ -140,7 +140,6 @@ uct_rc_mlx5_iface_common_poll_rx(uct_rc_mlx5_iface_common_t *mlx5_common_iface,
     wqe_ctr  = ntohs(cqe->wqe_counter);
     seg      = uct_ib_mlx5_srq_get_wqe(&mlx5_common_iface->rx.srq, wqe_ctr);
     desc     = seg->srq.desc;
-    udesc    = (char*)desc + rc_iface->super.config.rx_headroom_offset;
 
     /* Get a pointer to AM header (after which comes the payload)
      * Support cases of inline scatter by pointing directly to CQE.
@@ -191,6 +190,7 @@ uct_rc_mlx5_iface_common_poll_rx(uct_rc_mlx5_iface_common_t *mlx5_common_iface,
    } else {
         if (status != UCS_OK) {
             ucs_assert(flags & UCT_AM_FLAG_DESC);
+            udesc = (char*)desc + rc_iface->super.config.rx_headroom_offset;
             uct_recv_desc_iface(udesc) = &rc_iface->super.super.super;
             seg->srq.desc              = NULL;
         }

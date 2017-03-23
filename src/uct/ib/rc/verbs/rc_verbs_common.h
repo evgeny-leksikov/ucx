@@ -143,7 +143,8 @@ uct_rc_verbs_iface_handle_am(uct_rc_iface_t *iface, struct ibv_wc *wc,
             uct_recv_desc_iface(udesc) = &iface->super.super.super;
         }
     } else {
-        uct_ib_iface_invoke_am(&iface->super, hdr->am_id, hdr + 1, data_len, desc);
+        uct_ib_iface_invoke_am_desc(&iface->super, hdr->am_id, hdr + 1, data_len,
+                                    desc);
     }
 }
 

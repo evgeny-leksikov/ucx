@@ -112,7 +112,6 @@ static void uct_cm_iface_handle_sidr_req(uct_cm_iface_t *iface,
 {
     uct_cm_hdr_t *hdr = event->private_data;
     struct ib_cm_sidr_rep_param rep;
-    ucs_status_t status;
     int ret;
 
     VALGRIND_MAKE_MEM_DEFINED(hdr, sizeof(hdr));
@@ -130,9 +129,7 @@ static void uct_cm_iface_handle_sidr_req(uct_cm_iface_t *iface,
         ucs_error("ib_cm_send_sidr_rep() failed: %m");
     }
 
-    status = uct_iface_invoke_am(&iface->super.super, hdr->am_id, hdr + 1,
-                                 hdr->length, 0);
-    ucs_assertv_always(status != UCS_INPROGRESS, "UCS_INPROGRESS is not supported");
+    uct_iface_invoke_am(&iface->super.super, hdr->am_id, hdr + 1, hdr->length, 0);
 }
 
 static void uct_cm_iface_outstanding_remove(uct_cm_iface_t* iface,
