@@ -70,6 +70,27 @@ void uct_dc_ep_release(uct_dc_ep_t *ep)
     ucs_free(ep);
 }
 
+void uct_dc_ep_set_failed(ucs_class_t *ep_cls, uct_dc_iface_t *iface,
+                          uint32_t qp_num)
+{
+    uint8_t dci = uct_dc_iface_dci_find(iface, qp_num);
+    uct_dc_ep_t *ep = iface->tx.dcis[dci].ep;
+
+    if (!ep) {
+        return;
+    }
+
+    uct_rc_txqp_purge_outstanding(&iface->tx.dcis[dci].txqp,
+                                  UCS_ERR_ENDPOINT_TIMEOUT, 0);
+    uct_set_ep_failed(ep_cls, &ep->super.super,
+                      &iface->super.super.super.super);
+    if (UCS_OK != uct_dc_iface_dci_reconnect(iface, &iface->tx.dcis[dci].txqp)) {
+        ucs_fatal("Unsuccessful reconnect of DC QP #%u", qp_num);
+    }
+    uct_rc_txqp_available_set(&iface->tx.dcis[dci].txqp,
+                              iface->super.config.tx_qp_len);
+}
+
 /* TODO:
    currently pending code supports only dcs policy
    support hash/random policies
@@ -243,15 +264,11 @@ ucs_status_t uct_dc_ep_flush(uct_ep_h tl_ep, unsigned flags, uct_completion_t *c
      * segfault when we will try to access the ep by address from the grant
      * message. */
     if (!uct_rc_iface_has_tx_resources(&iface->super)) {
-        ucs_trace("no tx res cqeav=%d mpe=%d",
-                  uct_rc_iface_have_tx_cqe_avail(&iface->super),
-                  ucs_mpool_is_empty(&iface->super.tx.mp));
         return UCS_ERR_NO_RESOURCE;
     }
 
     if (ep->dci == UCT_DC_EP_NO_DCI) {
         if (!uct_dc_iface_dci_can_alloc(iface)) {
-            ucs_trace("no dci");
             return UCS_ERR_NO_RESOURCE; /* waiting for dci */
         } else {
             UCT_TL_EP_STAT_FLUSH(&ep->super); /* no sends */
@@ -260,7 +277,6 @@ ucs_status_t uct_dc_ep_flush(uct_ep_h tl_ep, unsigned flags, uct_completion_t *c
     }
 
     if (!uct_dc_iface_dci_ep_can_send(ep)) {
-        ucs_trace("no can send");
         return UCS_ERR_NO_RESOURCE; /* cannot send */
     }
 

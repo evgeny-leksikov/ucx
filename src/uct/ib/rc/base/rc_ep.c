@@ -200,17 +200,19 @@ ucs_status_t uct_rc_ep_connect_to_ep(uct_ep_h tl_ep, const uct_device_addr_t *de
     return status;
 }
 
-void uct_rc_ep_reset_qp(uct_rc_ep_t *ep)
+ucs_status_t uct_rc_reset_qp(uct_rc_iface_t *iface, uct_rc_txqp_t *txqp)
 {
     struct ibv_qp_attr qp_attr;
-    int ret;
+    ucs_status_t status = UCS_OK;
 
     memset(&qp_attr, 0, sizeof(qp_attr));
     qp_attr.qp_state = IBV_QPS_RESET;
-    ret = ibv_modify_qp(ep->txqp.qp, &qp_attr, IBV_QP_STATE);
-    if (ret != 0) {
-        ucs_warn("modify qp 0x%x to RESET failed: %m", ep->txqp.qp->qp_num);
+    if (ibv_modify_qp(txqp->qp, &qp_attr, IBV_QP_STATE)) {
+        ucs_warn("modify qp 0x%x to RESET failed: %m", txqp->qp->qp_num);
+        status = UCS_ERR_IO_ERROR;
     }
+
+    return status;
 }
 
 void uct_rc_ep_am_packet_dump(uct_base_iface_t *iface, uct_am_trace_type_t type,
@@ -389,6 +391,22 @@ void uct_rc_txqp_purge_outstanding(uct_rc_txqp_t *txqp, ucs_status_t status,
             ucs_mpool_put(desc);
         }
     }
+}
+
+ucs_status_t uct_rc_ep_flush(uct_rc_ep_t *ep, int16_t max_available)
+{
+    uct_rc_iface_t *iface = ucs_derived_of(ep->super.super.iface, uct_rc_iface_t);
+
+    if (!uct_rc_iface_has_tx_resources(iface) || !uct_rc_ep_has_tx_resources(ep)) {
+        return UCS_ERR_NO_RESOURCE;
+    }
+
+    if (uct_rc_txqp_available(&ep->txqp) == max_available) {
+        UCT_TL_EP_STAT_FLUSH(&ep->super);
+        return UCS_OK;
+    }
+
+    return UCS_INPROGRESS;
 }
 
 #define UCT_RC_DEFINE_ATOMIC_HANDLER_FUNC(_num_bits, _is_be) \
