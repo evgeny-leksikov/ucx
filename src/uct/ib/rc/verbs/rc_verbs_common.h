@@ -132,7 +132,6 @@ uct_rc_verbs_iface_handle_am(uct_rc_iface_t *iface, struct ibv_wc *wc,
                                uct_rc_ep_am_packet_dump);
 
     if (ucs_unlikely(hdr->am_id & UCT_RC_EP_FC_MASK)) {
-        udesc  = (char*)desc + iface->super.config.rx_headroom_offset;
         rc_ops = ucs_derived_of(iface->super.ops, uct_rc_iface_ops_t);
         status = rc_ops->fc_handler(iface, wc->qp_num, hdr, data_len,
                                     wc->imm_data, wc->slid,
@@ -140,6 +139,7 @@ uct_rc_verbs_iface_handle_am(uct_rc_iface_t *iface, struct ibv_wc *wc,
         if (status == UCS_OK) {
             ucs_mpool_put_inline(desc);
         } else {
+            udesc = (char*)desc + iface->super.config.rx_headroom_offset;
             uct_recv_desc_iface(udesc) = &iface->super.super.super;
         }
     } else {

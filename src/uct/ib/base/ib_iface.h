@@ -188,11 +188,12 @@ uct_ib_iface_invoke_am_desc(uct_ib_iface_t *iface, uint8_t am_id, void *data,
     void *desc = (char*)ib_desc + iface->config.rx_headroom_offset;
     ucs_status_t status;
 
-    uct_recv_desc_iface(desc) = &iface->super.super;
     status = uct_iface_invoke_am(&iface->super, am_id, data, length,
                                  UCT_AM_FLAG_DESC);
     if (status == UCS_OK) {
         ucs_mpool_put_inline(ib_desc);
+    } else {
+        uct_recv_desc_iface(desc) = &iface->super.super;
     }
 }
 

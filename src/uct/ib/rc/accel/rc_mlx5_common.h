@@ -189,7 +189,6 @@ uct_rc_mlx5_iface_common_poll_rx(uct_rc_mlx5_iface_common_t *mlx5_common_iface,
         ++mlx5_common_iface->rx.srq.free_idx;
    } else {
         if (status != UCS_OK) {
-            ucs_assert(flags & UCT_AM_FLAG_DESC);
             udesc = (char*)desc + rc_iface->super.config.rx_headroom_offset;
             uct_recv_desc_iface(udesc) = &rc_iface->super.super.super;
             seg->srq.desc              = NULL;
