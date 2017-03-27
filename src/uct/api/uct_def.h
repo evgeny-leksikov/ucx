@@ -150,27 +150,26 @@ typedef struct uct_iov {
  * @ingroup UCT_AM
  * @brief Callback to process incoming active message
  *
- * When the callback is called, @a desc does not necessarily contain the payload.
- * In this case, @a data would not point inside @a desc, and user may want
- * copy the payload from @a data to @a desc before returning @ref UCS_INPROGRESS
- * (it's guaranteed @a desc has enough room to hold the payload).
- *
+ * When the callback is called, @a flags indicates how @a data should be handled.
+ * If @a flags contain @ref UCT_AM_FLAG_DESC value, it means @a data is part of
+ * a descriptor which must be released later by @ref uct_iface_release_desc by
+ * the user if the callback returns @ref UCS_INPROGRESS.
+ * 
  * @param [in]  arg      User-defined argument.
- * @param [in]  data     Points to the received data.
+ * @param [in]  data     Points to the received data. This may be a part of
+ *                       a descriptor which may be released later.
  * @param [in]  length   Length of data.
  * @param [in]  flags    Mask with @ref uct_am_cb_flags
  *
  * @note This callback could be set and released
  *       by @ref uct_iface_set_am_handler function.
-
- * @warning If the user became the owner of the @a desc (by returning
- *          @ref UCS_INPROGRESS) the descriptor must be released later by
- *          @ref uct_iface_release_desc by the user.
  *
  * @retval UCS_OK         - descriptor was consumed, and can be released
  *                          by the caller.
  * @retval UCS_INPROGRESS - descriptor is owned by the callee, and would be
- *                          released later.
+ *                          released later. Supported only if @a flags contain
+ *                          @ref UCT_AM_FLAG_DESC value. Otherwise, this is
+ *                          an error.
  *
  */
 typedef ucs_status_t (*uct_am_callback_t)(void *arg, void *data, size_t length,
