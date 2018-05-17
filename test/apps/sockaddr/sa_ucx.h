@@ -11,10 +11,11 @@
 
 
 /* noncopyable wrapper for ucx handles which calls custom destructor */
-template <typename T>
+template <typename T, typename Darg = void*>
 class ucx_handle {
 public:
-    typedef void (*dtor_t)(T handle);
+    typedef void (*dtor_t) (T handle);
+    typedef void (*dtor2_t)(T handle, Darg arg);
 
     ucx_handle();
 
@@ -26,8 +27,13 @@ public:
 
     void reset(const T& value, dtor_t dtor);
 
+    void reset(const T& value, dtor2_t dtor, Darg darg);
+
     template <typename Ctor, typename... Args>
     void reset(dtor_t dtor, Ctor ctor, Args&&... args);
+
+    template <typename Ctor, typename... Args>
+    void reset(dtor2_t dtor, Darg darg, Ctor ctor, Args&&... args);
 
     operator T() const;
 
@@ -36,8 +42,10 @@ private:
 
     const ucx_handle& operator=(const ucx_handle& other);
 
-    T      m_value;
-    dtor_t m_dtor;
+    T           m_value;
+    dtor_t      m_dtor;
+    dtor2_t     m_dtor2;
+    Darg        m_darg;
 };
 
 
@@ -65,17 +73,20 @@ public:
 
     virtual bool is_closed() const;
 
+    void wait(void *req);
+
 private:
     static void send_cb(void *req, ucs_status_t status);
+
+    static void err_handler_cb(void *arg, ucp_ep_h ep, ucs_status_t status);
 
     void set_id();
 
     void set_ep_params(ucp_ep_params_t& params);
 
-    void wait(void *req);
-
     ucp_worker_h         m_worker; // TODO implement shared_handle??
-    ucx_handle<ucp_ep_h> m_ep;
+    ucx_handle<ucp_ep_h, ucx_connection*> m_ep;
+    bool                 m_is_closed;
 };
 
 

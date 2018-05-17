@@ -9,39 +9,58 @@
 #include <sys/epoll.h>
 #include <cstring>
 
+#include <assert.h> // TODO: remove
 
-template <typename T>
-ucx_handle<T>::ucx_handle() : m_value(NULL), m_dtor(NULL) {
+
+template <typename T, typename Darg>
+ucx_handle<T, Darg>::ucx_handle() :
+    m_value(NULL), m_dtor(NULL), m_dtor2(NULL), m_darg(NULL) {
 }
 
-template <typename T>
-ucx_handle<T>::ucx_handle(const T& value, dtor_t dtor) :
-    m_value(value), m_dtor(dtor) {
+template <typename T, typename Darg>
+ucx_handle<T, Darg>::ucx_handle(const T& value, dtor_t dtor) :
+    m_value(value), m_dtor(dtor), m_dtor2(NULL), m_darg(NULL) {
 }
 
-template <typename T>
-ucx_handle<T>::~ucx_handle() {
+template <typename T, typename Darg>
+ucx_handle<T, Darg>::~ucx_handle() {
     reset();
 }
 
-template <typename T>
-void ucx_handle<T>::reset() {
+template <typename T, typename Darg>
+void ucx_handle<T, Darg>::reset() {
     if (m_value) {
-        m_dtor(m_value);
+        if (m_dtor) {
+            m_dtor(m_value);
+        } else if (m_dtor2) {
+            m_dtor2(m_value, m_darg);
+        }
         m_value = NULL;
     }
 }
 
-template <typename T>
-void ucx_handle<T>::reset(const T& value, dtor_t dtor) {
+template <typename T, typename Darg>
+void ucx_handle<T, Darg>::reset(const T& value, dtor_t dtor) {
     reset();
     m_value = value;
     m_dtor  = dtor;
+    m_dtor2 = NULL;
+    m_darg  = NULL;
 }
 
-template <typename T>
+template <typename T, typename Darg>
+void ucx_handle<T, Darg>::reset(const T& value, dtor2_t dtor, Darg darg) {
+    reset();
+    m_value = value;
+    m_dtor2 = dtor;
+    m_darg  = darg;
+    m_dtor  = NULL;
+}
+
+
+template <typename T, typename Darg>
 template <typename Ctor, typename... Args>
-void ucx_handle<T>::reset(dtor_t dtor, Ctor ctor, Args&&... args)
+void ucx_handle<T, Darg>::reset(dtor_t dtor, Ctor ctor, Args&&... args)
 {
     T value;
     ucs_status_t status = ctor(args..., &value);
@@ -51,8 +70,20 @@ void ucx_handle<T>::reset(dtor_t dtor, Ctor ctor, Args&&... args)
     reset(value, dtor);
 }
 
-template <typename T>
-ucx_handle<T>::operator T() const {
+template <typename T, typename Darg>
+template <typename Ctor, typename... Args>
+void ucx_handle<T, Darg>::reset(dtor2_t dtor, Darg darg, Ctor ctor, Args&&... args)
+{
+    T value;
+    ucs_status_t status = ctor(args..., &value);
+    if (status != UCS_OK) {
+        throw ucx_error("failed to create ucx handle", status);
+    }
+    reset(value, dtor, darg);
+}
+
+template <typename T, typename Darg>
+ucx_handle<T, Darg>::operator T() const {
     return m_value;
 }
 
@@ -64,12 +95,18 @@ ucx_error::ucx_error(const std::string& message, ucs_status_t status) :
           " (" + std::to_string(status) + ")") {
 }
 
+static void ucp_ep_close(ucp_ep_h ep, ucx_connection *conn) {
+    void *request = ucp_ep_close_nb(ep, UCP_EP_CLOSE_MODE_SYNC);
+    conn->wait(request);
+}
+
 ucx_connection::ucx_connection(const ucx_handle<ucp_worker_h>& worker,
                                const ucp_ep_params_t& params) : m_worker(worker) {
     ucp_ep_params_t ep_params = params;
     set_ep_params(ep_params);
-    m_ep.reset(ucp_ep_destroy, ucp_ep_create, worker, &ep_params);
+    m_ep.reset(ucp_ep_close, this, ucp_ep_create, worker, &ep_params);
     set_id();
+    m_is_closed = false;
 }
 
 ucx_connection::ucx_connection(const ucx_handle<ucp_worker_h>& worker, ucp_ep_h ep)
@@ -79,6 +116,7 @@ ucx_connection::ucx_connection(const ucx_handle<ucp_worker_h>& worker, ucp_ep_h 
     ep_params.field_mask = 0;
     set_ep_params(ep_params);
     wait(ucp_ep_modify_nb(m_ep, &ep_params));
+    m_is_closed = false;
 }
 
 void ucx_connection::add_to_evpoll(evpoll_set& evpoll) {
@@ -109,7 +147,7 @@ size_t ucx_connection::recv(char *buffer, size_t size) {
 }
 
 bool ucx_connection::is_closed() const {
-    return false;
+    return m_is_closed;
 }
 
 void ucx_connection::send_cb(void *req, ucs_status_t status) {
@@ -119,9 +157,22 @@ void ucx_connection::set_id() {
     connection::set_id(reinterpret_cast<uint64_t>(this));
 }
 
+void ucx_connection::err_handler_cb(void *arg, ucp_ep_h ep, ucs_status_t status)
+{
+    assert(status == UCS_ERR_REMOTE_DISCONNECT);
+
+    ucx_connection *conn = static_cast<ucx_connection *>(arg);
+    conn->m_is_closed    = true;
+}
+
 void ucx_connection::set_ep_params(ucp_ep_params_t& params) {
-    // TODO set error handler
-    params.field_mask |= UCP_EP_PARAM_FIELD_USER_DATA;
+    ucp_err_handler_t err_handler = {
+        .cb = err_handler_cb
+    };
+
+    params.field_mask |= UCP_EP_PARAM_FIELD_ERR_HANDLER |
+                         UCP_EP_PARAM_FIELD_USER_DATA;
+    params.err_handler = err_handler;
     params.user_data   = reinterpret_cast<void*>(this);
 }
 
@@ -140,6 +191,8 @@ void ucx_connection::wait(void *req) {
         ucp_worker_progress(m_worker);
         status = ucp_request_check_status(req);
     } while (status == UCS_INPROGRESS);
+    ucp_request_free(req);
+
     if (status != UCS_OK) {
         throw ucx_error("ucx request completed with error", status);
     }
@@ -189,8 +242,8 @@ void ucx_worker::wait(const evpoll_set& evpoll, conn_handler_t conn_handler,
         m_conn_backlog.pop_front();
     }
 
-    unsigned count = ucp_worker_progress(m_worker);
-    if (count > 0) {
+    /*unsigned count = */ucp_worker_progress(m_worker);
+//    if (count > 0) {
         static const size_t max_eps = 32;
         ucp_stream_poll_ep_t poll_eps[max_eps];
         ssize_t neps = ucp_stream_worker_poll(m_worker, poll_eps, max_eps, 0);
@@ -203,7 +256,7 @@ void ucx_worker::wait(const evpoll_set& evpoll, conn_handler_t conn_handler,
                          EPOLLIN);
         }
         return;
-    }
+//    }
 
     ucs_status_t status = ucp_worker_arm(m_worker);
     if (status == UCS_ERR_BUSY) {

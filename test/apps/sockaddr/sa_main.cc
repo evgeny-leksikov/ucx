@@ -187,7 +187,11 @@ int application::run() {
                                      << ((events & EPOLLOUT) ? "o" : "")
                                      << ((events & EPOLLERR) ? "e" : "")
                                      ;
-                           advance_connection(m_connections.at(conn_id), events);
+                           if (m_connections.find(conn_id) !=
+                               m_connections.end()) {
+                               advance_connection(m_connections.at(conn_id),
+                                                  events);
+                           }
                        },
                        -1);
     }
@@ -283,7 +287,8 @@ void application::advance_connection(conn_state_ptr_t s, uint32_t events) {
                       << s->conn_ptr->id();
             s->bytes_sent += nsent;
         }
-        if (events & EPOLLIN) {
+//        if (events & EPOLLIN) {
+        if (s->bytes_recvd < m_params.response_size) {
             size_t nrecv = s->conn_ptr->recv(&s->recv_data[s->bytes_recvd],
                                              m_params.response_size - s->bytes_recvd);
             LOG_DEBUG << "received " << nrecv << " bytes on connection id "
