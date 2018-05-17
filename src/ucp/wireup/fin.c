@@ -5,6 +5,7 @@
 */
 
 #include "fin.h"
+#include "stream/stream.h"
 
 #include <ucp/core/ucp_request.h>
 #include <ucp/core/ucp_request.inl>
@@ -126,6 +127,10 @@ ucp_fin_msg_handler(void *arg, void *data, size_t length, unsigned flags)
 
     /* Notify user about disconnect */
     if (!(ep->flags & UCP_EP_FLAG_HIDDEN)) {
+        if ((ep->worker->context->config.features & UCP_FEATURE_STREAM) &&
+            !ucp_stream_ep_is_queued(ucp_ep_ext_proto(ep))) {
+            ucp_stream_ep_enqueue(ucp_ep_ext_proto(ep), ep->worker);
+        }
         if (ucp_ep_ext_gen(ep)->err_cb) {
             ucp_ep_ext_gen(ep)->err_cb(ucp_ep_ext_gen(ep)->user_data, ep,
                                        UCS_ERR_REMOTE_DISCONNECT);
