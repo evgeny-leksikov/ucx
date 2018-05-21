@@ -670,6 +670,8 @@ ucs_status_ptr_t ucp_ep_close_nb(ucp_ep_h ep, unsigned mode)
     }
     ucs_assert(!(ep->flags & UCP_EP_FLAG_HIDDEN));
     ep->flags |= UCP_EP_FLAG_HIDDEN;
+    ucp_stream_ep_cleanup(ep);
+
     request = ucp_ep_flush_internal(ep,
                                     (mode == UCP_EP_CLOSE_MODE_FORCE) ?
                                     UCT_FLUSH_FLAG_CANCEL : UCT_FLUSH_FLAG_LOCAL,
@@ -681,8 +683,6 @@ ucs_status_ptr_t ucp_ep_close_nb(ucp_ep_h ep, unsigned mode)
         if (mode == UCP_EP_CLOSE_MODE_SYNC) {
             if (ucs_test_all_flags(ep->flags, UCP_EP_MASK_FIN_DONE)) {
                 ucp_ep_disconnected(ep, 1);
-            } else {
-                ucp_stream_ep_cleanup(ep);
             }
         } else {
             ucp_ep_disconnected(ep, mode == UCP_EP_CLOSE_MODE_FORCE);
