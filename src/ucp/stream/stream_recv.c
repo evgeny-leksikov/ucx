@@ -413,6 +413,7 @@ void ucp_stream_ep_cleanup(ucp_ep_h ep)
             ucp_stream_data_release(ep, data);
         }
     }
+    ucs_assert(!ucp_stream_ep_is_queued(ucp_ep_ext_proto(ep)));
 }
 
 void ucp_stream_ep_activate(ucp_ep_h ep)
