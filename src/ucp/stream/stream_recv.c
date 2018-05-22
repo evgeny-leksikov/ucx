@@ -65,7 +65,9 @@ ucp_stream_rdesc_dequeue(ucp_ep_ext_proto_t *ep_ext)
     ucs_assert(ucp_stream_ep_has_data(ep_ext));
     if (ucs_unlikely(ucs_queue_is_empty(&ep_ext->stream.match_q))) {
         ucp_ep_from_ext_proto(ep_ext)->flags &= ~UCP_EP_FLAG_STREAM_HAS_DATA;
-        if (ucp_stream_ep_is_queued(ep_ext)) {
+        if (ucp_stream_ep_is_queued(ep_ext) &&
+            ucs_unlikely(!(ucp_ep_from_ext_proto(ep_ext)->flags &
+                           UCP_EP_FLAG_FIN_MSG_RECVD))) {
             ucp_stream_ep_dequeue(ep_ext);
         }
     }
@@ -413,7 +415,9 @@ void ucp_stream_ep_cleanup(ucp_ep_h ep)
             ucp_stream_data_release(ep, data);
         }
     }
-    ucs_assert(!ucp_stream_ep_is_queued(ucp_ep_ext_proto(ep)));
+    if (ucp_stream_ep_is_queued(ucp_ep_ext_proto(ep))) {
+        ucp_stream_ep_dequeue(ucp_ep_ext_proto(ep));
+    }
 }
 
 void ucp_stream_ep_activate(ucp_ep_h ep)

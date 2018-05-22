@@ -1377,17 +1377,26 @@ ssize_t ucp_stream_worker_poll(ucp_worker_h worker,
                                ucp_stream_poll_ep_t *poll_eps,
                                size_t max_eps, unsigned flags)
 {
-    ucp_ep_ext_proto_t *ep_ext;
-    ssize_t count = 0;
-    ucp_ep_h ep;
+    ssize_t              count = 0;
+    ucp_ep_ext_proto_t   *ep_ext;
+    ucp_ep_h             ep;
+    ucp_stream_poll_ep_t *poll_ep;
 
     UCP_THREAD_CS_ENTER_CONDITIONAL(&worker->mt_lock);
 
     while ((count < max_eps) && !ucs_list_is_empty(&worker->stream_ready_eps)) {
         ep_ext                    = ucp_stream_worker_dequeue_ep_head(worker);
         ep                        = ucp_ep_from_ext_proto(ep_ext);
-        poll_eps[count].ep        = ep;
-        poll_eps[count].user_data = ucp_ep_ext_gen(ep)->user_data;
+        poll_ep                   = &poll_eps[count];
+        poll_ep->ep         = ep;
+        poll_ep->user_data  = ucp_ep_ext_gen(ep)->user_data;
+        poll_ep->flags      = 0;
+        if (ucs_likely(ep->flags & UCP_EP_FLAG_STREAM_HAS_DATA)) {
+            poll_ep->flags |= UCP_STREAM_POLL_FLAG_IN;
+        }
+        if (ucs_unlikely(ep->flags & UCP_EP_FLAG_FIN_MSG_RECVD)) {
+            poll_ep->flags |= UCP_STREAM_POLL_FLAG_NVAL;
+        }
         ++count;
     }
 

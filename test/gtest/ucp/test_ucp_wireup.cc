@@ -813,6 +813,35 @@ UCS_TEST_P(test_ucp_wireup_2sided, multi_ep_2sided) {
     }
 }
 
+UCS_TEST_P(test_ucp_wireup_2sided, remote_disconnect) {
+    skip_loopback();
+    if (!(is_close_sync_test() && is_stream_test())) {
+        UCS_TEST_SKIP_R("Valid only for TEST_STREAM_CLOSE_SYNC");
+    }
+
+    sender().connect(&receiver(), get_ep_params());
+    receiver().connect(&sender(), get_ep_params());
+    send_recv(sender().ep(), receiver().worker(), receiver().ep(), 1, 1);
+
+    waitall(disconnect(sender()));
+
+    ssize_t count;
+    do {
+        while(progress());
+        ucp_stream_poll_ep_t poll_ep;
+        count = ucp_stream_worker_poll(receiver().worker(), &poll_ep, 1, 0);
+        ASSERT_LE(0, count);
+        if (count > 0) {
+            EXPECT_TRUE(poll_ep.flags & UCP_STREAM_POLL_FLAG_NVAL);
+            EXPECT_EQ(UCS_ERR_REMOTE_DISCONNECT,
+                      UCS_PTR_STATUS(ucp_stream_send_nb(poll_ep.ep, NULL, 0,
+                                                        ucp_dt_make_contig(0),
+                                                        NULL, 0)));
+            break;
+        }
+    } while (1);
+}
+
 UCP_INSTANTIATE_TEST_CASE(test_ucp_wireup_2sided)
 
 class test_ucp_wireup_errh_peer : public test_ucp_wireup_1sided
@@ -871,21 +900,6 @@ UCS_TEST_P(test_ucp_wireup_errh_peer, msg_before_ep_create) {
     if (!is_close_sync_test()) {
         flush_worker(receiver());
     }
-}
-
-UCS_TEST_P(test_ucp_wireup_errh_peer, remote_disconnect) {
-    if (!is_close_sync_test()) {
-        UCS_TEST_SKIP_R("Valid only for *CLOSE_SYNC");
-    }
-
-    sender().connect(&receiver(), get_ep_params());
-    receiver().connect(&sender(), get_ep_params());
-    send_recv(sender().ep(), receiver().worker(), receiver().ep(), 1, 1);
-
-    waitall(disconnect(sender()));
-
-    wait_for_flag(&m_err_count);
-    EXPECT_EQ(UCS_ERR_REMOTE_DISCONNECT, m_err_status);
 }
 
 UCP_INSTANTIATE_TEST_CASE(test_ucp_wireup_errh_peer)

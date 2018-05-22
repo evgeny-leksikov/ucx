@@ -493,6 +493,11 @@ ucs_status_t ucp_ep_create(ucp_worker_h worker, const ucp_ep_params_t *params,
     }
 
     ep->flags &= ~UCP_EP_FLAG_HIDDEN;
+    if ((worker->context->config.features & UCP_FEATURE_STREAM) &&
+        (ep->flags & (UCP_EP_FLAG_STREAM_HAS_DATA |
+                      UCP_EP_FLAG_FIN_MSG_RECVD))) {
+        ucp_worker_signal_internal(worker);
+    }
     *ep_p = ep;
 
 out:

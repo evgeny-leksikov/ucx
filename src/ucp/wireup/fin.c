@@ -131,10 +131,6 @@ ucp_fin_msg_handler(void *arg, void *data, size_t length, unsigned flags)
             !ucp_stream_ep_is_queued(ucp_ep_ext_proto(ep))) {
             ucp_stream_ep_enqueue(ucp_ep_ext_proto(ep), ep->worker);
         }
-        if (ucp_ep_ext_gen(ep)->err_cb) {
-            ucp_ep_ext_gen(ep)->err_cb(ucp_ep_ext_gen(ep)->user_data, ep,
-                                       UCS_ERR_REMOTE_DISCONNECT);
-        }
     }
 
     return UCS_OK;

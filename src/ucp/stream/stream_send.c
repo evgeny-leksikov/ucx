@@ -97,12 +97,7 @@ UCS_PROFILE_FUNC(ucs_status_ptr_t, ucp_stream_send_nb,
 
     ucs_assert(!(ep->flags & UCP_EP_FLAG_HIDDEN));
     if (ucs_unlikely(ep->flags & (UCP_EP_FLAG_FIN_MSG_RECVD))) {
-        /* Notify user about disconnect */
-        if (ucp_ep_ext_gen(ep)->err_cb) {
-            ucp_ep_ext_gen(ep)->err_cb(ucp_ep_ext_gen(ep)->user_data, ep,
-                                       UCS_ERR_REMOTE_DISCONNECT);
-        }
-        ret = NULL;
+        ret = UCS_STATUS_PTR(UCS_ERR_REMOTE_DISCONNECT);
         goto out;
     }
 
