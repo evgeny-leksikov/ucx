@@ -49,6 +49,11 @@ typedef struct ucp_wireup_client_data {
     /* packed worker address follows */
 } UCS_S_PACKED ucp_wireup_sockaddr_priv_t;
 
+struct ucp_ep_address {
+    ucp_wireup_sockaddr_priv_t priv_addr;
+} UCS_S_PACKED;
+
+
 /**
  * Create a proxy endpoint for wireup.
  */

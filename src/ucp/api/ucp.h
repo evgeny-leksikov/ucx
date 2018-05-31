@@ -175,11 +175,17 @@ enum ucp_worker_params_field {
 enum ucp_listener_params_field {
     UCP_LISTENER_PARAM_FIELD_SOCK_ADDR       = UCS_BIT(0), /**< Sock address and
                                                                 length */
-    UCP_LISTENER_PARAM_FIELD_ACCEPT_HANDLER  = UCS_BIT(1)  /**< User's callback
+    UCP_LISTENER_PARAM_FIELD_ACCEPT_HANDLER  = UCS_BIT(1), /**< User's callback
                                                                 and argument
                                                                 for handling the
                                                                 creation of an
                                                                 endpoint */
+    UCP_LISTENER_PARAM_FIELD_ACCEPT_HANDLER2 = UCS_BIT(2)  /**< User's callback
+                                                                and argument
+                                                                for handling the
+                                                                getting of an
+                                                                endpoint address
+                                                                */
 };
 
 
@@ -199,7 +205,8 @@ enum ucp_ep_params_field {
                                                             transport level errors */
     UCP_EP_PARAM_FIELD_USER_DATA         = UCS_BIT(3), /**< User data pointer */
     UCP_EP_PARAM_FIELD_SOCK_ADDR         = UCS_BIT(4), /**< Socket address field */
-    UCP_EP_PARAM_FIELD_FLAGS             = UCS_BIT(5)  /**< Endpoint flags */
+    UCP_EP_PARAM_FIELD_FLAGS             = UCS_BIT(5), /**< Endpoint flags */
+    UCP_EP_PARAM_FIELD_EP_ADDR           = UCS_BIT(6)  /**< Endpoint address field */
 };
 
 
@@ -858,6 +865,14 @@ typedef struct ucp_listener_params {
      * field_mask.
      */
     ucp_listener_accept_handler_t  accept_handler;
+
+    /**
+     * Handler to getting endpoint address in a client-server connection flow.
+     * In order for the callback inside this handler to be invoked, the
+     * UCP_LISTENER_PARAM_FIELD_ACCEPT_HANDLER2 needs to be set in the
+     * field_mask.
+     */
+    ucp_listener_accept_handler2_t  accept_handler2;
 } ucp_listener_params_t;
 
 
@@ -922,6 +937,11 @@ typedef struct ucp_ep_params {
      * from the user. This field cannot be changed by @ref ucp_ep_modify_nb.
      */
     ucs_sock_addr_t         sockaddr;
+
+    /**
+     * TODO: .
+     */
+    ucp_ep_address_t       *ep_addr;
 
 } ucp_ep_params_t;
 

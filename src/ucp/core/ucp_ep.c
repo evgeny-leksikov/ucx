@@ -379,6 +379,65 @@ err:
     return status;
 }
 
+ucs_status_t ucp_ep_create_accept(ucp_worker_h           worker,
+                                  const ucp_ep_address_t *ep_addr,
+                                  ucp_ep_h               *ep_p)
+{
+    ucp_ep_params_t        params;
+    ucp_unpacked_address_t remote_address;
+    ucs_status_t           status;
+
+    params.field_mask = UCP_EP_PARAM_FIELD_ERR_HANDLING_MODE;
+    params.err_mode   = ep_addr->priv_addr.err_mode;
+
+    status = ucp_address_unpack((&ep_addr->priv_addr) + 1, &remote_address);
+    if (status != UCS_OK) {
+        return status;
+    }
+
+    if (ep_addr->priv_addr.is_full_addr) {
+        /* create endpoint to the worker address we got in the private data */
+        status = ucp_ep_create_to_worker_addr(worker, &params, &remote_address,
+                                              UCP_EP_CREATE_AM_LANE, "listener",
+                                              ep_p);
+        if (status != UCS_OK) {
+            goto free_address;
+        }
+    } else {
+        status = ucp_ep_create_sockaddr_aux(worker, &params, &remote_address,
+                                            ep_p);
+        if (status != UCS_OK) {
+            goto free_address;
+        }
+
+        /* the listener's ep should be aware of the sent address from the client */
+        (*ep_p)->flags |= UCP_EP_FLAG_LISTENER;
+    }
+
+    ucp_ep_update_dest_ep_ptr(*ep_p, ep_addr->priv_addr.ep_ptr);
+free_address:
+    ucs_free(remote_address.address_list);
+    return status;
+}
+
+static ucs_status_t
+ucp_ep_create_api_to_ep_addr(ucp_worker_h worker, const ucp_ep_params_t *params,
+                             ucp_ep_h *ep_p)
+{
+
+    ucs_status_t status = ucp_ep_create_accept(worker, params->ep_addr, ep_p);
+    if (status != UCS_OK) {
+        return status;
+    }
+    if (!((*ep_p)->flags & UCP_EP_FLAG_LISTENER)) {
+        /* send wireup request message, to connect the client to the server's new endpoint */
+        ucs_assert(!((*ep_p)->flags & UCP_EP_FLAG_CONNECT_REQ_QUEUED));
+        return ucp_wireup_send_request(*ep_p);
+    }
+
+    return ucp_wireup_send_pre_request(*ep_p);
+}
+
 static ucs_status_t
 ucp_ep_create_api_to_worker_addr(ucp_worker_h worker,
                                  const ucp_ep_params_t *params, ucp_ep_h *ep_p)
@@ -485,11 +544,21 @@ ucs_status_t ucp_ep_create(ucp_worker_h worker, const ucp_ep_params_t *params,
         if (status != UCS_OK) {
             goto out;
         }
-    } else {
+    } else if (params->field_mask & UCP_EP_PARAM_FIELD_EP_ADDR) {
+        status = ucp_ep_create_api_to_ep_addr(worker, params, &ep);
+        ucs_free(params->ep_addr);
+
+        if (status != UCS_OK) {
+            goto out;
+        }
+    } else if (params->field_mask & UCP_EP_PARAM_FIELD_REMOTE_ADDRESS) {
         status = ucp_ep_create_api_to_worker_addr(worker, params, &ep);
         if (status != UCS_OK) {
             goto out;
         }
+    } else {
+        status = UCS_ERR_INVALID_PARAM;
+        goto out;
     }
 
     ep->flags &= ~UCP_EP_FLAG_HIDDEN;

@@ -15,16 +15,19 @@
 
 static unsigned ucp_listener_accept_cb_progress(void *arg)
 {
-    ucp_ep_h ep = arg;
+    ucp_ep_h       ep       = arg;
+    ucp_listener_h listener = ucp_ep_ext_gen(ep)->listener;
 
     ep->flags &= ~UCP_EP_FLAG_HIDDEN;
     if (ep->flags & UCP_EP_FLAG_STREAM_HAS_DATA) {
         /* return the EP from ucp_stream_worker_poll */
         ucp_stream_ep_enqueue(ucp_ep_ext_proto(ep), ep->worker);
     }
-    ucp_ep_ext_gen(ep)->listener->cb(ep, ucp_ep_ext_gen(ep)->listener->arg);
+    if (listener && listener->cb) {
+        listener->cb(ep, listener->arg);
+    }
 
-    return 0;
+    return 1;
 }
 
 int ucp_listener_accept_cb_remove_filter(const ucs_callbackq_elem_t *elem,
@@ -48,43 +51,43 @@ void ucp_listener_schedule_accept_cb(ucp_ep_h ep)
 static unsigned ucp_listener_conn_request_progress(void *arg)
 {
     ucp_listener_accept_t *accept = arg;
-    ucp_ep_h ep = accept->ep;
+    ucp_ep_h ep;
     ucs_status_t status;
 
-    ucs_trace_func("listener=%p ep=%p", accept->listener, ep);
+    ucs_trace_func("listener=%p is_ep=%d", accept->listener, accept->is_ep);
 
-    if (!(ep->flags & UCP_EP_FLAG_LISTENER)) {
-        /* send wireup request message, to connect the client to the server's new endpoint */
-        ucs_assert(!(ep->flags & UCP_EP_FLAG_CONNECT_REQ_QUEUED));
-        status = ucp_wireup_send_request(ep);
-        if (status != UCS_OK) {
-            goto err_destroy_ep;
-        }
-    } else {
-        status = ucp_wireup_send_pre_request(ep);
-        if (status != UCS_OK) {
-            goto err_destroy_ep;
-        }
-    }
-
-    if (accept->listener->cb != NULL) {
-        if (ep->flags & UCP_EP_FLAG_LISTENER) {
-            ep->flags |= UCP_EP_FLAG_HIDDEN;
-            ucp_ep_ext_gen(ep)->listener = accept->listener;
+    if (accept->is_ep) {
+        ep = accept->ep;
+        ucs_trace_func("listener=%p ep=%p", accept->listener, ep);
+        if (!(ep->flags & UCP_EP_FLAG_LISTENER)) {
+            /* send wireup request message, to connect the client to the server's new endpoint */
+            ucs_assert(!(ep->flags & UCP_EP_FLAG_CONNECT_REQ_QUEUED));
+            status = ucp_wireup_send_request(ep);
         } else {
-            ep->flags &= ~UCP_EP_FLAG_HIDDEN;
-            accept->listener->cb(ep, accept->listener->arg);
+            status = ucp_wireup_send_pre_request(ep);
         }
+
+        if (status != UCS_OK) {
+            ucp_ep_destroy_internal(ep);
+            goto out;
+        }
+
+        if (accept->listener->cb != NULL) {
+            if (ep->flags & UCP_EP_FLAG_LISTENER) {
+                ep->flags |= UCP_EP_FLAG_HIDDEN;
+                ucp_ep_ext_gen(ep)->listener = accept->listener;
+            } else {
+                ep->flags &= ~UCP_EP_FLAG_HIDDEN;
+                accept->listener->cb(ep, accept->listener->arg);
+            }
+        }
+    } else if (accept->listener->cb2 != NULL) {
+        accept->listener->cb2(accept->addr, accept->listener->arg);
     }
 
-
-    goto out;
-
-err_destroy_ep:
-    ucp_ep_destroy_internal(ep);
 out:
     ucs_free(accept);
-    return 0;
+    return 1;
 }
 
 static int ucp_listener_remove_filter(const ucs_callbackq_elem_t *elem,
@@ -95,62 +98,72 @@ static int ucp_listener_remove_filter(const ucs_callbackq_elem_t *elem,
     return (elem->cb == ucp_listener_conn_request_progress) && (listener == arg);
 }
 
-static ucs_status_t ucp_listener_conn_request_callback(void *arg,
-                                                       const void *conn_priv_data,
-                                                       size_t length)
+ucs_status_t
+ucp_listener_ep_create(ucp_listener_h                    listener,
+                       const ucp_wireup_sockaddr_priv_t *client_data,
+                       ucp_listener_accept_t            *accept)
+{
+    ucp_ep_h     ep;
+    const ucp_ep_address_t *addr = (void *)client_data;
+    ucs_status_t status = ucp_ep_create_accept(listener->wiface.worker,
+                                               addr, &ep);
+    if (status != UCS_OK) {
+        return status;
+    }
+
+    accept->listener = listener;
+    accept->is_ep    = 1;
+    accept->ep       = ep;
+    return UCS_OK;
+}
+
+static ucs_status_t
+ucp_listener_ep_addr_create(ucp_listener_h listener,
+                            const ucp_wireup_sockaddr_priv_t *client_data,
+                            size_t length, ucp_listener_accept_t *accept)
+{
+    accept->listener    = listener;
+    accept->is_ep       = 0;
+    accept->addr        = ucs_malloc(length, "accept ep addr");
+    if (accept->addr == NULL) {
+        return UCS_ERR_NO_MEMORY;
+    }
+    memcpy(accept->addr, client_data, length);
+    return UCS_OK;
+}
+
+static ucs_status_t
+ucp_listener_conn_request_callback(void *arg, const void *conn_priv_data,
+                                   size_t length)
 {
     const ucp_wireup_sockaddr_priv_t *client_data = conn_priv_data;
     ucp_listener_h listener                       = arg;
-    ucp_unpacked_address_t remote_address;
     ucp_listener_accept_t *accept;
     uct_worker_cb_id_t prog_id;
-    ucp_ep_params_t params;
     ucs_status_t status;
-    ucp_ep_h ep;
 
     ucs_trace("listener %p: got connection request", listener);
-
-    params.field_mask = UCP_EP_PARAM_FIELD_ERR_HANDLING_MODE;
-    params.err_mode   = client_data->err_mode;
-
-    status = ucp_address_unpack(client_data + 1, &remote_address);
-    if (status != UCS_OK) {
-        goto err;
-    }
-
-    if (client_data->is_full_addr) {
-        /* create endpoint to the worker address we got in the private data */
-        status = ucp_ep_create_to_worker_addr(listener->wiface.worker, &params,
-                                              &remote_address, UCP_EP_CREATE_AM_LANE,
-                                              "listener", &ep);
-        if (status != UCS_OK) {
-            goto err_free_address;
-        }
-
-    } else {
-        status = ucp_ep_create_sockaddr_aux(listener->wiface.worker,
-                                            &params, &remote_address,
-                                            &ep);
-        if (status != UCS_OK) {
-            goto err_free_address;
-        }
-
-        /* the listener's ep should be aware of the sent address from the client */
-        ep->flags |= UCP_EP_FLAG_LISTENER;
-    }
-
-    ucp_ep_update_dest_ep_ptr(ep, client_data->ep_ptr);
 
     /* Defer wireup init and user's callback to be invoked from the main thread */
     accept = ucs_malloc(sizeof(*accept), "ucp_listener_accept");
     if (accept == NULL) {
         ucs_error("failed to allocate listener accept context");
-        status = UCS_ERR_NO_MEMORY;
-        goto err_destroy_ep;
+        return UCS_ERR_NO_MEMORY;
     }
 
-    accept->listener = listener;
-    accept->ep       = ep;
+    if (listener->cb) {
+        status = ucp_listener_ep_create(listener, client_data, accept);
+    } else if (listener->cb2) {
+        status = ucp_listener_ep_addr_create(listener, client_data, length,
+                                             accept);
+    } else {
+        status = UCS_OK;
+    }
+
+    if (status != UCS_OK) {
+        ucs_free(accept);
+        return status;
+    }
 
     prog_id = UCS_CALLBACKQ_ID_NULL;
     uct_worker_progress_register_safe(listener->wiface.worker->uct,
@@ -163,16 +176,7 @@ static ucs_status_t ucp_listener_conn_request_callback(void *arg,
      * that he can wake-up on this event */
     ucp_worker_signal_internal(listener->wiface.worker);
 
-    ucs_free(remote_address.address_list);
-
     return UCS_OK;
-
-err_destroy_ep:
-    ucp_ep_destroy_internal(ep);
-err_free_address:
-    ucs_free(remote_address.address_list);
-err:
-    return status;
 }
 
 ucs_status_t ucp_listener_create(ucp_worker_h worker,
@@ -220,11 +224,21 @@ ucs_status_t ucp_listener_create(ucp_worker_h worker,
         }
 
         if (params->field_mask & UCP_LISTENER_PARAM_FIELD_ACCEPT_HANDLER) {
-            UCP_CHECK_PARAM_NON_NULL(params->accept_handler.cb, status, goto err_free);
+            UCP_CHECK_PARAM_NON_NULL(params->accept_handler.cb, status,
+                                     goto err_free);
             listener->cb  = params->accept_handler.cb;
             listener->arg = params->accept_handler.arg;
+            listener->cb2 = NULL;
+        } else if (params->field_mask &
+                   UCP_LISTENER_PARAM_FIELD_ACCEPT_HANDLER2) {
+            UCP_CHECK_PARAM_NON_NULL(params->accept_handler2.cb, status,
+                                     goto err_free);
+            listener->cb2 = params->accept_handler2.cb;
+            listener->arg = params->accept_handler2.arg;
+            listener->cb  = NULL;
         } else {
             listener->cb  = NULL;
+            listener->cb2 = NULL;
         }
 
         memset(&iface_params, 0, sizeof(iface_params));

@@ -82,6 +82,16 @@ typedef struct ucp_ep                    *ucp_ep_h;
 
 
 /**
+ * @ingroup UCP_EP
+ * @brief UCP endpoint address
+ *
+ * The address handle is an opaque object that is used as an identifier for an
+ * @ref ucp_ep_h "endpoint" instance.
+ */
+typedef struct ucp_ep_address            ucp_ep_address_t;
+
+
+/**
  * @ingroup UCP_WORKER
  * @brief UCP worker address
  *
@@ -94,7 +104,7 @@ typedef struct ucp_address               ucp_address_t;
 /**
  * @ingroup UCP_ENDPOINT
  * @brief Error handling mode for the UCP endpoint.
- * 
+ *
  * Specifies error handling mode for the UCP endpoint.
  */
 typedef enum {
@@ -311,7 +321,7 @@ typedef void (*ucp_err_handler_cb_t)(void *arg, ucp_ep_h ep, ucs_status_t status
  /**
  * @ingroup UCP_COMM
  * @brief UCP endpoint error handling context.
- * 
+ *
  * This structure should be initialized in @ref ucp_ep_params_t to handle peer failure
  */
 typedef struct ucp_err_handler {
@@ -341,6 +351,10 @@ typedef struct ucp_err_handler {
 typedef void (*ucp_listener_accept_callback_t)(ucp_ep_h ep, void *arg);
 
 
+typedef void (*ucp_listener_accept_callback2_t)(ucp_ep_address_t *ep_addr,
+                                                void *arg);
+
+
 /**
  * @ingroup UCP_WORKER
  * @brief UCP callback to handle the creation of an endpoint in a client-server
@@ -359,6 +373,20 @@ typedef struct ucp_listener_accept_handler {
    void                            *arg;     /**< User defined argument for the
                                                   callback */
 } ucp_listener_accept_handler_t;
+
+
+/**
+ * @ingroup UCP_WORKER
+ * @brief UCP callback to handle the getting of an endpoint address in a
+ * client-server connection establishment flow.
+ *
+ * TODO:
+ */
+typedef struct ucp_listener_accept_handler2 {
+   ucp_listener_accept_callback2_t  cb;      /**< Endpoint address getiing callback */
+   void                            *arg;     /**< User defined argument for the
+                                                  callback */
+} ucp_listener_accept_handler2_t;
 
 
 /**
