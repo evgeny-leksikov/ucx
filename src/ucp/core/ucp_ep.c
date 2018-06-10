@@ -426,9 +426,14 @@ ucp_ep_create_api_to_ep_addr(ucp_worker_h worker, const ucp_ep_params_t *params,
 {
 
     ucs_status_t status = ucp_ep_create_accept(worker, params->ep_addr, ep_p);
+    if (status == UCS_OK) {
+        status = ucp_ep_adjust_params(*ep_p, params);
+    }
+
     if (status != UCS_OK) {
         return status;
     }
+
     if (!((*ep_p)->flags & UCP_EP_FLAG_LISTENER)) {
         /* send wireup request message, to connect the client to the server's new endpoint */
         ucs_assert(!((*ep_p)->flags & UCP_EP_FLAG_CONNECT_REQ_QUEUED));
