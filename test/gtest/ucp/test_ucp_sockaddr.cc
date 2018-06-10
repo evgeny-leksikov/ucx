@@ -27,12 +27,13 @@ public:
     static ucp_params_t get_ctx_params() {
         ucp_params_t params = ucp_test::get_ctx_params();
         params.field_mask  |= UCP_PARAM_FIELD_FEATURES;
-        params.features     = UCP_FEATURE_TAG;
+        params.features     = UCP_FEATURE_TAG | UCP_FEATURE_STREAM;
         return params;
     }
 
     enum {
-        EP_ADDR = DEFAULT_PARAM_VARIANT + 1
+        EP_ADDR = DEFAULT_PARAM_VARIANT + 1,
+        EP_ADDR_STREAM
     };
 
     static std::vector<ucp_test_param>
@@ -46,6 +47,8 @@ public:
 
         generate_test_params_variant(ctx_params, name, test_case_name, tls,
                                      EP_ADDR, result);
+        generate_test_params_variant(ctx_params, name, test_case_name, tls,
+                                     EP_ADDR_STREAM, result);
         return result;
     }
 
@@ -138,8 +141,14 @@ public:
         }
     }
 
-    static void rcomplete_cb(void *req, ucs_status_t status,
-                             ucp_tag_recv_info_t *info)
+    static void rtag_complete_cb(void *req, ucs_status_t status,
+                                 ucp_tag_recv_info_t *info)
+    {
+        ASSERT_UCS_OK(status);
+    }
+
+    static void rstream_complete_cb(void *req, ucs_status_t status,
+                                    size_t length)
     {
         ASSERT_UCS_OK(status);
     }
@@ -226,10 +235,65 @@ public:
         uint64_t recv_data = 0;
         void *recv_req = ucp_tag_recv_nb(to.worker(), &recv_data, 1,
                                          ucp_dt_make_contig(sizeof(recv_data)),
-                                         1, 0, rcomplete_cb);
+                                         1, 0, rtag_complete_cb);
         if (UCS_PTR_IS_ERR(recv_req)) {
             ASSERT_UCS_OK(UCS_PTR_STATUS(recv_req));
         } else {
+            while (!ucp_request_is_completed(recv_req)) {
+                check_events(from.worker(), to.worker(), wakeup, recv_req);
+            }
+            ucp_request_free(recv_req);
+        }
+
+        EXPECT_EQ(send_data, recv_data);
+    }
+
+    void stream_send_recv(entity& from, entity& to, bool wakeup)
+    {
+        uint64_t send_data = ucs_generate_uuid(0);
+        void *send_req = ucp_stream_send_nb(from.ep(), &send_data, 1,
+                                            ucp_dt_make_contig(sizeof(send_data)),
+                                            scomplete_cb, 0);
+        if (send_req == NULL) {
+        } else if (UCS_PTR_IS_ERR(send_req)) {
+            ASSERT_UCS_OK(UCS_PTR_STATUS(send_req));
+        } else {
+            while (!ucp_request_is_completed(send_req)) {
+                check_events(from.worker(), to.worker(), wakeup, send_req);
+            }
+            /* Check if the error was completed due to the error handling flow.
+             * If so, skip the test since a valid error occurred - the one expected
+             * from the error handling flow - cases of failure to handle long worker
+             * address or transport doesn't support the error handling requirement */
+            if (ucp_request_check_status(send_req) == UCS_ERR_UNREACHABLE) {
+                ucp_request_free(send_req);
+                UCS_TEST_SKIP_R("Skipping due an unreachable destination (unsupported "
+                                "feature or too long worker address or no "
+                                "supported transport to send partial worker "
+                                "address)");
+            }
+
+            ucp_request_free(send_req);
+        }
+
+        ucp_stream_poll_ep_t poll_eps[1];
+        ssize_t ep_count;
+        do {
+            progress();
+            ep_count = ucp_stream_worker_poll(to.worker(), poll_eps, 1, 0);
+        } while (ep_count == 0);
+        ASSERT_EQ(1,                  ep_count);
+        EXPECT_EQ(to.ep(),            poll_eps->ep);
+        EXPECT_EQ((void *)0xdeadbeaf, poll_eps->user_data);
+
+        uint64_t recv_data   = 0;
+        size_t   recv_length = 0;
+        void *recv_req = ucp_stream_recv_nb(to.ep(), &recv_data, 1,
+                                            ucp_dt_make_contig(sizeof(recv_data)),
+                                            rstream_complete_cb, &recv_length,
+                                            UCP_STREAM_RECV_FLAG_WAITALL);
+        if (recv_req != NULL) {
+            ASSERT_FALSE(UCS_PTR_IS_ERR(recv_req));
             while (!ucp_request_is_completed(recv_req)) {
                 check_events(from.worker(), to.worker(), wakeup, recv_req);
             }
@@ -279,7 +343,11 @@ public:
 
         wait_for_server_ep(wakeup);
 
-        tag_send_recv(receiver(), sender(), wakeup);
+        if (GetParam().variant == EP_ADDR_STREAM) {
+            stream_send_recv(sender(), receiver(), wakeup);
+        } else {
+            tag_send_recv(sender(), receiver(), wakeup);
+        }
     }
 
     void listen_and_communicate(ucp_test_base::entity::listen_cb_type_t cb_type,
@@ -311,9 +379,11 @@ public:
 
 protected:
     ucp_test_base::entity::listen_cb_type_t cb_type() const {
-        return GetParam().variant == EP_ADDR ?
-               ucp_test_base::entity::LISTEN_CB_EP_ADDR :
-               ucp_test_base::entity::LISTEN_CB_EP;
+        if ((GetParam().variant == EP_ADDR) ||
+            (GetParam().variant == EP_ADDR_STREAM)) {
+            return ucp_test_base::entity::LISTEN_CB_EP_ADDR;
+        }
+        return ucp_test_base::entity::LISTEN_CB_EP;
     }
 
     volatile int err_handler_count;

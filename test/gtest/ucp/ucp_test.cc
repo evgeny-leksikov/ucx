@@ -411,8 +411,10 @@ ucp_ep_h ucp_test_base::entity::accept(ucp_worker_h worker,
 {
     ucp_ep_h        ep;
     ucp_ep_params_t ep_params;
-    ep_params.field_mask  = UCP_EP_PARAM_FIELD_EP_ADDR;
+    ep_params.field_mask  = UCP_EP_PARAM_FIELD_EP_ADDR |
+                            UCP_EP_PARAM_FIELD_USER_DATA;
     ep_params.ep_addr     = ep_addr;
+    ep_params.user_data   = (void *)0xdeadbeaf;
 
     ucs_status_t status   = ucp_ep_create(worker, &ep_params, &ep);
     ASSERT_UCS_OK(status);
