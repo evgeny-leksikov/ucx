@@ -605,6 +605,8 @@ void test_ucp_stream_many2one::do_send_worker_poll_test(ucp_datatype_t dt)
             for (ssize_t i = 0; i < count; ++i) {
                 char   *rdata;
                 size_t length;
+                EXPECT_TRUE (poll_eps[i].flags & UCP_STREAM_POLL_FLAG_IN);
+                EXPECT_FALSE(poll_eps[i].flags & UCP_STREAM_POLL_FLAG_NVAL);
                 while ((rdata = (char *)ucp_stream_recv_data_nb(poll_eps[i].ep,
                                                                 &length)) != NULL) {
                     ASSERT_FALSE(UCS_PTR_IS_ERR(rdata));
