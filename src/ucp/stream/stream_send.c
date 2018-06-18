@@ -95,6 +95,12 @@ UCS_PROFILE_FUNC(ucs_status_ptr_t, ucp_stream_send_nb,
         goto out;
     }
 
+    ucs_assert(!(ep->flags & UCP_EP_FLAG_HIDDEN));
+    if (ucs_unlikely(ep->flags & (UCP_EP_FLAG_FIN_MSG_RECVD))) {
+        ret = UCS_STATUS_PTR(UCS_ERR_REMOTE_DISCONNECT);
+        goto out;
+    }
+
     status = ucp_ep_resolve_dest_ep_ptr(ep, ep->am_lane);
     if (status != UCS_OK) {
         ret = UCS_STATUS_PTR(status);

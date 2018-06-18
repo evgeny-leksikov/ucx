@@ -6,6 +6,7 @@
 
 #include "ucp_listener.h"
 
+#include <ucp/stream/stream.h>
 #include <ucp/wireup/wireup_ep.h>
 #include <ucp/core/ucp_ep.inl>
 #include <ucs/debug/log.h>
@@ -16,7 +17,11 @@ static unsigned ucp_listener_accept_cb_progress(void *arg)
 {
     ucp_ep_h ep = arg;
 
-    ep->flags |= UCP_EP_FLAG_USED;
+    ep->flags &= ~UCP_EP_FLAG_HIDDEN;
+    if (ep->flags & UCP_EP_FLAG_STREAM_HAS_DATA) {
+        /* return the EP from ucp_stream_worker_poll */
+        ucp_stream_ep_enqueue(ucp_ep_ext_proto(ep), ep->worker);
+    }
     ucp_ep_ext_gen(ep)->listener->cb(ep, ucp_ep_ext_gen(ep)->listener->arg);
 
     return 0;
@@ -64,10 +69,10 @@ static unsigned ucp_listener_conn_request_progress(void *arg)
 
     if (accept->listener->cb != NULL) {
         if (ep->flags & UCP_EP_FLAG_LISTENER) {
-            ep->flags &= ~UCP_EP_FLAG_USED;
+            ep->flags |= UCP_EP_FLAG_HIDDEN;
             ucp_ep_ext_gen(ep)->listener = accept->listener;
         } else {
-            ep->flags |= UCP_EP_FLAG_USED;
+            ep->flags &= ~UCP_EP_FLAG_HIDDEN;
             accept->listener->cb(ep, accept->listener->arg);
         }
     }

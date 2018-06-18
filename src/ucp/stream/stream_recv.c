@@ -65,7 +65,9 @@ ucp_stream_rdesc_dequeue(ucp_ep_ext_proto_t *ep_ext)
     ucs_assert(ucp_stream_ep_has_data(ep_ext));
     if (ucs_unlikely(ucs_queue_is_empty(&ep_ext->stream.match_q))) {
         ucp_ep_from_ext_proto(ep_ext)->flags &= ~UCP_EP_FLAG_STREAM_HAS_DATA;
-        if (ucp_stream_ep_is_queued(ep_ext)) {
+        if (ucp_stream_ep_is_queued(ep_ext) &&
+            ucs_unlikely(!(ucp_ep_from_ext_proto(ep_ext)->flags &
+                           UCP_EP_FLAG_FIN_MSG_RECVD))) {
             ucp_stream_ep_dequeue(ep_ext);
         }
     }
@@ -413,6 +415,9 @@ void ucp_stream_ep_cleanup(ucp_ep_h ep)
             ucp_stream_data_release(ep, data);
         }
     }
+    if (ucp_stream_ep_is_queued(ucp_ep_ext_proto(ep))) {
+        ucp_stream_ep_dequeue(ucp_ep_ext_proto(ep));
+    }
 }
 
 void ucp_stream_ep_activate(ucp_ep_h ep)
@@ -440,12 +445,6 @@ ucp_stream_am_handler(void *am_arg, void *am_data, size_t am_length,
     ep     = ucp_worker_get_ep_by_ptr(worker, data->hdr.ep_ptr);
     ep_ext = ucp_ep_ext_proto(ep);
 
-    if (ucs_unlikely(ep->flags & UCP_EP_FLAG_CLOSED)) {
-        ucs_trace_data("ep %p: stream is invalid", ep);
-        /* drop the data */
-        return UCS_OK;
-    }
-
     status = ucp_stream_am_data_process(worker, ep_ext, data,
                                         am_length - sizeof(data->hdr),
                                         am_flags);
@@ -456,7 +455,7 @@ ucp_stream_am_handler(void *am_arg, void *am_data, size_t am_length,
 
     ucs_assert(status == UCS_INPROGRESS);
 
-    if (!ucp_stream_ep_is_queued(ep_ext) && (ep->flags & UCP_EP_FLAG_USED)) {
+    if (!ucp_stream_ep_is_queued(ep_ext) && !(ep->flags & UCP_EP_FLAG_HIDDEN)) {
         ucp_stream_ep_enqueue(ep_ext, worker);
     }
 

@@ -417,12 +417,12 @@ static unsigned ucp_worker_iface_err_handle_progress(void *arg)
     ucp_ep->am_lane   = 0;
 
     if (ucp_ep_ext_gen(ucp_ep)->err_cb != NULL) {
-        ucs_assert(ucp_ep->flags & UCP_EP_FLAG_USED);
+        ucs_assert(!(ucp_ep->flags & UCP_EP_FLAG_HIDDEN));
         ucs_debug("ep %p: calling user error callback %p with arg %p", ucp_ep,
                   ucp_ep_ext_gen(ucp_ep)->err_cb,  ucp_ep_ext_gen(ucp_ep)->user_data);
         ucp_ep_ext_gen(ucp_ep)->err_cb(ucp_ep_ext_gen(ucp_ep)->user_data, ucp_ep,
                                        status);
-    } else if (!(ucp_ep->flags & UCP_EP_FLAG_USED)) {
+    } else if (ucp_ep->flags & UCP_EP_FLAG_HIDDEN) {
         ucs_debug("ep %p: destroy internal endpoint due to peer failure", ucp_ep);
         ucp_ep_disconnected(ucp_ep, 1);
     }
@@ -482,10 +482,16 @@ found_ucp_ep:
     /* set endpoint to failed to prevent wireup_ep switch */
     ucp_ep->flags |= UCP_EP_FLAG_FAILED;
 
+    /* NOTE: if user has not requested error handling on the endpoint,
+     *       the failure is considered unhandled */
     if (ucp_ep_config(ucp_ep)->key.err_mode == UCP_ERR_HANDLING_MODE_NONE) {
-        /* NOTE: if user has not requested error handling on the endpoint,
-         *       the failure is considered unhandled */
-        ret_status = status;
+        /* ignore timeout error if the endpoint is in closure phase */
+        if ((ucp_ep->flags & UCP_EP_MASK_FIN_DONE) &&
+            (status == UCS_ERR_ENDPOINT_TIMEOUT)) {
+            ret_status = UCS_OK;
+        } else {
+            ret_status = status;
+        }
         goto out;
     }
 
@@ -509,7 +515,7 @@ found_ucp_ep:
                                       &prog_id);
 
     if ((ucp_ep_ext_gen(ucp_ep)->err_cb == NULL) &&
-        (ucp_ep->flags & UCP_EP_FLAG_USED)) {
+        !(ucp_ep->flags & UCP_EP_FLAG_HIDDEN)) {
         rsc_index = ucp_ep_get_rsc_index(ucp_ep, lane);
         tl_rsc    = &worker->context->tl_rscs[rsc_index].tl_rsc;
         ucs_error("error '%s' will not be handled for ep %p - "
@@ -1190,13 +1196,9 @@ ucs_status_t ucp_worker_create(ucp_context_h context,
     ucs_list_head_init(&worker->all_eps);
     ucp_ep_match_init(&worker->ep_match_ctx);
 
-    UCS_STATIC_ASSERT(sizeof(ucp_ep_ext_gen_t) <= sizeof(ucp_ep_t));
-    if (context->config.features & UCP_FEATURE_STREAM) {
-        UCS_STATIC_ASSERT(sizeof(ucp_ep_ext_proto_t) <= sizeof(ucp_ep_t));
-        ucs_strided_alloc_init(&worker->ep_alloc, sizeof(ucp_ep_t), 3);
-    } else {
-        ucs_strided_alloc_init(&worker->ep_alloc, sizeof(ucp_ep_t), 2);
-    }
+    UCS_STATIC_ASSERT(sizeof(ucp_ep_ext_gen_t)   <= sizeof(ucp_ep_t));
+    UCS_STATIC_ASSERT(sizeof(ucp_ep_ext_proto_t) <= sizeof(ucp_ep_t));
+    ucs_strided_alloc_init(&worker->ep_alloc, sizeof(ucp_ep_t), 3);
 
     if (params->field_mask & UCP_WORKER_PARAM_FIELD_USER_DATA) {
         worker->user_data = params->user_data;
@@ -1393,17 +1395,26 @@ ssize_t ucp_stream_worker_poll(ucp_worker_h worker,
                                ucp_stream_poll_ep_t *poll_eps,
                                size_t max_eps, unsigned flags)
 {
-    ucp_ep_ext_proto_t *ep_ext;
-    ssize_t count = 0;
-    ucp_ep_h ep;
+    ssize_t              count = 0;
+    ucp_ep_ext_proto_t   *ep_ext;
+    ucp_ep_h             ep;
+    ucp_stream_poll_ep_t *poll_ep;
 
     UCP_THREAD_CS_ENTER_CONDITIONAL(&worker->mt_lock);
 
     while ((count < max_eps) && !ucs_list_is_empty(&worker->stream_ready_eps)) {
         ep_ext                    = ucp_stream_worker_dequeue_ep_head(worker);
         ep                        = ucp_ep_from_ext_proto(ep_ext);
-        poll_eps[count].ep        = ep;
-        poll_eps[count].user_data = ucp_ep_ext_gen(ep)->user_data;
+        poll_ep                   = &poll_eps[count];
+        poll_ep->ep         = ep;
+        poll_ep->user_data  = ucp_ep_ext_gen(ep)->user_data;
+        poll_ep->flags      = 0;
+        if (ucs_likely(ep->flags & UCP_EP_FLAG_STREAM_HAS_DATA)) {
+            poll_ep->flags |= UCP_STREAM_POLL_FLAG_IN;
+        }
+        if (ucs_unlikely(ep->flags & UCP_EP_FLAG_FIN_MSG_RECVD)) {
+            poll_ep->flags |= UCP_STREAM_POLL_FLAG_NVAL;
+        }
         ++count;
     }
 
@@ -1615,4 +1626,18 @@ void ucp_worker_print_info(ucp_worker_h worker, FILE *stream)
     fprintf(stream, "#\n");
 
     UCP_THREAD_CS_EXIT_CONDITIONAL(&worker->mt_lock);
+}
+
+/* get ep by uuid received from remote side */
+ucp_ep_h ucp_worker_get_ep_by_uuid(ucp_worker_h worker, uint64_t uuid)
+{
+    ucp_ep_ext_gen_t *ep_ext;
+
+    ucs_list_for_each(ep_ext, &worker->all_eps, ep_list) {
+        if (ep_ext->ep_match.dest_uuid == uuid) {
+            return ucp_ep_from_ext_gen(ep_ext);
+        }
+    }
+
+    return NULL;
 }
