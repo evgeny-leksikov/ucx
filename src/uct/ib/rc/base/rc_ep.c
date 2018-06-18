@@ -83,7 +83,7 @@ void uct_rc_txqp_cleanup(uct_rc_txqp_t *txqp)
         ucs_warn("ibv_destroy_qp() returned %d: %m", ret);
     }
 
-    uct_rc_txqp_purge_outstanding(txqp, UCS_ERR_CANCELED, 1);
+    uct_rc_txqp_purge_outstanding(txqp, UCS_ERR_CANCELED, 0);
     UCS_STATS_NODE_FREE(txqp->stats);
 }
 
