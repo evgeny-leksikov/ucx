@@ -102,6 +102,11 @@ ucs_status_t ucp_worker_flush(ucp_worker_h worker);
  * @ingroup UCP_ENDPOINT
  * @brief Modify endpoint parameters.
  *
+ * @deprecated Use @ref ucp_listener_accept_conn_handler_t instead of @ref
+ *             ucp_listener_accept_handler_t, if you have other use case please
+ *             submit an issue on https://github.com/openucx/ucx or report to
+ *             ucx-group@elist.ornl.gov
+ *
  * This routine modifies @ref ucp_ep_h "endpoint" created by @ref ucp_ep_create
  * or @ref ucp_listener_accept_callback_t. For example, this API can be used
  * to setup custom parameters like @ref ucp_ep_params_t::user_data or
@@ -125,10 +130,6 @@ ucs_status_t ucp_worker_flush(ucp_worker_h worker);
  *
  * @note See the documentation of @ref ucp_ep_params_t for details, only some of
  *       the parameters can be modified.
- * @deprecated Use @ref ucp_listener_accept_conn_handler_t instead of @ref
- *             ucp_listener_accept_handler_t, if you have other use case please
- *             submit an issue on https://github.com/openucx/ucx or report to
- *             ucx-group@elist.ornl.gov
  */
 ucs_status_ptr_t ucp_ep_modify_nb(ucp_ep_h ep, const ucp_ep_params_t *params);
 

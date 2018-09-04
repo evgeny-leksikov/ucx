@@ -49,9 +49,9 @@ public:
 
     public:
         typedef enum {
-            LISTEN_CB_EP,
-            LISTEN_CB_CONN,
-            LISTEN_CB_REJECT
+            LISTEN_CB_EP,       /* User's callback accepts ucp_ep_h */
+            LISTEN_CB_CONN,     /* User's callback accepts ucp_conn_request_h */
+            LISTEN_CB_REJECT    /* User's callback rejects ucp_conn_request_h */
         } listen_cb_type_t;
 
         entity(const ucp_test_param& test_param, ucp_config_t* ucp_config,

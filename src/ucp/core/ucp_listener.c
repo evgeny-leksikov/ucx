@@ -63,9 +63,10 @@ static unsigned ucp_listener_conn_request_progress(void *arg)
     ucp_ep_h ep;
     ucs_status_t status;
 
-    ucs_trace_func("listener=%p is_ep=%d", accept->listener, accept->is_ep);
+    ucs_trace_func("listener=%p ep=%p conn_request= %p", accept->listener,
+                   accept->ep, accept->conn_request);
 
-    if (accept->is_ep) {
+    if (accept->ep) {
         ep = accept->ep;
         ucs_trace_func("listener=%p ep=%p", accept->listener, ep);
         if (!(ep->flags & UCP_EP_FLAG_LISTENER)) {
@@ -93,6 +94,7 @@ static unsigned ucp_listener_conn_request_progress(void *arg)
             }
         }
     } else if (accept->listener->conn_cb != NULL) {
+        ucs_assert(accept->conn_request != NULL);
         accept->listener->conn_cb(accept->conn_request, accept->listener->arg);
     }
 
@@ -110,22 +112,22 @@ static int ucp_listener_remove_filter(const ucs_callbackq_elem_t *elem,
 }
 
 static ucs_status_t
-ucp_listener_ep_conn_create(ucp_listener_h listener, void *id,
-                            const ucp_wireup_sockaddr_priv_t *client_data,
+ucp_listener_ep_conn_create(ucp_listener_h listener, uct_conn_request_h uct_req,
+                            const ucp_wireup_client_data_t *client_data,
                             size_t length, ucp_listener_accept_t *accept)
 {
     accept->listener     = listener;
-    accept->is_ep        = 0;
+    accept->ep           = NULL;
     accept->conn_request = ucs_malloc(ucs_offsetof(ucp_conn_request_t,
-                                                   priv_addr) +
-                                      length, "accept connection request");
+                                                   client_data) + length,
+                                      "accept connection request");
     if (accept->conn_request == NULL) {
         return UCS_ERR_NO_MEMORY;
     }
 
     accept->conn_request->listener = listener;
-    accept->conn_request->id       = id;
-    memcpy(&accept->conn_request->priv_addr, client_data, length);
+    accept->conn_request->uct_req  = uct_req;
+    memcpy(&accept->conn_request->client_data, client_data, length);
 
     return UCS_OK;
 }
@@ -135,9 +137,9 @@ ucp_listener_conn_request_callback(uct_iface_h tl_iface, void *arg,
                                    uct_conn_request_h conn_request,
                                    const void *conn_priv_data, size_t length)
 {
-    ucp_listener_h listener                       = arg;
-    const ucp_wireup_sockaddr_priv_t *client_data = conn_priv_data;
-    uct_worker_cb_id_t prog_id                    = UCS_CALLBACKQ_ID_NULL;
+    ucp_listener_h listener                     = arg;
+    const ucp_wireup_client_data_t *client_data = conn_priv_data;
+    uct_worker_cb_id_t prog_id                  = UCS_CALLBACKQ_ID_NULL;
     ucp_listener_accept_t *accept;
     ucp_worker_h worker;
     ucs_status_t status;
@@ -145,9 +147,12 @@ ucp_listener_conn_request_callback(uct_iface_h tl_iface, void *arg,
     ucs_trace("listener %p: got connection request", listener);
 
     /* Defer wireup init and user's callback to be invoked from the main thread */
-    accept = ucs_malloc(sizeof(*accept), "ucp_listener_accept");
-    ucs_assertv_always(accept != NULL,
-                       "failed to allocate listener accept context");
+    accept = ucs_calloc(1, sizeof(*accept), "ucp_listener_accept");
+    if (accept == NULL) {
+        ucs_error("failed to allocate listener accept context");
+        status = UCS_ERR_NO_MEMORY;
+        goto reject;
+    }
 
     worker = listener->wiface.worker;
     UCP_THREAD_CS_ENTER_CONDITIONAL(&worker->mt_lock);
@@ -158,19 +163,20 @@ ucp_listener_conn_request_callback(uct_iface_h tl_iface, void *arg,
                                              client_data, length, accept);
     } else {
         accept->listener = listener;
-        accept->is_ep    = 1;
         status = ucp_ep_create_accept(worker, client_data, &accept->ep);
         if (status == UCS_OK) {
+            ucs_debug("accepting connection request %p on TL iface %p",
+                      conn_request, tl_iface);
             uct_iface_accept(tl_iface, conn_request);
-        } else {
-            uct_iface_reject(tl_iface, conn_request);
         }
     }
 
     UCS_ASYNC_UNBLOCK(&worker->async);
     UCP_THREAD_CS_EXIT_CONDITIONAL(&worker->mt_lock);
 
-    ucs_assertv_always(status == UCS_OK, "connection request can't be handled");
+    if (status != UCS_OK) {
+        goto reject;
+    }
 
     uct_worker_progress_register_safe(worker->uct,
                                       ucp_listener_conn_request_progress,
@@ -180,6 +186,20 @@ ucp_listener_conn_request_callback(uct_iface_h tl_iface, void *arg,
     /* If the worker supports the UCP_FEATURE_WAKEUP feature, signal the user so
      * that he can wake-up on this event */
     ucp_worker_signal_internal(worker);
+    return;
+
+reject:
+    if (accept != NULL) {
+        if (accept->conn_request != NULL) {
+            ucs_free(conn_request);
+        }
+
+        ucs_free(accept);
+    }
+
+    ucs_warn("rejecting connection request %p on TL iface %p, reason %s",
+             conn_request, tl_iface, ucs_status_string(UCS_ERR_NO_MEMORY));
+    uct_iface_reject(tl_iface, conn_request);
 }
 
 ucs_status_t ucp_listener_create(ucp_worker_h worker,
@@ -204,7 +224,7 @@ ucs_status_t ucp_listener_create(ucp_worker_h worker,
 
     if (ucs_test_all_flags(params->field_mask,
                            UCP_LISTENER_PARAM_FIELD_ACCEPT_HANDLER |
-                           UCP_LISTENER_PARAM_FIELD_ACCEPT_CONN_HANDLER)) {
+                           UCP_LISTENER_PARAM_FIELD_CONN_HANDLER)) {
         ucs_error("Only one accept handler is valid");
         return UCS_ERR_INVALID_PARAM;
     }
@@ -226,7 +246,7 @@ ucs_status_t ucp_listener_create(ucp_worker_h worker,
             continue;
         }
 
-        listener = ucs_malloc(sizeof(*listener), "ucp_listener");
+        listener = ucs_calloc(1, sizeof(*listener), "ucp_listener");
         if (listener == NULL) {
             status = UCS_ERR_NO_MEMORY;
             goto out;
@@ -236,19 +256,12 @@ ucs_status_t ucp_listener_create(ucp_worker_h worker,
             UCP_CHECK_PARAM_NON_NULL(params->accept_handler.cb, status,
                                      goto err_free);
             listener->accept_cb = params->accept_handler.cb;
-            listener->conn_cb   = NULL;
             listener->arg       = params->accept_handler.arg;
-        } else if (params->field_mask &
-                   UCP_LISTENER_PARAM_FIELD_ACCEPT_CONN_HANDLER) {
-            UCP_CHECK_PARAM_NON_NULL(params->accept_conn_handler.cb, status,
+        } else if (params->field_mask & UCP_LISTENER_PARAM_FIELD_CONN_HANDLER) {
+            UCP_CHECK_PARAM_NON_NULL(params->conn_handler.cb, status,
                                      goto err_free);
-            listener->accept_cb = NULL;
-            listener->conn_cb   = params->accept_conn_handler.cb;
-            listener->arg       = params->accept_conn_handler.arg;
-        } else {
-            listener->accept_cb = NULL;
-            listener->conn_cb   = NULL;
-            listener->arg       = NULL;
+            listener->conn_cb   = params->conn_handler.cb;
+            listener->arg       = params->conn_handler.arg;
         }
 
         memset(&iface_params, 0, sizeof(iface_params));
@@ -303,19 +316,21 @@ void ucp_listener_destroy(ucp_listener_h listener)
     ucs_free(listener);
 }
 
-void ucp_listener_reject(ucp_listener_h listener,
-                         ucp_conn_request_h conn_request)
+ucs_status_t ucp_listener_reject(ucp_listener_h listener,
+                                 ucp_conn_request_h conn_request)
 {
     ucp_worker_h worker = listener->wiface.worker;
 
     UCP_THREAD_CS_ENTER_CONDITIONAL(&worker->mt_lock);
     UCS_ASYNC_BLOCK(&worker->async);
 
-    uct_iface_reject(listener->wiface.iface, conn_request->id);
+    uct_iface_reject(listener->wiface.iface, conn_request->uct_req);
 
     UCS_ASYNC_UNBLOCK(&worker->async);
     UCP_THREAD_CS_EXIT_CONDITIONAL(&worker->mt_lock);
 
     ucs_free(conn_request);
+
+    return UCS_OK;
 }
 

@@ -367,8 +367,7 @@ typedef void (*ucp_listener_accept_callback_t)(ucp_ep_h ep, void *arg);
  *  @param [in]  arg            User's argument for the callback.
  */
 typedef void
-(*ucp_listener_accept_conn_callback_t)(ucp_conn_request_h conn_request,
-                                       void *arg);
+(*ucp_listener_conn_callback_t)(ucp_conn_request_h conn_request, void *arg);
 
 
 /**
@@ -386,12 +385,12 @@ typedef void
  * If the callback is called from different threads, this callback needs thread
  * safety support.
  */
-typedef struct ucp_listener_accept_conn_handler {
-   ucp_listener_accept_conn_callback_t  cb;      /**< Connection request
-                                                      accepting callback */
-   void                                 *arg;    /**< User defined argument for
-                                                      the callback */
-} ucp_listener_accept_conn_handler_t;
+typedef struct ucp_listener_conn_handler {
+   ucp_listener_conn_callback_t cb;      /**< Connection request accepting
+                                              callback */
+   void                         *arg;    /**< User defined argument for the
+                                              callback */
+} ucp_listener_conn_handler_t;
 
 
 /**
@@ -489,15 +488,11 @@ typedef struct ucp_ep_params {
     uint64_t                field_mask;
 
     /**
-     * Destination address; one of the following fields is mandatory for
-     * filling:
-     *  - ucp_ep_params_t::address
-     *  - ucp_ep_params_t::sockaddr
-     *  - ucp_ep_params_t::conn_request
-     * This field should be set along with its corresponding bit in the
-     * field_mask - @ref UCP_EP_PARAM_FIELD_REMOTE_ADDRESS and must be obtained
-     * using @ref ucp_worker_get_address. This field cannot be changed by
-     * @ref ucp_ep_modify_nb.
+     * Destination address; this field should be set along with its
+     * corresponding bit in the field_mask - @ref
+     * UCP_EP_PARAM_FIELD_REMOTE_ADDRESS and must be obtained using @ref
+     * ucp_worker_get_address. This field cannot be changed by @ref
+     * ucp_ep_modify_nb.
      */
     const ucp_address_t     *address;
 
@@ -529,29 +524,21 @@ typedef struct ucp_ep_params {
      unsigned               flags;
 
     /**
-     * Destination address in the form of a sockaddr; one of the following
-     * fields is mandatory for filling:
-     *  - ucp_ep_params_t::address
-     *  - ucp_ep_params_t::sockaddr
-     *  - ucp_ep_params_t::conn_request
-     * This field should be set along with its corresponding bit in the
-     * field_mask - @ref UCP_EP_PARAM_FIELD_SOCK_ADDR and must be obtained
-     * from the user, it means that this type of the endpoint creation is
-     * possible only on client side in client-server connection establishment
-     * flow. This field cannot be changed by @ref ucp_ep_modify_nb.
+     * Destination address in the form of a sockaddr; this field should be set
+     * along with its corresponding bit in the field_mask - @ref
+     * UCP_EP_PARAM_FIELD_SOCK_ADDR and must be obtained from the user, it means
+     * that this type of the endpoint creation is possible only on client side
+     * in client-server connection establishment flow. This field cannot be
+     * changed by @ref ucp_ep_modify_nb.
      */
     ucs_sock_addr_t         sockaddr;
 
     /**
-     * Connection request from client; one of the following fields is mandatory
-     * for filling:
-     *  - ucp_ep_params_t::address
-     *  - ucp_ep_params_t::sockaddr
-     *  - ucp_ep_params_t::conn_request
-     * This field should be set along with its corresponding bit in the
-     * field_mask - @ref UCP_EP_PARAM_FIELD_CONN_REQUEST and must be obtained
-     * using @ref ucp_listener_accept_addr_callback_t, it means that this type
-     * of the endpoint creation is possible only on server side in client-server
+     * Connection request from client;this field should be set along with its
+     * corresponding bit in the field_mask - @ref
+     * UCP_EP_PARAM_FIELD_CONN_REQUEST and must be obtained using @ref
+     * ucp_listener_accept_addr_callback_t, it means that this type of the
+     * endpoint creation is possible only on server side in client-server
      * connection establishment flow. This field cannot be changed by
      * @ref ucp_ep_modify_nb.
      */

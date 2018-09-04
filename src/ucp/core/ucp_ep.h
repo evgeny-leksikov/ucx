@@ -275,9 +275,9 @@ typedef struct ucp_ep {
  * Endpoint extension for generic non fast-path data
  */
 typedef struct {
+    uintptr_t                     dest_ep_ptr;   /* Remote EP pointer */
     void                          *user_data;    /* User data associated with ep */
     ucs_list_link_t               ep_list;       /* List entry in worker's all eps list */
-    uintptr_t                     dest_ep_ptr;   /* Remote EP pointer */
     ucp_err_handler_cb_t          err_cb;        /* Error handler */
 
     union {
@@ -311,13 +311,13 @@ typedef struct ucp_wireup_client_data {
     uint8_t                   is_full_addr;  /**< Whether the attached address is
                                                   full or partial */
     /* packed worker address follows */
-} UCS_S_PACKED ucp_wireup_sockaddr_priv_t;
+} UCS_S_PACKED ucp_wireup_client_data_t;
 
 
 typedef struct ucp_conn_request {
-    struct ucp_listener         *listener;
-    void                        *id;
-    ucp_wireup_sockaddr_priv_t  priv_addr;
+    ucp_listener_h              listener;
+    uct_conn_request_h          uct_req;
+    ucp_wireup_client_data_t    client_data;
     /* packed worker address follows */
 } UCS_S_PACKED ucp_conn_request_t;
 
@@ -347,7 +347,7 @@ ucs_status_t ucp_ep_create_to_worker_addr(ucp_worker_h worker,
                                           const char *message, ucp_ep_h *ep_p);
 
 ucs_status_t ucp_ep_create_accept(ucp_worker_h worker,
-                                  const ucp_wireup_sockaddr_priv_t *ep_addr,
+                                  const ucp_wireup_client_data_t *client_data,
                                   ucp_ep_h *ep_p);
 
 ucs_status_ptr_t ucp_ep_flush_internal(ucp_ep_h ep, unsigned uct_flags,

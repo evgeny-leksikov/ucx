@@ -185,7 +185,7 @@ enum ucp_listener_params_field {
 
     /**< User's callback and argument for handling the incoming connection
      *   request. */
-    UCP_LISTENER_PARAM_FIELD_ACCEPT_CONN_HANDLER = UCS_BIT(2)
+    UCP_LISTENER_PARAM_FIELD_CONN_HANDLER        = UCS_BIT(2)
 };
 
 
@@ -835,10 +835,10 @@ typedef struct ucp_listener_params {
     /**
      * Handler to processing of incoming connection request in a client-server
      * connection flow. In order for the callback inside this handler to be
-     * invoked, the UCP_LISTENER_PARAM_FIELD_ACCEPT_CONN_HANDLER needs to be set
-     * in the field_mask.
+     * invoked, the UCP_LISTENER_PARAM_FIELD_CONN_HANDLER needs to be set  in
+     * the field_mask.
      */
-    ucp_listener_accept_conn_handler_t  accept_conn_handler;
+    ucp_listener_conn_handler_t         conn_handler;
 } ucp_listener_params_t;
 
 
@@ -1548,6 +1548,12 @@ void ucp_listener_destroy(ucp_listener_h listener);
  *
  * @return Error code as defined by @ref ucs_status_t
  *
+ * @note Destination address is mandatory for filling in one from supported
+ * formats as it is required for following fields:
+ *  - ucp_ep_params_t::address
+ *  - ucp_ep_params_t::sockaddr
+ *  - ucp_ep_params_t::conn_request
+
  * @note By default, ucp_ep_create() will connect an endpoint to itself if
  * the endpoint is destined to the same @a worker on which it was created,
  * i.e. @a params.address belongs to @a worker. This behavior can be changed by
@@ -1600,9 +1606,11 @@ ucs_status_ptr_t ucp_ep_close_nb(ucp_ep_h ep, unsigned mode);
  *                              @a conn_request.
  * @param [in]  conn_request    Handle to the connection request to reject.
  *
+ * @return Error code as defined by @ref ucs_status_t
+ *
  */
-void ucp_listener_reject(ucp_listener_h listener,
-                         ucp_conn_request_h conn_request);
+ucs_status_t ucp_listener_reject(ucp_listener_h listener,
+                                 ucp_conn_request_h conn_request);
 
 
 /**

@@ -32,9 +32,12 @@ public:
     }
 
     enum {
-        MT_PARAM_VARIANT = DEFAULT_PARAM_VARIANT + 1,
-        CONN_REQ,
-        CONN_REQ_STREAM,
+        MT_PARAM_VARIANT = DEFAULT_PARAM_VARIANT + 1, /* Enabled worker level
+                                                         multi-threading */
+        CONN_REQ_TAG,                                 /* Accepting by ucp_conn_request_h,
+                                                         send/recv by TAG API */
+        CONN_REQ_STREAM                               /* Accepting by ucp_conn_request_h,
+                                                         send/recv by STREAM API */
     };
 
     typedef enum {
@@ -55,7 +58,7 @@ public:
                                      MT_PARAM_VARIANT, result,
                                      MULTI_THREAD_WORKER);
         generate_test_params_variant(ctx_params, name, test_case_name, tls,
-                                     CONN_REQ, result);
+                                     CONN_REQ_TAG, result);
         generate_test_params_variant(ctx_params, name, test_case_name, tls,
                                      CONN_REQ_STREAM, result);
         return result;
@@ -271,16 +274,16 @@ public:
                                        1, 0, rtag_complete_cb);
         } else {
             ASSERT_TRUE(send_recv_type == SEND_RECV_STREAM);
-            ucp_stream_poll_ep_t poll_eps[1];
+            ucp_stream_poll_ep_t poll_eps;
             ssize_t              ep_count;
             size_t               recv_length;
             do {
                 progress();
-                ep_count = ucp_stream_worker_poll(to.worker(), poll_eps, 1, 0);
+                ep_count = ucp_stream_worker_poll(to.worker(), &poll_eps, 1, 0);
             } while (ep_count == 0);
             ASSERT_EQ(1,                  ep_count);
-            EXPECT_EQ(to.ep(),            poll_eps->ep);
-            EXPECT_EQ((void *)0xdeadbeef, poll_eps->user_data);
+            EXPECT_EQ(to.ep(),            poll_eps.ep);
+            EXPECT_EQ((void *)0xdeadbeef, poll_eps.user_data);
 
             recv_req = ucp_stream_recv_nb(to.ep(), &recv_data, 1,
                                           ucp_dt_make_contig(sizeof(recv_data)),
@@ -434,7 +437,7 @@ public:
 
 protected:
     ucp_test_base::entity::listen_cb_type_t cb_type() const {
-        if ((GetParam().variant == CONN_REQ) ||
+        if ((GetParam().variant == CONN_REQ_TAG) ||
             (GetParam().variant == CONN_REQ_STREAM)) {
             return ucp_test_base::entity::LISTEN_CB_CONN;
         }
@@ -516,7 +519,7 @@ UCS_TEST_P(test_ucp_sockaddr_with_wakeup, wakeup) {
 
 UCS_TEST_P(test_ucp_sockaddr_with_wakeup, reject) {
     if (GetParam().variant > 0) {
-        UCS_TEST_SKIP_R("Not parameterized test");
+        UCS_TEST_SKIP_R("Invalid test parameter");
     }
 
     listen_and_reject(ucp_test_base::entity::LISTEN_CB_REJECT, true);

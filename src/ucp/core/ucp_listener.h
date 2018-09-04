@@ -20,8 +20,8 @@ typedef struct ucp_listener {
     ucp_listener_accept_callback_t      accept_cb; /* Listen accept callback
                                                       which creates an endpoint
                                                     */
-    ucp_listener_accept_conn_callback_t conn_cb;   /* Listen accept callback
-                                                      which creates a handle to
+    ucp_listener_conn_callback_t        conn_cb;   /* Listen callback which
+                                                      creates a handle to
                                                       connection request to the
                                                       remote endpoint */
     void                                *arg;      /* User's arg for the accept
@@ -36,16 +36,9 @@ typedef struct ucp_listener {
 typedef struct ucp_listener_accept {
     ucp_listener_h          listener;       /* Listener on which the connection
                                                was accepted */
-    int                     is_ep;          /* flag to indicate which field is
-                                               valid, if not 0 then @ref
-                                               ucp_listener_accept_t::ep, is
-                                               valid, otherwise @ref
-                                               ucp_listener_accept_t::addr. */
-    union {
-        ucp_ep_h            ep;             /* New endpoint which was created
+    ucp_ep_h                ep;             /* New endpoint which was created
                                                for the connection */
-        ucp_conn_request_t  *conn_request;  /* Connection request */
-    };
+    ucp_conn_request_t      *conn_request;  /* Connection request */
 } ucp_listener_accept_t;
 
 void ucp_listener_schedule_accept_cb(ucp_ep_h ep);
