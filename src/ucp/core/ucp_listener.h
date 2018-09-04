@@ -30,17 +30,6 @@ typedef struct ucp_listener {
 } ucp_listener_t;
 
 
-/**
- * Accepted connection on a listener
- */
-typedef struct ucp_listener_accept {
-    ucp_listener_h          listener;       /* Listener on which the connection
-                                               was accepted */
-    ucp_ep_h                ep;             /* New endpoint which was created
-                                               for the connection */
-    ucp_conn_request_t      *conn_request;  /* Connection request */
-} ucp_listener_accept_t;
-
 void ucp_listener_schedule_accept_cb(ucp_ep_h ep);
 
 int ucp_listener_accept_cb_remove_filter(const ucs_callbackq_elem_t *elem,
