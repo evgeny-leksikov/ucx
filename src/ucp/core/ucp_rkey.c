@@ -8,14 +8,10 @@
 #include "ucp_request.h"
 #include "ucp_ep.inl"
 
+#include <ucp/rma/rma.h>
 #include <ucs/datastruct/mpool.inl>
 #include <inttypes.h>
 
-
-static ucp_rkey_t ucp_mem_dummy_rkey = {
-                                        // TODO cache?
-    .md_map = 0
-};
 
 static ucp_md_map_t ucp_mem_dummy_buffer = 0;
 
@@ -173,13 +169,7 @@ ucs_status_t ucp_ep_rkey_unpack(ucp_ep_h ep, const void *rkey_buffer,
     ucs_trace("unpacking rkey with md_map 0x%lx", remote_md_map);
 
     /* MD map for the unpacked rkey */
-    md_map = remote_md_map & ucp_ep_config(ep)->key.reachable_md_map;
-    if (md_map == 0) {
-        /* Dummy key return ok */
-        *rkey_p = &ucp_mem_dummy_rkey;
-        return UCS_OK;
-    }
-
+    md_map   = remote_md_map & ucp_ep_config(ep)->key.reachable_md_map;
     md_count = ucs_count_one_bits(md_map);
     p       += sizeof(ucp_md_map_t);
 
@@ -296,10 +286,6 @@ ucs_status_t ucp_rkey_ptr(ucp_rkey_h rkey, uint64_t raddr, void **addr_p)
     unsigned i;
     ucs_status_t status;
 
-    if (rkey == &ucp_mem_dummy_rkey) {
-        return UCS_ERR_UNREACHABLE;
-    }
-
     num_rkeys = ucs_count_one_bits(rkey->md_map);
 
     for (i = 0; i < num_rkeys; ++i) {
@@ -318,10 +304,6 @@ void ucp_rkey_destroy(ucp_rkey_h rkey)
     ucp_context_h UCS_V_UNUSED context;
     unsigned num_rkeys;
     unsigned i;
-
-    if (rkey == &ucp_mem_dummy_rkey) {
-        return;
-    }
 
     num_rkeys = ucs_count_one_bits(rkey->md_map);
 
@@ -394,14 +376,23 @@ void ucp_rkey_resolve_inner(ucp_rkey_h rkey, ucp_ep_h ep)
 {
     ucp_context_h context   = ep->worker->context;
     ucp_ep_config_t *config = ucp_ep_config(ep);
+    ucs_status_t status;
     uct_rkey_t uct_rkey;
+    int rma_sw;
 
     rkey->cache.rma_lane = ucp_config_find_rma_lane(context, config,
                                                     UCT_MD_MEM_TYPE_HOST,
                                                     config->key.rma_lanes, rkey,
                                                     0, &uct_rkey);
-    if (rkey->cache.rma_lane != UCP_NULL_LANE) {
+    rma_sw = (rkey->cache.rma_lane == UCP_NULL_LANE);
+    if (rma_sw) {
+        rkey->cache.rma_proto     = &ucp_rma_sw_proto;
+        rkey->cache.rma_rkey      = UCT_INVALID_RKEY;
+        rkey->cache.max_put_short = 0;
+    } else {
+        rkey->cache.rma_proto     = &ucp_rma_basic_proto;
         rkey->cache.rma_rkey      = uct_rkey;
+        rkey->cache.rma_proto     = &ucp_rma_basic_proto;
         rkey->cache.max_put_short = config->rma[rkey->cache.rma_lane].max_put_short;
     }
 
@@ -411,11 +402,33 @@ void ucp_rkey_resolve_inner(ucp_rkey_h rkey, ucp_ep_h ep)
                                                     0, &uct_rkey);
     if (rkey->cache.amo_lane != UCP_NULL_LANE) {
         rkey->cache.amo_rkey      = uct_rkey;
+        rkey->cache.amo_proto     = &ucp_amo_basic_proto;
+    }
+
+    /* If we use sw rma need to resolve destination endpoint in order to
+     * receive responses and completion messages
+     */
+    if (rma_sw && (config->key.am_lane != UCP_NULL_LANE)) {
+        status = ucp_ep_resolve_dest_ep_ptr(ep, config->key.am_lane);
+        if (status != UCS_OK) {
+            ucs_debug("ep %p: failed to resolve destination ep, "
+                      "sw rma cannot be used", ep);
+        } else {
+            /* if we can resolve destination ep, save the active message lane
+             * as the rma lane in the rkey cache
+             */
+            if (rma_sw) {
+                rkey->cache.rma_lane = config->key.am_lane;
+            }
+        }
     }
 
     rkey->cache.ep_cfg_index  = ep->cfg_index;
-    ucs_trace("rkey %p ep %p @ cfg[%d] rma_lane %d amo_lane %d", rkey, ep,
-              ep->cfg_index, rkey->cache.rma_lane, rkey->cache.amo_lane);
+
+    ucs_trace("rkey %p ep %p @ cfg[%d] %s lane %d amo_lane %d",
+              rkey, ep, ep->cfg_index,
+              rkey->cache.rma_proto->name, rkey->cache.rma_lane,
+              rkey->cache.amo_lane);
 }
 
 ucp_lane_index_t ucp_rkey_get_rma_bw_lane(ucp_rkey_h rkey, ucp_ep_h ep,

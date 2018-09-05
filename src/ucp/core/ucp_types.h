@@ -15,6 +15,7 @@
 
 #define UCP_WORKER_NAME_MAX          32   /* Worker name for debugging */
 #define UCP_MIN_BCOPY                64   /* Minimal size for bcopy */
+#define UCP_FEATURE_AMO              (UCP_FEATURE_AMO32|UCP_FEATURE_AMO64)
 
 /* Resources */
 #define UCP_MAX_RESOURCES            UINT8_MAX
@@ -47,6 +48,8 @@ typedef struct ucp_unpacked_address     ucp_unpacked_address_t;
 typedef struct ucp_wireup_ep            ucp_wireup_ep_t;
 typedef struct ucp_proto                ucp_proto_t;
 typedef struct ucp_worker_iface         ucp_worker_iface_t;
+typedef struct ucp_rma_proto            ucp_rma_proto_t;
+typedef struct ucp_amo_proto            ucp_amo_proto_t;
 
 
 /**
@@ -74,6 +77,11 @@ enum {
     UCP_AM_ID_STREAM_DATA       =  15, /* Eager STREAM packet */
 
     UCP_AM_ID_RNDV_ATP          =  16, /* Ack-to-put complete after finishing a put_zcopy */
+
+    UCP_AM_ID_PUT               =  17, /* Remote memory write */
+    UCP_AM_ID_GET_REQ           =  18, /* Remote memory read request */
+    UCP_AM_ID_GET_REP           =  19, /* Remote memory read reply */
+    UCP_AM_ID_CMPL              =  22, /* Remote memory operation completion */
 
     UCP_AM_ID_LAST
 };
