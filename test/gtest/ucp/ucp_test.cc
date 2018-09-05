@@ -429,6 +429,11 @@ ucp_ep_h ucp_test_base::entity::accept(ucp_worker_h worker,
     ep_params.conn_request = conn_request;
 
     ucs_status_t status    = ucp_ep_create(worker, &ep_params, &ep);
+    if (status == UCS_ERR_UNREACHABLE) {
+        UCS_TEST_SKIP_R("Skipping due an unreachable destination (unsupported "
+                        "feature or no supported transport to send partial "
+                        "worker address)");
+    }
     ASSERT_UCS_OK(status);
     return ep;
 }

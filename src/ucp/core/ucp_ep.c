@@ -444,12 +444,8 @@ ucp_ep_create_api_conn_request(ucp_worker_h worker,
 
     status = ucp_ep_adjust_params(ep, params);
     if (status != UCS_OK) {
-        uct_iface_reject(conn_request->listener->wiface.iface,
-                         conn_request->uct_req);
         goto out_ep_destroy;
     }
-
-    uct_iface_accept(conn_request->listener->wiface.iface, conn_request->uct_req);
 
     if (ep->flags & UCP_EP_FLAG_LISTENER) {
         status = ucp_wireup_send_pre_request(ep);
@@ -469,6 +465,13 @@ out_ep_destroy:
     ucp_ep_destroy_internal(ep);
 
 out:
+    if (status == UCS_OK) {
+        uct_iface_accept(conn_request->listener->wiface.iface,
+                         conn_request->uct_req);
+    } else {
+        uct_iface_reject(conn_request->listener->wiface.iface,
+                         conn_request->uct_req);
+    }
     ucs_free(params->conn_request);
 
     return status;

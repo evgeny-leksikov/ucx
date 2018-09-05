@@ -67,21 +67,21 @@ public:
     void init()
     {
         test_base::init();
-        ucp_ep_params_t ep_params = ucp_test::get_ep_params();
+//        ucp_ep_params_t ep_params = ucp_test::get_ep_params();
 
         /* create dummy sender and receiver entities */
-        create_entity();
-        create_entity();
+//        create_entity();
+//        create_entity();
 
         /* try to connect the dummy entities to check if the tested transport
          * can support the requested features from ucp_params.
          * regular flow is used here (not client-server) */
-        wrap_errors();
-        sender().connect(&receiver(), ep_params, 0, 0);
-        restore_errors();
+//        wrap_errors();
+//        sender().connect(&receiver(), ep_params, 0, 0);
+//        restore_errors();
 
         /* remove the dummy sender and receiver entities */
-        ucp_test::cleanup();
+//        ucp_test::cleanup();
         /* create valid sender and receiver entities to be used in the test */
         ucp_test::init();
     }
