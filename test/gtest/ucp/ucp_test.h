@@ -73,7 +73,8 @@ public:
 
         void fence(int worker_index = 0) const;
 
-        void* disconnect_nb(int worker_index = 0, int ep_index = 0) const;
+        void* disconnect_nb(int worker_index = 0, int ep_index = 0,
+                            enum ucp_ep_close_mode mode = UCP_EP_CLOSE_MODE_FLUSH) const;
 
         void destroy_worker(int worker_index = 0);
 
@@ -182,6 +183,14 @@ protected:
     void wait(void *req, int worker_index = 0);
     void set_ucp_config(ucp_config_t *config);
 
+    void set_failed() {
+        m_failed = true;
+    }
+
+    bool is_failed() const {
+        return m_failed;
+    }
+
     template <typename T>
     void wait_for_flag(volatile T *flag, double timeout = 10.0) {
         ucs_time_t loop_end_limit = ucs_get_time() + ucs_time_from_sec(timeout);
@@ -198,6 +207,7 @@ private:
                                  const ucp_test_param& test_param);
 
 protected:
+    bool                        m_failed;
     static const ucp_datatype_t DATATYPE;
     static const ucp_datatype_t DATATYPE_IOV;
 };

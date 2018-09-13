@@ -31,7 +31,7 @@ std::ostream& operator<<(std::ostream& os, const ucp_test_param& test_param)
 const ucp_datatype_t ucp_test::DATATYPE     = ucp_dt_make_contig(1);
 const ucp_datatype_t ucp_test::DATATYPE_IOV = ucp_dt_make_iov();
 
-ucp_test::ucp_test() {
+ucp_test::ucp_test() : m_failed(false) {
     ucs_status_t status;
     status = ucp_config_read(NULL, NULL, &m_ucp_config);
     ASSERT_UCS_OK(status);
@@ -159,9 +159,14 @@ void ucp_test::flush_worker(const entity &e, int worker_index)
 
 void ucp_test::disconnect(const entity& entity) {
     for (int i = 0; i < entity.get_num_workers(); i++) {
-        flush_worker(entity, i);
+        if (!is_failed()) {
+            flush_worker(entity, i);
+        }
+
         for (int j = 0; j < entity.get_num_eps(i); j++) {
-            void *dreq = entity.disconnect_nb(i, j);
+            void *dreq = entity.disconnect_nb(i, j, is_failed() ?
+                                                    UCP_EP_CLOSE_MODE_FORCE :
+                                                    UCP_EP_CLOSE_MODE_FLUSH);
             if (!UCS_PTR_IS_PTR(dreq)) {
                 ASSERT_UCS_OK(UCS_PTR_STATUS(dreq));
             }
@@ -493,12 +498,13 @@ void ucp_test_base::entity::fence(int worker_index) const {
     ASSERT_UCS_OK(status);
 }
 
-void* ucp_test_base::entity::disconnect_nb(int worker_index, int ep_index) const {
+void* ucp_test_base::entity::disconnect_nb(int worker_index, int ep_index,
+                                           enum ucp_ep_close_mode mode) const {
     ucp_ep_h ep = revoke_ep(worker_index, ep_index);
     if (ep == NULL) {
         return NULL;
     }
-    return ucp_disconnect_nb(ep);
+    return ucp_ep_close_nb(ep, mode);
 }
 
 void ucp_test_base::entity::destroy_worker(int worker_index) {

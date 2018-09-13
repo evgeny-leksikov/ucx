@@ -64,28 +64,6 @@ public:
         return result;
     }
 
-    void init()
-    {
-        test_base::init();
-//        ucp_ep_params_t ep_params = ucp_test::get_ep_params();
-
-        /* create dummy sender and receiver entities */
-//        create_entity();
-//        create_entity();
-
-        /* try to connect the dummy entities to check if the tested transport
-         * can support the requested features from ucp_params.
-         * regular flow is used here (not client-server) */
-//        wrap_errors();
-//        sender().connect(&receiver(), ep_params, 0, 0);
-//        restore_errors();
-
-        /* remove the dummy sender and receiver entities */
-//        ucp_test::cleanup();
-        /* create valid sender and receiver entities to be used in the test */
-        ucp_test::init();
-    }
-
     static ucs_log_func_rc_t
     detect_error_logger(const char *file, unsigned line, const char *function,
                                    ucs_log_level_t level, const char *message, va_list ap)
@@ -253,6 +231,8 @@ public:
             send_status = ucp_request_check_status(send_req);
             if (send_status == UCS_ERR_UNREACHABLE) {
                 ucp_request_free(send_req);
+                restore_errors();
+
                 UCS_TEST_SKIP_R("Skipping due an unreachable destination (unsupported "
                                 "feature or too long worker address or no "
                                 "supported transport to send partial worker "
@@ -426,11 +406,14 @@ public:
                 return;
             }
         }
+
         /* The current expected errors are only from the err_handle test
          * and from transports where the worker address is too long but ud/ud_x
          * are not present, or ud/ud_x are present but their addresses are too
          * long as well */
-        if ((status != UCS_ERR_UNREACHABLE)) {
+        if (status == UCS_ERR_UNREACHABLE) {
+            self->set_failed();
+        } else {
             UCS_TEST_ABORT("Error: " << ucs_status_string(status));
         }
     }
@@ -560,6 +543,7 @@ UCS_TEST_P(test_ucp_sockaddr_with_rma_atomic, wireup_for_rma_atomic) {
     /* allow the err_handler callback to be invoked if needed */
     short_progress_loop();
     if (err_handler_count == 1) {
+        restore_errors();
         UCS_TEST_SKIP_R("Skipping due to too long worker address error or no "
                         "matching transport");
     }
