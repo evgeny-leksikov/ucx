@@ -298,8 +298,10 @@ typedef struct {
      */
     union {
         ucp_ep_match_t            ep_match;      /* Matching with remote endpoints */
-        ucp_ep_flush_state_t      flush_state;   /* Remove completion status */
-        ucp_listener_h            listener;      /* Listener that may be associated with ep */
+        struct {
+            ucp_ep_flush_state_t  flush_state;   /* Remove completion status */
+            ucp_listener_h        listener;      /* Listener that may be associated with ep */
+        };
     };
 } ucp_ep_ext_gen_t;
 
