@@ -11,6 +11,7 @@
 #include <common/test.h>
 #include <ucs/type/cpu_set.h>
 
+extern "C" {
 #include <ucp/core/ucp_ep.h>
 #include <ucp/core/ucp_request.h>
 #include <ucp/core/ucp_types.h>
@@ -30,6 +31,7 @@
 #  include <uct/ib/ud/base/ud_ep.h>
 #  include <uct/ib/ud/verbs/ud_verbs.h>
 #endif
+}
 
 class test_obj_size : public ucs::test {
 };
@@ -44,7 +46,7 @@ UCS_TEST_F(test_obj_size, size) {
    UCS_TEST_SKIP_R("Statistic enabled");
 #else
     EXPECTED_SIZE(ucp_ep_t, 64);
-    EXPECTED_SIZE(ucp_request_t, 224);
+    EXPECTED_SIZE(ucp_request_t, 232);
     EXPECTED_SIZE(ucp_recv_desc_t, 48);
     EXPECTED_SIZE(uct_ep_t, 8);
     EXPECTED_SIZE(uct_base_ep_t, 8);

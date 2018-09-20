@@ -293,7 +293,7 @@ enum ucp_mem_map_params_field {
  */
 enum ucp_mem_advise_params_field {
     UCP_MEM_ADVISE_PARAM_FIELD_ADDRESS = UCS_BIT(0), /**< Address of the memory */
-    UCP_MEM_ADVISE_PARAM_FIELD_LENGTH  = UCS_BIT(1), /**< The size of memory */ 
+    UCP_MEM_ADVISE_PARAM_FIELD_LENGTH  = UCS_BIT(1), /**< The size of memory */
     UCP_MEM_ADVISE_PARAM_FIELD_ADVICE  = UCS_BIT(2)  /**< Advice on memory usage */
 };
 
@@ -833,10 +833,10 @@ typedef struct ucp_listener_params {
     ucp_listener_accept_handler_t       accept_handler;
 
     /**
-     * Handler to processing of incoming connection request in a client-server
-     * connection flow. In order for the callback inside this handler to be
-     * invoked, the UCP_LISTENER_PARAM_FIELD_CONN_HANDLER needs to be set  in
-     * the field_mask.
+     * Handler of an incoming connection request in a client-server connection
+     * flow. In order for the callback inside this handler to be invoked, the
+     * @ref UCP_LISTENER_PARAM_FIELD_CONN_HANDLER needs to be set in the
+     * field_mask.
      */
     ucp_listener_conn_handler_t         conn_handler;
 } ucp_listener_params_t;
@@ -1479,7 +1479,7 @@ ucs_status_t ucp_worker_arm(ucp_worker_h worker);
  * mechanism. This function causes a blocking call to @ref ucp_worker_wait or
  * waiting on a file descriptor from @ref ucp_worker_get_efd to return, even
  * if no event from the underlying interfaces has taken place.
- * 
+ *
  * @note It’s safe to use this routine from any thread, even if UCX is compiled
  *       without multi-threading support and/or initialized with any value of
  *       @ref ucp_params_t::mt_workers_shared and
@@ -1548,8 +1548,7 @@ void ucp_listener_destroy(ucp_listener_h listener);
  *
  * @return Error code as defined by @ref ucs_status_t
  *
- * @note Destination address is mandatory for filling in one from supported
- * formats as it is required for following fields:
+ * @note One of the following fields has to be specified:
  *  - ucp_ep_params_t::address
  *  - ucp_ep_params_t::sockaddr
  *  - ucp_ep_params_t::conn_request
@@ -1588,7 +1587,7 @@ ucs_status_t ucp_ep_create(ucp_worker_h worker, const ucp_ep_params_t *params,
  *                            is responsible for releasing the handle using the
  *                            @ref ucp_request_free routine.
  *
- * @note @ref ucp_ep_close_nb replaces deprecated @ref ucp_disconnect_nb and 
+ * @note @ref ucp_ep_close_nb replaces deprecated @ref ucp_disconnect_nb and
  *       @ref ucp_ep_destroy
  */
 ucs_status_ptr_t ucp_ep_close_nb(ucp_ep_h ep, unsigned mode);
@@ -1597,13 +1596,14 @@ ucs_status_ptr_t ucp_ep_close_nb(ucp_ep_h ep, unsigned mode);
 /**
  * @ingroup UCP_WORKER
  *
- * @brief Reject @ref ucp_ep_h "endpoint" creation.
+ * @brief Reject an incoming connection request.
  *
- * This routine releases the @ref ucp_ep_address_h and notifies client if there
- * was set @ref ucp_ep_params_t::err_handler with status @ref UCS_ERR_REJECTED.
+ * Reject the incoming connection request and release associated resources. If
+ * the remote initiator endpoint has set an @ref ucp_ep_params_t::err_handler,
+ * it will be invoked with status @ref UCS_ERR_REJECTED.
  *
- * @param [in]  listener        Handle to the listener which created
- *                              @a conn_request.
+ * @param [in]  listener        Handle to the listener on which the connection
+ *                              request was received.
  * @param [in]  conn_request    Handle to the connection request to reject.
  *
  * @return Error code as defined by @ref ucs_status_t
@@ -1818,7 +1818,7 @@ typedef enum ucp_mem_advice {
     UCP_MADV_NORMAL   = 0,  /**< No special treatment */
     UCP_MADV_WILLNEED       /**< can be used on the memory mapped with
                                  @ref UCP_MEM_MAP_NONBLOCK to speed up memory
-                                 mapping and to avoid page faults when 
+                                 mapping and to avoid page faults when
                                  the memory is accessed for the first time. */
 } ucp_mem_advice_t;
 
@@ -1828,7 +1828,7 @@ typedef enum ucp_mem_advice {
  * @brief Tuning parameters for the UCP memory advice.
  *
  * This structure defines the parameters that are used for the
- * UCP memory advice tuning during the @ref ucp_mem_advise "ucp_mem_advise" 
+ * UCP memory advice tuning during the @ref ucp_mem_advise "ucp_mem_advise"
  * routine.
  */
 typedef struct ucp_mem_advise_params {
@@ -1840,7 +1840,7 @@ typedef struct ucp_mem_advise_params {
     uint64_t                field_mask;
 
     /**
-     * Memory base address. 
+     * Memory base address.
      */
      void                   *address;
 
@@ -1862,20 +1862,20 @@ typedef struct ucp_mem_advise_params {
  *
  * This routine advises the UCP about how to handle memory range beginning at
  * address and size of length bytes. This call does not influence the semantics
- * of the application, but may influence its performance. The UCP may ignore 
+ * of the application, but may influence its performance. The UCP may ignore
  * the advice.
  *
  * @param [in]  context     Application @ref ucp_context_h "context" which was
  *                          used to allocate/map the memory.
  * @param [in]  memh        @ref ucp_mem_h "Handle" to memory region.
- * @param [in]  params      Memory base address and length. The advice field 
- *                          is used to pass memory use advice as defined in 
+ * @param [in]  params      Memory base address and length. The advice field
+ *                          is used to pass memory use advice as defined in
  *                          the @ref ucp_mem_advice list
  *                          The memory range must belong to the @a memh
  *
  * @return Error code as defined by @ref ucs_status_t
  */
-ucs_status_t ucp_mem_advise(ucp_context_h context, ucp_mem_h memh,  
+ucs_status_t ucp_mem_advise(ucp_context_h context, ucp_mem_h memh,
                             ucp_mem_advise_params_t *params);
 
 
@@ -2201,7 +2201,7 @@ ucs_status_ptr_t ucp_tag_send_sync_nb(ucp_ep_h ep, const void *buffer, size_t co
 
 /**
  * @ingroup UCP_COMM
- * @brief Non-blocking stream receive operation of structured data into a 
+ * @brief Non-blocking stream receive operation of structured data into a
  *        user-supplied buffer.
  *
  * This routine receives data that is described by the local address @a buffer,
@@ -2444,30 +2444,6 @@ ucs_status_ptr_t ucp_tag_msg_recv_nb(ucp_worker_h worker, void *buffer,
 
 /**
  * @ingroup UCP_COMM
- * @brief Blocking remote memory put operation.
- *
- * This routine stores contiguous block of data that is described by the
- * local address @a buffer in the remote contiguous memory region described by
- * @a remote_addr address and the @ref ucp_rkey_h "memory handle" @a rkey.  The
- * routine returns when it is safe to reuse the source address @e buffer.
- *
- * @param [in]  ep           Remote endpoint handle.
- * @param [in]  buffer       Pointer to the local source address.
- * @param [in]  length       Length of the data (in bytes) stored under the
- *                           source address.
- * @param [in]  remote_addr  Pointer to the destination remote address
- *                           to write to.
- * @param [in]  rkey         Remote memory key associated with the
- *                           remote address.
- *
- * @return Error code as defined by @ref ucs_status_t
- */
-ucs_status_t ucp_put(ucp_ep_h ep, const void *buffer, size_t length,
-                     uint64_t remote_addr, ucp_rkey_h rkey);
-
-
-/**
- * @ingroup UCP_COMM
  * @brief Non-blocking implicit remote memory put operation.
  *
  * This routine initiates a storage of contiguous block of data that is
@@ -2545,32 +2521,6 @@ ucs_status_ptr_t ucp_put_nb(ucp_ep_h ep, const void *buffer, size_t length,
 
 /**
  * @ingroup UCP_COMM
- * @brief Blocking remote memory get operation.
- *
- * This routine loads contiguous block of data that is described by the remote
- * address @a remote_addr and the @ref ucp_rkey_h "memory handle" @a rkey in
- * the local contiguous memory region described by @a buffer address.  The
- * routine returns when remote data is loaded and stored under the local address
- * @e buffer.
- *
- *
- * @param [in]  ep           Remote endpoint handle.
- * @param [in]  buffer       Pointer to the local source address.
- * @param [in]  length       Length of the data (in bytes) stored under the
- *                           source address.
- * @param [in]  remote_addr  Pointer to the destination remote address
- *                           to write to.
- * @param [in]  rkey         Remote memory key associated with the
- *                           remote address.
- *
- * @return Error code as defined by @ref ucs_status_t
- */
-ucs_status_t ucp_get(ucp_ep_h ep, void *buffer, size_t length,
-                     uint64_t remote_addr, ucp_rkey_h rkey);
-
-
-/**
- * @ingroup UCP_COMM
  * @brief Non-blocking implicit remote memory get operation.
  *
  * This routine initiate a load of contiguous block of data that is described
@@ -2642,254 +2592,6 @@ ucs_status_t ucp_get_nbi(ucp_ep_h ep, void *buffer, size_t length,
 ucs_status_ptr_t ucp_get_nb(ucp_ep_h ep, void *buffer, size_t length,
                             uint64_t remote_addr, ucp_rkey_h rkey,
                             ucp_send_callback_t cb);
-
-/**
- * @ingroup UCP_COMM
- * @brief Blocking atomic add operation for 32 bit integers
- *
- * This routine performs an add operation on a 32 bit integer value atomically.
- * The remote integer value is described by the combination of the remote
- * memory address @a remote_addr and the @ref ucp_rkey_h "remote memory handle"
- * @a rkey. The @a add value is the value that is used for the add operation.
- * When the operation completes the sum of the original remote value and the
- * operand value (@a add) is stored in remote memory.
- * The call to the routine returns immediately, independent of operation
- * completion.
- *
- * @note The remote address must be aligned to 32 bit.
- *
- * @param [in]  ep           Remote endpoint handle.
- * @param [in]  add          Value to add.
- * @param [in]  remote_addr  Pointer to the destination remote address
- *                           of the atomic variable.
- * @param [in]  rkey         Remote memory key associated with the
- *                           remote address.
- *
- * @return Error code as defined by @ref ucs_status_t
- */
-ucs_status_t ucp_atomic_add32(ucp_ep_h ep, uint32_t add,
-                              uint64_t remote_addr, ucp_rkey_h rkey);
-
-
-/**
- * @ingroup UCP_COMM
- * @brief Blocking atomic add operation for 64 bit integers
- *
- * This routine performs an add operation on a 64 bit integer value atomically.
- * The remote integer value is described by the combination of the remote
- * memory address @a remote_addr and the @ref ucp_rkey_h "remote memory handle"
- * @a rkey. The @a add value is the value that is used for the add operation.
- * When the operation completes the sum of the original remote value and the
- * operand value (@a add) is stored in remote memory.
- * The call to the routine returns immediately, independent of operation
- * completion.
- *
- * @note The remote address must be aligned to 64 bit.
- *
- * @param [in]  ep           Remote endpoint handle.
- * @param [in]  add          Value to add.
- * @param [in]  remote_addr  Pointer to the destination remote address
- *                           of the atomic variable.
- * @param [in]  rkey         Remote memory key associated with the
- *                           remote address.
- *
- * @return Error code as defined by @ref ucs_status_t
- */
-ucs_status_t ucp_atomic_add64(ucp_ep_h ep, uint64_t add,
-                              uint64_t remote_addr, ucp_rkey_h rkey);
-
-
-/**
- * @ingroup UCP_COMM
- * @brief Blocking atomic fetch and add operation for 32 bit integers
- *
- * This routine performs an add operation on a 32 bit integer value atomically.
- * The remote integer value is described by the combination of the remote
- * memory address @a remote_addr and the @ref ucp_rkey_h "remote memory handle"
- * @a rkey. The @a add value is the value that is used for the add operation.
- * When the operation completes, the original remote value is stored in the
- * local memory @a result, and the sum of the original remote value and the
- * operand value is stored in remote memory.
- * The call to the routine returns when the operation is completed and the
- * @a result value is updated.
- *
- * @note The remote address must be aligned to 32 bit.
- *
- * @param [in]  ep           Remote endpoint handle.
- * @param [in]  add          Value to add.
- * @param [in]  remote_addr  Pointer to the destination remote address
- *                           of the atomic variable.
- * @param [in]  rkey         Remote memory key associated with the
- *                           remote address.
- * @param [out] result       Pointer to the address that is used to store
- *                           the previous value of the atomic variable described
- *                           by the @a remote_addr
- *
- * @return Error code as defined by @ref ucs_status_t
- */
-ucs_status_t ucp_atomic_fadd32(ucp_ep_h ep, uint32_t add, uint64_t remote_addr,
-                               ucp_rkey_h rkey, uint32_t *result);
-
-
-/**
- * @ingroup UCP_COMM
- * @brief Blocking atomic fetch and add operation for 64 bit integers
- *
- * This routine performs an add operation on a 64 bit integer value atomically.
- * The remote integer value is described by the combination of the remote
- * memory address @a remote_addr and the @ref ucp_rkey_h "remote memory handle"
- * @a rkey. The @a add value is the value that is used for the add operation.
- * When the operation completes, the original remote value is stored in the
- * local memory @a result, and the sum of the original remote value and the
- * operand value is stored in remote memory.
- * The call to the routine returns when the operation is completed and the
- * @a result value is updated.
- *
- * @note The remote address must be aligned to 64 bit.
- *
- * @param [in]  ep           Remote endpoint handle.
- * @param [in]  add          Value to add.
- * @param [in]  remote_addr  Pointer to the destination remote address
- *                           of the atomic variable.
- * @param [in]  rkey         Remote memory key associated with the
- *                           remote address.
- * @param [out] result       Pointer to the address that is used to store
- *                           the previous value of the atomic variable described
- *                           by the @a remote_addr
- *
- * @return Error code as defined by @ref ucs_status_t
- */
-ucs_status_t ucp_atomic_fadd64(ucp_ep_h ep, uint64_t add, uint64_t remote_addr,
-                               ucp_rkey_h rkey, uint64_t *result);
-
-
-/**
- * @ingroup UCP_COMM
- * @brief Blocking atomic swap operation for 32 bit values
- *
- * This routine swaps a 32 bit value between local and remote memory.
- * The remote value is described by the combination of the remote
- * memory address @a remote_addr and the @ref ucp_rkey_h "remote memory handle"
- * @a rkey. The @a swap value is the value that is used for the swap operation.
- * When the operation completes, the remote value is stored in the
- * local memory @a result, and the operand value (@a swap) is stored in remote
- * memory.  The call to the routine returns when the operation is completed and
- * the @a result value is updated.
- *
- * @note The remote address must be aligned to 32 bit.
- *
- * @param [in]  ep           Remote endpoint handle.
- * @param [in]  swap         Value to swap.
- * @param [in]  remote_addr  Pointer to the destination remote address
- *                           of the atomic variable.
- * @param [in]  rkey         Remote memory key associated with the
- *                           remote address.
- * @param [out] result       Pointer to the address that is used to store
- *                           the previous value of the atomic variable described
- *                           by the @a remote_addr
- *
- * @return Error code as defined by @ref ucs_status_t
- */
-ucs_status_t ucp_atomic_swap32(ucp_ep_h ep, uint32_t swap, uint64_t remote_addr,
-                               ucp_rkey_h rkey, uint32_t *result);
-
-
-/**
- * @ingroup UCP_COMM
- * @brief Blocking atomic swap operation for 64 bit values
- *
- * This routine swaps a 64 bit value between local and remote memory.
- * The remote value is described by the combination of the remote
- * memory address @a remote_addr and the @ref ucp_rkey_h "remote memory handle"
- * @a rkey. The @a swap value is the value that is used for the swap operation.
- * When the operation completes, the remote value is stored in the
- * local memory @a result, and the operand value (@a swap) is stored in remote
- * memory.  The call to the routine returns when the operation is completed and
- * the @a result value is updated.
- *
- * @note The remote address must be aligned to 64 bit.
- *
- * @param [in]  ep           Remote endpoint handle.
- * @param [in]  swap         Value to swap.
- * @param [in]  remote_addr  Pointer to the destination remote address
- *                           of the atomic variable.
- * @param [in]  rkey         Remote memory key associated with the
- *                           remote address.
- * @param [out] result       Pointer to the address that is used to store
- *                           the previous value of the atomic variable described
- *                           by the @a remote_addr
- *
- * @return Error code as defined by @ref ucs_status_t
- */
-ucs_status_t ucp_atomic_swap64(ucp_ep_h ep, uint64_t swap, uint64_t remote_addr,
-                               ucp_rkey_h rkey, uint64_t *result);
-
-
-/**
- * @ingroup UCP_COMM
- * @brief Blocking atomic conditional swap (cswap) operation for 32 bit values.
- *
- * This routine conditionally swaps a 32 bit value between local and remote
- * memory. The swap occurs only if the condition value (@a continue) is equal
- * to the remote value, otherwise the remote memory is not modified.  The
- * remote value is described by the combination of the remote memory address @p
- * remote_addr and the @ref ucp_rkey_h "remote memory handle" @a rkey. The @p
- * swap value is the value that is used to update the remote memory if the
- * condition is true.  The call to the routine returns when the operation is
- * completed and the @a result value is updated.
- *
- * @note The remote address must be aligned to 32 bit.
- *
- * @param [in]  ep           Remote endpoint handle.
- * @param [in]  compare      Value to compare to.
- * @param [in]  swap         Value to swap.
- * @param [in]  remote_addr  Pointer to the destination remote address
- *                           of the atomic variable.
- * @param [in]  rkey         Remote memory key associated with the
- *                           remote address.
- * @param [out] result       Pointer to the address that is used to store
- *                           the previous value of the atomic variable described
- *                           by the @a remote_addr
- *
- * @return Error code as defined by @ref ucs_status_t
- */
-ucs_status_t ucp_atomic_cswap32(ucp_ep_h ep, uint32_t compare, uint32_t swap,
-                                uint64_t remote_addr, ucp_rkey_h rkey,
-                                uint32_t *result);
-
-
-/**
- * @ingroup UCP_COMM
- * @brief Blocking atomic conditional swap (cswap) operation for 64 bit values.
- *
- * This routine conditionally swaps a 64 bit value between local and remote
- * memory. The swap occurs only if the condition value (@a continue) is equal
- * to the remote value, otherwise the remote memory is not modified.  The
- * remote value is described by the combination of the remote memory address @p
- * remote_addr and the @ref ucp_rkey_h "remote memory handle" @a rkey. The @p
- * swap value is the value that is used to update the remote memory if the
- * condition is true.  The call to the routine returns when the operation is
- * completed and the @a result value is updated.
- *
- * @note The remote address must be aligned to 64 bit.
- *
- * @param [in]  ep           Remote endpoint handle.
- * @param [in]  compare      Value to compare to.
- * @param [in]  swap         Value to swap.
- * @param [in]  remote_addr  Pointer to the destination remote address
- *                           of the atomic variable.
- * @param [in]  rkey         Remote memory key associated with the
- *                           remote address.
- * @param [out] result       Pointer to the address that is used to store
- *                           the previous value of the atomic variable described
- *                           by the @a remote_addr
- *
- * @return Error code as defined by @ref ucs_status_t
- */
-ucs_status_t ucp_atomic_cswap64(ucp_ep_h ep, uint64_t compare, uint64_t swap,
-                                uint64_t remote_addr, ucp_rkey_h rkey,
-                                uint64_t *result);
-
 
 /**
  * @ingroup UCP_COMM

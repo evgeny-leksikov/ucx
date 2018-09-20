@@ -932,6 +932,8 @@ static void ucp_worker_init_cpu_atomics(ucp_worker_h worker)
     ucp_context_h context = worker->context;
     ucp_rsc_index_t rsc_index;
 
+    ucs_debug("worker %p: using cpu atomics", worker);
+
     /* Enable all interfaces which have host-based atomics */
     for (rsc_index = 0; rsc_index < context->num_tls; ++rsc_index) {
         if (worker->ifaces[rsc_index].attr.cap.flags & UCT_IFACE_FLAG_ATOMIC_CPU) {
@@ -1005,6 +1007,8 @@ static void ucp_worker_init_device_atomics(ucp_worker_h worker)
         ucs_debug("worker %p: no support for atomics", worker);
         return;
     }
+
+    ucs_debug("worker %p: using device atomics", worker);
 
     /* Enable atomics on all resources using same device as the "best" resource */
     for (rsc_index = 0; rsc_index < context->num_tls; ++rsc_index) {
