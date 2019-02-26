@@ -351,7 +351,7 @@ protected:
     ucs_sock_addr_t listen_sock_addr, connect_sock_addr;
 };
 
-UCS_TEST_P(test_uct_cm_sockaddr, cm_open_close)
+UCS_TEST_P(test_uct_cm_sockaddr, cm_open_listen_close)
 {
     UCS_TEST_MESSAGE << "Testing " << ucs::sockaddr_to_str(listen_sock_addr.addr)
                      << " Interface: " << GetParam()->dev_name;
@@ -362,6 +362,17 @@ UCS_TEST_P(test_uct_cm_sockaddr, cm_open_close)
         ASSERT_UCS_OK(status);
         EXPECT_LE(size_t(0), attr.max_conn_priv);
     }
+
+    uct_listener_params_t params;
+    params.field_mask      = UCT_LISTENER_PARAM_FIELD_CM              |
+                             UCT_LISTENER_PARAM_FIELD_SOCKADDR        |
+                             UCT_LISTENER_PARAM_FIELD_CONN_REQUEST_CB |
+                             UCT_LISTENER_PARAM_FIELD_USER_DATA;
+    params.cm              = server->cm();
+    params.sockaddr        = listen_sock_addr;
+    params.conn_request_cb = NULL;
+    params.user_data       = (void *)0xdeadbeef;
+    server->listen(params);
 }
 
 UCT_INSTANTIATE_SOCKADDR_TEST_CASE(test_uct_cm_sockaddr)
