@@ -167,34 +167,19 @@ static void ucp_listener_conn_request_callback(uct_iface_h tl_iface, void *arg,
     ucp_worker_signal_internal(listener->wiface.worker);
 }
 
-ucs_status_t ucp_listener_create(ucp_worker_h worker,
-                                 const ucp_listener_params_t *params,
-                                 ucp_listener_h *listener_p)
+static ucs_status_t
+ucp_listener_create_on_iface(ucp_worker_h worker,
+                             const ucp_listener_params_t *params,
+                             ucp_listener_h *listener_p)
 {
-    ucp_context_h context = worker->context;
+    ucp_context_h context   = worker->context;
+    ucp_listener_h listener = NULL;
     ucp_tl_resource_desc_t *resource;
     uct_iface_params_t iface_params;
-    ucp_listener_h listener = NULL;
     ucp_rsc_index_t tl_id;
     ucs_status_t status;
     ucp_tl_md_t *tl_md;
     char saddr_str[UCS_SOCKADDR_STRING_LEN];
-
-    if (!(params->field_mask & UCP_LISTENER_PARAM_FIELD_SOCK_ADDR)) {
-        ucs_error("Missing sockaddr for listener");
-        return UCS_ERR_INVALID_PARAM;
-    }
-
-    UCP_CHECK_PARAM_NON_NULL(params->sockaddr.addr, status, return status);
-
-    if (ucs_test_all_flags(params->field_mask,
-                           UCP_LISTENER_PARAM_FIELD_ACCEPT_HANDLER |
-                           UCP_LISTENER_PARAM_FIELD_CONN_HANDLER)) {
-        ucs_error("Only one accept handler should be provided");
-        return UCS_ERR_INVALID_PARAM;
-    }
-
-    UCS_ASYNC_BLOCK(&worker->async);
 
     /* Go through all the available resources and for each one, check if the given
      * sockaddr is accessible from its md. Start listening on the first md that
@@ -267,6 +252,45 @@ ucs_status_t ucp_listener_create(ucp_worker_h worker,
 err_free:
     ucs_free(listener);
 out:
+    return status;
+}
+
+static ucs_status_t
+ucp_listener_create_on_cm(ucp_worker_h worker,
+                          const ucp_listener_params_t *params,
+                          ucp_listener_h *listener_p)
+{
+    return UCS_ERR_UNSUPPORTED;
+}
+
+ucs_status_t ucp_listener_create(ucp_worker_h worker,
+                                 const ucp_listener_params_t *params,
+                                 ucp_listener_h *listener_p)
+{
+    ucs_status_t status;
+
+    if (!(params->field_mask & UCP_LISTENER_PARAM_FIELD_SOCK_ADDR)) {
+        ucs_error("Missing sockaddr for listener");
+        return UCS_ERR_INVALID_PARAM;
+    }
+
+    UCP_CHECK_PARAM_NON_NULL(params->sockaddr.addr, status, return status);
+
+    if (ucs_test_all_flags(params->field_mask,
+                           UCP_LISTENER_PARAM_FIELD_ACCEPT_HANDLER |
+                           UCP_LISTENER_PARAM_FIELD_CONN_HANDLER)) {
+        ucs_error("Only one accept handler should be provided");
+        return UCS_ERR_INVALID_PARAM;
+    }
+
+    UCS_ASYNC_BLOCK(&worker->async);
+
+    status = ucp_listener_create_on_cm(worker, params, listener_p);
+    if (status != UCS_OK) {
+        /* Fallback to UCT iface in server mode */
+        status = ucp_listener_create_on_iface(worker, params, listener_p);
+    }
+
     UCS_ASYNC_UNBLOCK(&worker->async);
     return status;
 }
