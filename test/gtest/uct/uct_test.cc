@@ -770,7 +770,6 @@ uct_test::entity::connect_to_sockaddr(unsigned index, entity& other,
                                UCT_EP_PARAM_FIELD_SOCKADDR          |
                                UCT_EP_PARAM_FIELD_SOCKADDR_CB_FLAGS |
                                UCT_EP_PARAM_FIELD_SOCKADDR_PACK_CB;
-    params.iface             = iface();
     params.user_data         = user_data;
     params.sockaddr          = remote_addr;
     params.sockaddr_cb_flags = UCT_CB_FLAG_ASYNC;

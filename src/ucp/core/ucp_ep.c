@@ -52,6 +52,7 @@ void ucp_ep_config_key_reset(ucp_ep_config_key_t *key)
     key->am_lane          = UCP_NULL_LANE;
     key->wireup_lane      = UCP_NULL_LANE;
     key->tag_lane         = UCP_NULL_LANE;
+    key->connected_lane   = UCP_NULL_LANE;
     key->rma_bw_md_map    = 0;
     key->reachable_md_map = 0;
     key->err_mode         = UCP_ERR_HANDLING_MODE_NONE;
@@ -229,13 +230,13 @@ ucs_status_t ucp_worker_create_mem_type_endpoints(ucp_worker_h worker)
         md_index = context->mem_type_tl_mds[i];
         mem_type = context->tl_mds[md_index].attr.cap.mem_type;
 
-        status = ucp_address_pack(worker, NULL, context->mem_type_tls[mem_type], NULL,
-                                  &address_length, &address_buffer);
+        status = ucp_address_pack(worker, NULL, context->mem_type_tls[mem_type],
+                                  -1, NULL, &address_length, &address_buffer);
         if (status != UCS_OK) {
             goto err_cleanup_eps;
         }
 
-        status = ucp_address_unpack(worker, address_buffer, &local_address);
+        status = ucp_address_unpack(worker, address_buffer, -1, &local_address);
         if (status != UCS_OK) {
             goto err_free_address_buffer;
         }
@@ -283,6 +284,7 @@ ucs_status_t ucp_ep_init_create_wireup(ucp_ep_h ep,
     key.am_lane               = 0;
     key.wireup_lane           = 0;
     key.tag_lane              = 0;
+    key.connected_lane        = 0;
     key.am_bw_lanes[0]        = 0;
     key.rma_lanes[0]          = 0;
     key.rma_bw_lanes[0]       = 0;
@@ -396,22 +398,32 @@ err:
  * Create an endpoint on the server side connected to the client endpoint.
  */
 ucs_status_t ucp_ep_create_accept(ucp_worker_h worker,
-                                  const ucp_wireup_client_data_t *client_data,
+                                  const ucp_conn_request_h conn_request,
                                   ucp_ep_h *ep_p)
 {
+    const ucp_wireup_client_data_t *client_data = &conn_request->client_data;
     ucp_ep_params_t        params;
     ucp_unpacked_address_t remote_address;
     ucs_status_t           status;
+    uint64_t               addr_unpack_mask;
 
     params.field_mask = UCP_EP_PARAM_FIELD_ERR_HANDLING_MODE;
     params.err_mode   = client_data->err_mode;
 
-    status = ucp_address_unpack(worker, client_data + 1, &remote_address);
+    addr_unpack_mask = (client_data->flags & UCP_WIREUP_CD_FLAG_CM_FMT) ?
+                       UCP_ADDRESS_PACK_FLAG_IFACE_ADDR : -1;
+    status = ucp_address_unpack(worker, client_data + 1, addr_unpack_mask,
+                                &remote_address);
     if (status != UCS_OK) {
         goto out;
     }
 
-    if (client_data->is_full_addr) {
+    if (!(addr_unpack_mask & UCP_ADDRESS_PACK_FLAG_DEVICE_ADDR)) {
+        ucs_assert(remote_address.address_count == 1);
+        remote_address.address_list[0].dev_addr = conn_request->dev_addr;
+    }
+
+    if (client_data->flags & UCP_WIREUP_CD_FLAG_FULL_ADDR) {
         /* create endpoint to the worker address we got in the private data */
         status = ucp_ep_create_to_worker_addr(worker, &params, &remote_address,
                                               UCP_EP_CREATE_AM_LANE, "listener",
@@ -443,6 +455,23 @@ out:
     return status;
 }
 
+static void
+ucp_wireup_ep_set_server_connected_lane_cb(uct_ep_h ep, void *arg,
+                                           ucs_status_t status)
+{
+    ucp_ep_h ucp_ep = (ucp_ep_h)arg;
+    ucp_wireup_ep_t *wireup_ep = ucp_ep_get_wireup_ep(ucp_ep);
+    ucp_ep_config_key_t cfg_key;
+
+    ucs_assert(status == UCS_OK);
+    ucs_assert(wireup_ep->sockaddr_ep == ep);
+
+    cfg_key                = ucp_ep_config(ucp_ep)->key;
+    cfg_key.connected_lane = cfg_key.num_lanes++;
+    ucp_ep->cfg_index      = ucp_worker_get_ep_config(ucp_ep->worker, &cfg_key);
+    ucp_ep->uct_eps[cfg_key.connected_lane] = ep;
+}
+
 static ucs_status_t
 ucp_ep_create_api_conn_request(ucp_worker_h worker,
                                const ucp_ep_params_t *params, ucp_ep_h *ep_p)
@@ -452,7 +481,7 @@ ucp_ep_create_api_conn_request(ucp_worker_h worker,
     ucs_status_t       status;
 
     /* coverity[overrun-buffer-val] */
-    status = ucp_ep_create_accept(worker, &conn_request->client_data, &ep);
+    status = ucp_ep_create_accept(worker, conn_request, &ep);
     if (status != UCS_OK) {
         goto out;
     }
@@ -480,8 +509,31 @@ out_ep_destroy:
     ucp_ep_destroy_internal(ep);
 out:
     if (status == UCS_OK) {
-        status = uct_iface_accept(conn_request->listener->wiface.iface,
-                                  conn_request->uct_req);
+        if (conn_request->listener->is_wcm) {
+            uct_ep_params_t ep_params;
+            ep_params.field_mask = UCT_EP_PARAM_FIELD_CM                       |
+                                   UCT_EP_PARAM_FIELD_CONN_REQUEST             |
+                                   UCT_EP_PARAM_FIELD_USER_DATA                |
+                                   UCT_EP_PARAM_FIELD_SOCKADDR_CONNECTED_CB    |
+                                   UCT_EP_PARAM_FIELD_SOCKADDR_DISCONNECTED_CB |
+                                   UCT_EP_PARAM_FIELD_SOCKADDR_CB_FLAGS        |
+                                   UCT_EP_PARAM_FIELD_SOCKADDR_PACK_CB;
+
+            ep_params.cm                           = conn_request->listener->wcm.worker->cms[0]; /* TODO: lookup */
+            ep_params.conn_request                 = conn_request->uct_req;
+            ep_params.sockaddr_cb_flags            = UCT_CB_FLAG_ASYNC;
+            ep_params.sockaddr_pack_cb             = NULL;//(void *)0xdead01;
+            ep_params.sockaddr_connected_cb.server = ucp_wireup_ep_set_server_connected_lane_cb;
+            ep_params.disconnected_cb              = (void *)0xdead03;
+            ep_params.user_data                    = ep;
+
+            /* TODO: put on connected lane */
+            return uct_ep_create(&ep_params,
+                                 &ucp_ep_get_wireup_ep(ep)->sockaddr_ep);
+        } else {
+            status = uct_iface_accept(conn_request->listener->wiface.iface,
+                                      conn_request->uct_req);
+        }
     } else {
         uct_iface_reject(conn_request->listener->wiface.iface,
                          conn_request->uct_req);
@@ -509,7 +561,7 @@ ucp_ep_create_api_to_worker_addr(ucp_worker_h worker,
 
     UCP_CHECK_PARAM_NON_NULL(params->address, status, goto out);
 
-    status = ucp_address_unpack(worker, params->address, &remote_address);
+    status = ucp_address_unpack(worker, params->address, -1, &remote_address);
     if (status != UCS_OK) {
         goto out;
     }

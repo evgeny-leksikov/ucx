@@ -48,6 +48,8 @@ struct uct_rdmacm_iface {
 
 void uct_rdmacm_iface_client_start_next_ep(uct_rdmacm_iface_t *iface);
 
+void uct_rdmacm_cm_id_to_dev_name(struct rdma_cm_id *cm_id, char *dev_name);
+
 extern uct_md_component_t uct_rdmacm_mdc;
 
 #endif

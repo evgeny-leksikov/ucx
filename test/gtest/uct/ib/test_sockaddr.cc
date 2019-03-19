@@ -373,8 +373,11 @@ public:
     }
 protected:
     static void
-    conn_request_cb(uct_listener_h listener, void *arg, const char *dev_name,
-                    uct_conn_request_h conn_request, const void *conn_priv_data,
+    conn_request_cb(uct_listener_h listener, void *arg,
+                    const char *local_dev_name,
+                    const uct_device_addr_t *dev_addr, size_t dev_addr_length,
+                    uct_conn_request_h conn_request,
+                    const void *conn_priv_data,
                     size_t length) {
         test_uct_cm_sockaddr *self;
 

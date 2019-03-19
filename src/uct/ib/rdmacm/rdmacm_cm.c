@@ -14,6 +14,8 @@
 #include "rdmacm_cm.h"
 #include "rdmacm_iface.h"
 
+#include <uct/ib/base/ib_iface.h>
+
 #include <ucs/async/async.h>
 
 #include <poll.h>
@@ -170,6 +172,7 @@ UCS_CLASS_INIT_FUNC(uct_rdmacm_cep_t, const uct_ep_params_t *params)
     struct rdma_cm_event *event;
     struct rdma_conn_param conn_param;
     uct_rdmacm_priv_data_hdr_t *hdr;
+    char dev_name[UCT_DEVICE_NAME_MAX];
 
     if (!(params->field_mask & UCT_EP_PARAM_FIELD_CM)) {
         return UCS_ERR_INVALID_PARAM;
@@ -227,9 +230,13 @@ UCS_CLASS_INIT_FUNC(uct_rdmacm_cep_t, const uct_ep_params_t *params)
         self->id          = event->id;
         self->id->context = self;
         hdr = (uct_rdmacm_priv_data_hdr_t *)self->wireup.priv_data;
-        hdr->length = self->wireup.priv_pack_cb(self->user_data,
-                                                self->id->verbs->device->name,
-                                                hdr + 1);
+        uct_rdmacm_cm_id_to_dev_name(self->id, dev_name);
+        if (self->wireup.priv_pack_cb != NULL) {
+            hdr->length = self->wireup.priv_pack_cb(self->user_data, dev_name,
+                                                    hdr + 1);
+        } else {
+            hdr->length = 0;
+        }
         if ((hdr->length < 0) || (hdr->length > UCT_RDMACM_CM_MAX_CONN_PRIV)) {
             status = UCS_ERR_INVALID_PARAM;
             goto out;
@@ -265,6 +272,40 @@ uct_cm_ops_t uct_rdmacm_cm_ops = {
 };
 
 
+static size_t uct_rdmacm_cm_fill_addr_flags(const struct rdma_cm_id *id,
+                                            const union ibv_gid *gid,
+                                            int link_layer,
+                                            uct_ib_address_t *addr)
+{
+    if (link_layer == IBV_LINK_LAYER_ETHERNET) {
+        addr->flags = (UCT_IB_ADDRESS_FLAG_LINK_LAYER_ETH |
+                       UCT_IB_ADDRESS_FLAG_GID);
+        return sizeof(uct_ib_address_t) + sizeof(union ibv_gid);  /* raw gid */
+;
+    } else {
+        addr->flags = (UCT_IB_ADDRESS_FLAG_LINK_LAYER_IB |
+                       UCT_IB_ADDRESS_FLAG_LID);
+    }
+
+    if (gid->global.subnet_prefix != UCT_IB_LINK_LOCAL_PREFIX) {
+        addr->flags |= UCT_IB_ADDRESS_FLAG_IF_ID;
+        if (((gid->global.subnet_prefix & UCT_IB_SITE_LOCAL_MASK) ==
+             UCT_IB_SITE_LOCAL_PREFIX)) {
+            addr->flags |= UCT_IB_ADDRESS_FLAG_SUBNET16;
+            return sizeof(uct_ib_address_t) +
+                   sizeof(uint16_t) + /* lid */
+                   sizeof(uint64_t) + /* if_id */
+                   sizeof(uint16_t);  /* subnet16 */
+        }
+        addr->flags |= UCT_IB_ADDRESS_FLAG_SUBNET64;
+        return sizeof(uct_ib_address_t) +
+               sizeof(uint16_t) + /* lid */
+               sizeof(uint64_t) + /* if_id */
+               sizeof(uint64_t);  /* subnet64 */
+    }
+    return sizeof(uct_ib_address_t) + sizeof(uint16_t); /* lid */
+}
+
 static int
 uct_rdmacm_cm_process_event(uct_rdmacm_cm_t *cm, struct rdma_cm_event *event)
 {
@@ -272,6 +313,8 @@ uct_rdmacm_cm_process_event(uct_rdmacm_cm_t *cm, struct rdma_cm_event *event)
     uct_rdmacm_priv_data_hdr_t  *hdr;
     uct_rdmacm_cep_t            *cep;
     uct_rdmacm_listener_t       *listener;
+    char dev_name[UCT_DEVICE_NAME_MAX];
+    uct_ib_address_t *dev_addr;
 
     switch (event->event) {
     case RDMA_CM_EVENT_ADDR_RESOLVED:
@@ -282,8 +325,8 @@ uct_rdmacm_cm_process_event(uct_rdmacm_cm_t *cm, struct rdma_cm_event *event)
         ucs_assert(event->id == cep->id);
         rdma_ack_cm_event(event);
         hdr = (uct_rdmacm_priv_data_hdr_t *)cep->wireup.priv_data;
-        hdr->length = cep->wireup.priv_pack_cb(cep->user_data,
-                                               cep->id->verbs->device->name,
+        uct_rdmacm_cm_id_to_dev_name(cep->id, dev_name);
+        hdr->length = cep->wireup.priv_pack_cb(cep->user_data, dev_name,
                                                hdr + 1);
         hdr->status = (hdr->length < 0) ? hdr->length : UCS_OK;
 
@@ -296,10 +339,28 @@ uct_rdmacm_cm_process_event(uct_rdmacm_cm_t *cm, struct rdma_cm_event *event)
         listener = event->listen_id->context;
         hdr      = (uct_rdmacm_priv_data_hdr_t *)event->param.conn.private_data;
         if (hdr->status == UCS_OK) {
+            union ibv_gid gid;
+            if(ibv_query_gid(event->id->verbs, event->id->port_num, 0, &gid)) {
+                return UCS_ERR_IO_ERROR;
+            }
+            struct ibv_port_attr port_arrt;
+            if (ibv_query_port(event->id->verbs, event->id->port_num,
+                               &port_arrt)) {
+                return UCS_ERR_IO_ERROR;
+            }
+
+            uct_ib_address_t addr_dummy;
+            size_t addr_length = uct_rdmacm_cm_fill_addr_flags(event->id, &gid,
+                                                               port_arrt.link_layer,
+                                                               &addr_dummy);
+            dev_addr = ucs_alloca(addr_length);
+            *dev_addr = addr_dummy;
+            uct_ib_address_pack(&gid, port_arrt.lid, dev_addr);
             listener->conn_request_cb(&listener->super, listener->user_data,
                                       event->id->verbs->device->name,
-                                      (uct_conn_request_h)event, hdr + 1,
-                                      hdr->length);
+                                      (uct_device_addr_t *)dev_addr, addr_length,
+                                      (uct_conn_request_h)event,
+                                      hdr + 1, hdr->length);
             return 0;
             /* Do not ack event here, ep create does this */
         }

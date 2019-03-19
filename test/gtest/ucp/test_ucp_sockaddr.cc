@@ -5,6 +5,7 @@
 */
 
 #include "ucp_test.h"
+#include "ucp/ucp_test.h"
 
 #include <common/test_helpers.h>
 #include <ucs/sys/sys.h>

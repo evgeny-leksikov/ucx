@@ -312,15 +312,14 @@ size_t uct_ib_address_size(uct_ib_iface_t *iface);
 /**
  * Pack IB address.
  *
- * @param [in]  dev        IB device. TODO remove this.
  * @param [in]  gid        GID address to pack.
  * @param [in]  lid        LID address to pack.
- * @param [out] ib_addr    Filled with packed ib address. Size of the structure
+ * @param [in/out] ib_addr Filled with packed ib address. Size of the structure
  *                         must be at least what @ref uct_ib_address_size() returns
- *                         for the given scope.
+ *                         for the given scope, uct_ib_address_t::flags must be
+ *                         initialized by a caller.
  */
-void uct_ib_address_pack(uct_ib_iface_t *iface,
-                         const union ibv_gid *gid, uint16_t lid,
+void uct_ib_address_pack(const union ibv_gid *gid, uint16_t lid,
                          uct_ib_address_t *ib_addr);
 
 
@@ -339,6 +338,9 @@ void uct_ib_address_unpack(const uct_ib_address_t *ib_addr, uint16_t *lid,
  */
 const char *uct_ib_address_str(const uct_ib_address_t *ib_addr, char *buf,
                                size_t max);
+
+void uct_ib_iface_set_device_address_flags(uct_iface_h tl_iface,
+                                           uct_ib_address_t *ib_addr);
 
 ucs_status_t uct_ib_iface_get_device_address(uct_iface_h tl_iface,
                                              uct_device_addr_t *dev_addr);

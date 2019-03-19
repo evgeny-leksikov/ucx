@@ -13,6 +13,7 @@
 #include "ucp_context.h"
 
 #include <ucp/wireup/wireup.h>
+#include <ucp/wireup/wireup_ep.h>
 #include <ucs/arch/bitops.h>
 
 
@@ -31,6 +32,12 @@ static inline ucp_lane_index_t ucp_ep_get_wireup_msg_lane(ucp_ep_h ep)
 {
     ucp_lane_index_t lane = ucp_ep_config(ep)->key.wireup_lane;
     return (lane == UCP_NULL_LANE) ? ucp_ep_get_am_lane(ep) : lane;
+}
+
+static inline ucp_wireup_ep_t *ucp_ep_get_wireup_ep(ucp_ep_h ep)
+{
+    uct_ep_h uct_ep = ep->uct_eps[ucp_ep_get_wireup_msg_lane(ep)];
+    return ucp_wireup_ep_test(uct_ep) ? (ucp_wireup_ep_t *)uct_ep : NULL;
 }
 
 static inline ucp_lane_index_t ucp_ep_get_tag_lane(ucp_ep_h ep)

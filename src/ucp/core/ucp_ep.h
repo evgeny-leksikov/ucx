@@ -106,6 +106,10 @@ typedef struct ucp_ep_config_key {
     ucp_lane_index_t       am_lane;      /* Lane for AM (can be NULL) */
     ucp_lane_index_t       tag_lane;     /* Lane for tag matching offload (can be NULL) */
     ucp_lane_index_t       wireup_lane;  /* Lane for wireup messages (can be NULL) */
+    ucp_lane_index_t       connected_lane;/* Lane for holding client-server
+                                             connection, can be NULL or
+                                             reference to one from transport
+                                             lanes */
 
     /* Lanes for remote memory access, sorted by priority, highest first */
     ucp_lane_index_t       rma_lanes[UCP_MAX_LANES];
@@ -320,11 +324,17 @@ typedef struct {
 } ucp_ep_ext_proto_t;
 
 
+enum ucp_wireup_cd_flags {
+    UCP_WIREUP_CD_FLAG_FULL_ADDR = UCS_BIT(0), /**< Whether the attached address
+                                                    is full or partial */
+    UCP_WIREUP_CD_FLAG_CM_FMT    = UCS_BIT(1)  /**< Set if wireup goes over
+                                                    @ref uct_cm_h */
+};
+
 typedef struct ucp_wireup_client_data {
     uintptr_t                 ep_ptr;        /**< Client-side endpoint pointer */
     ucp_err_handling_mode_t   err_mode;      /**< Error handling mode */
-    uint8_t                   is_full_addr;  /**< Whether the attached address is
-                                                  full or partial */
+    uint8_t                   flags;         /**< See @ref ucp_wireup_cd_flags */
     /* packed worker address follows */
 } UCS_S_PACKED ucp_wireup_client_data_t;
 
@@ -332,6 +342,9 @@ typedef struct ucp_wireup_client_data {
 typedef struct ucp_conn_request {
     ucp_listener_h              listener;
     uct_conn_request_h          uct_req;
+    char                        local_dev_name[UCT_DEVICE_NAME_MAX]; /* TODO: replace with cm index */
+    uct_device_addr_t           *dev_addr;
+    size_t                      dev_addr_length;
     ucp_wireup_client_data_t    client_data;
     /* packed worker address follows */
 } ucp_conn_request_t;
@@ -362,7 +375,7 @@ ucs_status_t ucp_ep_create_to_worker_addr(ucp_worker_h worker,
                                           const char *message, ucp_ep_h *ep_p);
 
 ucs_status_t ucp_ep_create_accept(ucp_worker_h worker,
-                                  const ucp_wireup_client_data_t *client_data,
+                                  const ucp_conn_request_h conn_request,
                                   ucp_ep_h *ep_p);
 
 ucs_status_ptr_t ucp_ep_flush_internal(ucp_ep_h ep, unsigned uct_flags,

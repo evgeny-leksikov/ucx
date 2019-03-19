@@ -156,10 +156,14 @@ ucs_status_t uct_iface_get_address(uct_iface_h iface, uct_iface_addr_t *addr)
     return iface->ops.iface_get_address(iface, addr);
 }
 
-int uct_iface_is_reachable(const uct_iface_h iface, const uct_device_addr_t *dev_addr,
+int uct_iface_is_reachable(const uct_iface_h iface,
+                           const uct_device_addr_t *dev_addr,
                            const uct_iface_addr_t *iface_addr)
 {
-    return iface->ops.iface_is_reachable(iface, dev_addr, iface_addr);
+    /* if iface_addr is present but dev_addr isn't, this address was arrived as
+     * a private of client-server CM and iface_addr must be reachable */
+    return (!dev_addr && iface_addr) ? 1 :
+           iface->ops.iface_is_reachable(iface, dev_addr, iface_addr);
 }
 
 ucs_status_t uct_ep_check(const uct_ep_h ep, unsigned flags,

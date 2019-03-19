@@ -62,7 +62,6 @@ static unsigned ucp_listener_conn_request_progress(void *arg)
 {
     ucp_conn_request_h               conn_request = arg;
     ucp_listener_h                   listener     = conn_request->listener;
-    const ucp_wireup_client_data_t   *client_data = &conn_request->client_data;
     ucp_worker_h                     worker;
     ucp_ep_h                         ep;
     ucs_status_t                     status;
@@ -74,10 +73,13 @@ static unsigned ucp_listener_conn_request_progress(void *arg)
         return 1;
     }
 
+    ucs_assertv_always(!listener->is_wcm,
+                       "ucp_listener_accept_callback_t is not implemented for connection manager mode");
+
     worker = listener->wiface.worker;
     UCS_ASYNC_BLOCK(&worker->async);
     /* coverity[overrun-buffer-val] */
-    status = ucp_ep_create_accept(worker, client_data, &ep);
+    status = ucp_ep_create_accept(worker, conn_request, &ep);
 
     if (status != UCS_OK) {
         goto out;
@@ -132,14 +134,19 @@ static int ucp_listener_remove_filter(const ucs_callbackq_elem_t *elem,
     return (elem->cb == ucp_listener_conn_request_progress) && (listener == arg);
 }
 
-static void ucp_listener_conn_request_callback(uct_iface_h tl_iface, void *arg,
-                                               uct_conn_request_h uct_req,
-                                               const void *conn_priv_data,
-                                               size_t length)
+void
+ucp_listener_conn_request_common_cb(uct_listener_h uct_listener,
+                                    uct_iface_h tl_iface, void *arg,
+                                    const char *local_dev_name,
+                                    const uct_device_addr_t *remote_dev_addr,
+                                    size_t remote_dev_addr_length,
+                                    uct_conn_request_h uct_req,
+                                    const void *conn_priv_data, size_t length)
 {
     ucp_listener_h     listener = arg;
     uct_worker_cb_id_t prog_id  = UCS_CALLBACKQ_ID_NULL;
     ucp_conn_request_h conn_request;
+    ucp_worker_h       worker;
 
     ucs_trace("listener %p: got connection request", listener);
 
@@ -147,24 +154,68 @@ static void ucp_listener_conn_request_callback(uct_iface_h tl_iface, void *arg,
     conn_request = ucs_malloc(ucs_offsetof(ucp_conn_request_t, client_data) +
                               length, "accept connection request");
     if (conn_request == NULL) {
-        ucs_error("failed to allocate connect request, rejecting connection request %p on TL iface %p, reason %s",
-                  uct_req, tl_iface, ucs_status_string(UCS_ERR_NO_MEMORY));
-        uct_iface_reject(tl_iface, uct_req);
+        if (listener->is_wcm) {
+            /* TODO: reject */
+            ucs_assertv_always(0, "error: %s, reject is not implemented",
+                               ucs_status_string(UCS_ERR_NO_MEMORY));
+        } else {
+            ucs_error("failed to allocate connect request, rejecting connection request %p on TL iface %p, reason %s",
+                      uct_req, tl_iface, ucs_status_string(UCS_ERR_NO_MEMORY));
+            uct_iface_reject(tl_iface, uct_req);
+        }
         return;
     }
 
     conn_request->listener = listener;
     conn_request->uct_req  = uct_req;
-    memcpy(&conn_request->client_data, conn_priv_data, length);
+    if (listener->is_wcm) {
+        ucs_assert(strlen(local_dev_name) < UCT_DEVICE_NAME_MAX);
+        strncpy(conn_request->local_dev_name, local_dev_name,
+                UCT_DEVICE_NAME_MAX);
+        memcpy(&conn_request->client_data, conn_priv_data, length);
+        conn_request->dev_addr    = ucs_malloc(remote_dev_addr_length,
+                                               "remnote address length");
+        ucs_assert_always(conn_request->dev_addr != NULL);
+        memcpy(conn_request->dev_addr, remote_dev_addr, remote_dev_addr_length);
+        conn_request->dev_addr_length = remote_dev_addr_length;
+    } else {
+        memset(conn_request->local_dev_name, 0, UCT_DEVICE_NAME_MAX);
+        conn_request->dev_addr        = NULL;
+        conn_request->dev_addr_length = 0;
+        memcpy(&conn_request->client_data, conn_priv_data, length);
+    }
 
-    uct_worker_progress_register_safe(listener->wiface.worker->uct,
+    worker = listener->is_wcm ? listener->wcm.worker : listener->wiface.worker;
+    uct_worker_progress_register_safe(worker->uct,
                                       ucp_listener_conn_request_progress,
                                       conn_request, UCS_CALLBACKQ_FLAG_ONESHOT,
                                       &prog_id);
 
     /* If the worker supports the UCP_FEATURE_WAKEUP feature, signal the user so
      * that he can wake-up on this event */
-    ucp_worker_signal_internal(listener->wiface.worker);
+    ucp_worker_signal_internal(worker);
+}
+
+void ucp_listener_conn_request_cb(uct_listener_h listener, void *arg,
+                                  const char *local_dev_name,
+                                  const uct_device_addr_t* dev_addr,
+                                  size_t dev_addr_len,
+                                  uct_conn_request_h conn_request,
+                                  const void *priv_data,
+                                  size_t priv_data_length)
+{
+    ucp_listener_conn_request_common_cb(listener, NULL, arg, local_dev_name,
+                                        dev_addr, dev_addr_len, conn_request,
+                                        priv_data, priv_data_length);
+}
+
+static void ucp_listener_conn_request_callback(uct_iface_h tl_iface, void *arg,
+                                               uct_conn_request_h uct_req,
+                                               const void *conn_priv_data,
+                                               size_t length)
+{
+    ucp_listener_conn_request_common_cb(NULL, tl_iface, arg, NULL, NULL, 0,
+                                        uct_req, conn_priv_data, length);
 }
 
 static ucs_status_t
@@ -260,17 +311,24 @@ ucp_listener_create_on_cm(ucp_worker_h worker,
                           const ucp_listener_params_t *params,
                           ucp_listener_h *listener_p)
 {
-    ucp_listener_h listener = ucs_calloc(1, sizeof(listener), "ucp listener");
+    ucp_listener_h listener;
     uct_listener_params_t uct_params;
     ucs_status_t   status;
     ucp_md_index_t i;
 
+    if (!(params->field_mask & UCP_LISTENER_PARAM_FIELD_CONN_HANDLER)) {
+        return UCS_ERR_NOT_IMPLEMENTED;
+    }
+
+    listener = ucs_calloc(1, sizeof(*listener), "ucp listener");
     if (listener == NULL) {
         return UCS_ERR_NO_MEMORY;
     }
 
     listener->is_wcm      = 1;
     listener->wcm.worker  = worker;
+    listener->conn_cb     = params->conn_handler.cb;
+    listener->arg         = params->conn_handler.arg;
     uct_params.field_mask = UCT_LISTENER_PARAM_FIELD_CM |
                             UCT_LISTENER_PARAM_FIELD_SOCKADDR |
                             UCT_LISTENER_PARAM_FIELD_CONN_REQUEST_CB |
@@ -281,7 +339,7 @@ ucp_listener_create_on_cm(ucp_worker_h worker,
     for (i = 0; (i < worker->num_cms) && (status == UCS_OK); ++i) {
         uct_params.cm              = worker->cms[i];
         uct_params.sockaddr        = params->sockaddr;
-        uct_params.conn_request_cb = (void *)0xdeadbeaf;
+        uct_params.conn_request_cb = ucp_listener_conn_request_cb;
         uct_params.user_data       = listener;
         status = uct_listener_create(&uct_params, &listener->wcm.ucts[i]);
     }
