@@ -377,7 +377,8 @@ static UCS_CLASS_CLEANUP_FUNC(ucp_wireup_ep_t)
         uct_ep_destroy(self->aux_ep);
     }
     if (self->sockaddr_ep != NULL) {
-        uct_ep_destroy(self->sockaddr_ep);
+        /* TODO: */
+//        uct_ep_destroy(self->sockaddr_ep);
     }
 
     UCS_ASYNC_BLOCK(&worker->async);

@@ -713,7 +713,7 @@ void ucp_ep_cleanup_lanes(ucp_ep_h ep)
 
     for (lane = 0; lane < ucp_ep_num_lanes(ep); ++lane) {
         uct_ep = ep->uct_eps[lane];
-        if (uct_ep != NULL) {
+        if ((uct_ep != NULL && !ucp_ep_is_lane_cm_connected(ep, lane))) {
             ucs_debug("ep %p: purge uct_ep[%d]=%p", ep, lane, uct_ep);
             uct_ep_pending_purge(uct_ep, ucp_destroyed_ep_pending_purge, ep);
         }

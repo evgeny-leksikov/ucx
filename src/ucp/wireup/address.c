@@ -585,7 +585,8 @@ static ucs_status_t ucp_address_do_pack(ucp_worker_h worker, ucp_ep_h ep,
 
             /* Pack ep address if present */
             if (!(iface_attr->cap.flags & UCT_IFACE_FLAG_CONNECT_TO_IFACE) &&
-                (ep != NULL) && (flags & UCP_ADDRESS_PACK_FLAG_EP_ADDR)) {
+                (ep != NULL) && (i != ucp_ep_get_rsc_index(ep, ucp_ep_config(ep)->key.connected_lane)) &&
+                (flags & UCP_ADDRESS_PACK_FLAG_EP_ADDR)) {
 
                 ep_addr_len           = iface_attr->ep_addr_len;
                 *(uint8_t*)flags_ptr |= UCP_ADDRESS_FLAG_EP_ADDR;
@@ -636,8 +637,9 @@ ucs_status_t ucp_address_pack(ucp_worker_h worker, ucp_ep_h ep,
     size_t size;
 
     /* Collect all devices we want to pack */
-    status = ucp_address_gather_devices(worker, tl_bitmap, ep != NULL, flags,
-                                        &devices, &num_devices);
+    status = ucp_address_gather_devices(worker,
+            tl_bitmap & (ep ? ~UCS_BIT(ucp_ep_get_rsc_index(ep, ucp_ep_config(ep)->key.connected_lane)) : -1),
+            ep != NULL, flags, &devices, &num_devices);
     if (status != UCS_OK) {
         goto out;
     }

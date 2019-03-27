@@ -340,7 +340,7 @@ uct_rdmacm_cm_process_event(uct_rdmacm_cm_t *cm, struct rdma_cm_event *event)
         hdr      = (uct_rdmacm_priv_data_hdr_t *)event->param.conn.private_data;
         if (hdr->status == UCS_OK) {
             union ibv_gid gid;
-            if(ibv_query_gid(event->id->verbs, event->id->port_num, 0, &gid)) {
+            if(ibv_query_gid(event->id->verbs, event->id->port_num, 3, &gid)) {
                 return UCS_ERR_IO_ERROR;
             }
             struct ibv_port_attr port_arrt;

@@ -184,7 +184,8 @@ static ucs_status_t ucp_wireup_connect_local(ucp_ep_h ep, const uint8_t *tli,
     ucs_trace("ep %p: connect local transports", ep);
 
     for (lane = 0; lane < ucp_ep_num_lanes(ep); ++lane) {
-        if (!ucp_ep_is_lane_p2p(ep, lane)) {
+        if (!ucp_ep_is_lane_p2p(ep, lane) ||
+            ucp_ep_is_lane_cm_connected(ep, lane)) {
             continue;
         }
 
@@ -212,7 +213,8 @@ static void ucp_wireup_remote_connected(ucp_ep_h ep)
 
     for (lane = 0; lane < ucp_ep_num_lanes(ep); ++lane) {
         if (ucp_ep_is_lane_p2p(ep, lane)) {
-            ucs_assert(ucp_wireup_ep_test(ep->uct_eps[lane]));
+            ucs_assert(ucp_wireup_ep_test(ep->uct_eps[lane]) ||
+                       ucp_ep_is_lane_cm_connected(ep, lane));
         }
         if (ucp_wireup_ep_test(ep->uct_eps[lane])) {
             ucp_wireup_ep_remote_connected(ep->uct_eps[lane]);
@@ -352,7 +354,8 @@ ucp_wireup_process_request(ucp_worker_h worker, const ucp_wireup_msg_t *msg,
     params.field_mask = UCP_EP_PARAM_FIELD_ERR_HANDLING_MODE;
     params.err_mode   = msg->err_mode;
 
-    if (ep->flags & UCP_EP_FLAG_LISTENER) {
+    if ((ep->flags & UCP_EP_FLAG_LISTENER) &&
+        (ucp_ep_config(ep)->key.connected_lane == UCP_NULL_LANE)) {
         /* If this is an ep on a listener (server) that received a partial
          * worker address from the client, then the following lanes initialization
          * will be done after an aux lane was already created on this ep.
@@ -641,8 +644,8 @@ static ucs_status_t ucp_wireup_connect_lane(ucp_ep_h ep,
 
             ucs_trace("ep %p: assign uct_ep[%d]=%p wireup", ep, lane, uct_ep);
             ep->uct_eps[lane] = uct_ep;
-        } else {
-            uct_ep = ep->uct_eps[lane];
+        } else if (!ucp_wireup_ep_test(ep->uct_eps[lane])) {
+            return UCS_OK;
         }
 
         ucs_trace("ep %p: connect uct_ep[%d]=%p to addr[%d] wireup", ep, lane,

@@ -28,10 +28,17 @@ static inline ucp_lane_index_t ucp_ep_get_am_lane(ucp_ep_h ep)
     return ep->am_lane;
 }
 
+static inline int ucp_ep_is_lane_cm_connected(ucp_ep_h ep,
+                                              ucp_lane_index_t lane)
+{
+    return ucp_ep_config(ep)->key.connected_lane == lane;
+}
+
 static inline ucp_lane_index_t ucp_ep_get_wireup_msg_lane(ucp_ep_h ep)
 {
     ucp_lane_index_t lane = ucp_ep_config(ep)->key.wireup_lane;
-    return (lane == UCP_NULL_LANE) ? ucp_ep_get_am_lane(ep) : lane;
+    return ((lane == UCP_NULL_LANE) || ucp_ep_is_lane_cm_connected(ep, lane)) ?
+           ucp_ep_get_am_lane(ep) : lane;
 }
 
 static inline ucp_wireup_ep_t *ucp_ep_get_wireup_ep(ucp_ep_h ep)

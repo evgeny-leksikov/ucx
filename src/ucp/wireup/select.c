@@ -1297,6 +1297,7 @@ ucs_status_t ucp_wireup_select_lanes(ucp_ep_h ep, const ucp_ep_params_t *params,
     memset(lane_descs, 0, sizeof(lane_descs));
     ucp_ep_config_key_reset(key);
     ucp_ep_config_key_set_params(key, params);
+    key->connected_lane = ucp_ep_config(ep)->key.connected_lane;
 
     status = ucp_wireup_add_rma_lanes(ep, params, ep_init_flags, address_count,
                                       address_list, lane_descs, &key->num_lanes,
