@@ -315,6 +315,7 @@ uct_rdmacm_cm_process_event(uct_rdmacm_cm_t *cm, struct rdma_cm_event *event)
     uct_rdmacm_listener_t       *listener;
     char dev_name[UCT_DEVICE_NAME_MAX];
     uct_ib_address_t *dev_addr;
+    int ret;
 
     switch (event->event) {
     case RDMA_CM_EVENT_ADDR_RESOLVED:
@@ -382,12 +383,16 @@ uct_rdmacm_cm_process_event(uct_rdmacm_cm_t *cm, struct rdma_cm_event *event)
         return rdma_ack_cm_event(event);
     case RDMA_CM_EVENT_ESTABLISHED:
         cep = event->id->context;
+        ret = rdma_ack_cm_event(event);
         cep->wireup.server.connected_cb(&cep->super.super, cep->user_data,
                                         UCS_OK);
-        return rdma_ack_cm_event(event);
+        return ret;
     case RDMA_CM_EVENT_DISCONNECTED:
         cep = event->id->context;
+        ret = rdma_ack_cm_event(event);
         cep->disconnected_cb(&cep->super.super, cep->user_data);
+        return ret;
+    case RDMA_CM_EVENT_TIMEWAIT_EXIT:
         return rdma_ack_cm_event(event);
     default:
         assert(0);

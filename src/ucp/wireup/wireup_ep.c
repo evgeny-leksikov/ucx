@@ -625,6 +625,7 @@ ucp_wireup_ep_set_client_connected_lane_cb(uct_ep_h ep, void *arg,
     cfg_key.connected_lane = cfg_key.num_lanes++;
     ucp_ep->cfg_index      = ucp_worker_get_ep_config(ucp_ep->worker, &cfg_key);
     ucp_ep->uct_eps[cfg_key.connected_lane] = ep;
+    ucp_ep->flags |= UCP_EP_FLAG_CM_CONNECTED;
 }
 
 ucs_status_t ucp_wireup_ep_connect_to_sockaddr_cm(ucp_wireup_ep_t *wireup_ep,
@@ -645,8 +646,8 @@ ucs_status_t ucp_wireup_ep_connect_to_sockaddr_cm(ucp_wireup_ep_t *wireup_ep,
                                UCT_EP_PARAM_FIELD_SOCKADDR_CB_FLAGS        |
                                UCT_EP_PARAM_FIELD_SOCKADDR_PACK_CB;
     uct_ep_params.cm                           = worker->cms[wireup_ep->sockaddr_rsc_index];
-    uct_ep_params.sockaddr_connected_cb.client = (void *)ucp_wireup_ep_set_client_connected_lane_cb;
-    uct_ep_params.disconnected_cb              = (void *)0xdeadbeaf;
+    uct_ep_params.sockaddr_connected_cb.client = ucp_wireup_ep_set_client_connected_lane_cb;
+    uct_ep_params.disconnected_cb              = ucp_ep_cm_disconnected_cb;
     uct_ep_params.user_data                    = ucp_ep;
     uct_ep_params.sockaddr                     = &params->sockaddr;
     uct_ep_params.sockaddr_cb_flags            = UCT_CB_FLAG_ASYNC;

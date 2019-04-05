@@ -470,6 +470,23 @@ ucp_wireup_ep_set_server_connected_lane_cb(uct_ep_h ep, void *arg,
     cfg_key.connected_lane = cfg_key.num_lanes++;
     ucp_ep->cfg_index      = ucp_worker_get_ep_config(ucp_ep->worker, &cfg_key);
     ucp_ep->uct_eps[cfg_key.connected_lane] = ep;
+    ucp_ep->flags |= UCP_EP_FLAG_CM_CONNECTED;
+}
+
+void ucp_ep_cm_disconnected_cb(uct_ep_h ep, void *arg)
+{
+    ucp_ep_h ucp_ep = (ucp_ep_h)arg;
+
+    ucs_trace_func("uct_ep = %p, ucp_ep = %p, ucp_ep->flags = %xu", ep, ucp_ep,
+                   ucp_ep->flags);
+    ucs_assert(ucp_ep_get_connected_ep(ucp_ep) == ep);
+    uct_ep_disconnect(ep);
+//    uct_ep_destroy(ep);
+    ucp_ep->uct_eps[ucp_ep_config(ucp_ep)->key.connected_lane] = NULL;
+    ucp_ep->flags &= ~UCP_EP_FLAG_CM_CONNECTED;
+    if (ucp_ep->flags & UCP_EP_FLAG_CLOSE_FLUSHED) {
+        ucp_ep_disconnected(ucp_ep, 1);
+    }
 }
 
 static ucs_status_t
@@ -524,7 +541,7 @@ out:
             ep_params.sockaddr_cb_flags            = UCT_CB_FLAG_ASYNC;
             ep_params.sockaddr_pack_cb             = NULL;//(void *)0xdead01;
             ep_params.sockaddr_connected_cb.server = ucp_wireup_ep_set_server_connected_lane_cb;
-            ep_params.disconnected_cb              = (void *)0xdead03;
+            ep_params.disconnected_cb              = ucp_ep_cm_disconnected_cb;
             ep_params.user_data                    = ep;
 
             /* TODO: put on connected lane */
@@ -791,6 +808,11 @@ static void ucp_ep_close_flushed_callback(ucp_request_t *req)
 {
     ucp_ep_h ep = req->send.ep;
 
+    ep->flags |= UCP_EP_FLAG_CLOSE_FLUSHED;
+
+    if (ep->flags & UCP_EP_FLAG_CM_CONNECTED) {
+        return;
+    }
     /* If a flush is completed from a pending/completion callback, we need to
      * schedule slow-path callback to release the endpoint later, since a UCT
      * endpoint cannot be released from pending/completion callback context.
@@ -806,6 +828,8 @@ ucs_status_ptr_t ucp_ep_close_nb(ucp_ep_h ep, unsigned mode)
 {
     ucp_worker_h worker = ep->worker;
     void         *request;
+    uct_ep_h     uct_conn_ep;
+    ucs_status_t status;
 
     if ((mode == UCP_EP_CLOSE_MODE_FORCE) &&
         (ucp_ep_config(ep)->key.err_mode != UCP_ERR_HANDLING_MODE_PEER)) {
@@ -814,13 +838,22 @@ ucs_status_ptr_t ucp_ep_close_nb(ucp_ep_h ep, unsigned mode)
 
     UCS_ASYNC_BLOCK(&worker->async);
 
+    uct_conn_ep = ucp_ep_get_connected_ep(ep);
+    if (uct_conn_ep != NULL) {
+        status = uct_ep_disconnect(uct_conn_ep);
+        ucs_assert(status == UCS_OK);
+    }
+
     request = ucp_ep_flush_internal(ep,
                                     (mode == UCP_EP_CLOSE_MODE_FLUSH) ?
                                     UCT_FLUSH_FLAG_LOCAL : UCT_FLUSH_FLAG_CANCEL,
                                     NULL, 0, NULL,
                                     ucp_ep_close_flushed_callback, "close");
     if (!UCS_PTR_IS_PTR(request)) {
-        ucp_ep_disconnected(ep, mode == UCP_EP_CLOSE_MODE_FORCE);
+        ep->flags |= UCP_EP_FLAG_CLOSE_FLUSHED;
+        if (!(ep->flags & UCP_EP_FLAG_CM_CONNECTED)) {
+            ucp_ep_disconnected(ep, mode == UCP_EP_CLOSE_MODE_FORCE);
+        }
     }
 
     UCS_ASYNC_UNBLOCK(&worker->async);

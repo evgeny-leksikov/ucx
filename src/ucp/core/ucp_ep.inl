@@ -34,6 +34,13 @@ static inline int ucp_ep_is_lane_cm_connected(ucp_ep_h ep,
     return ucp_ep_config(ep)->key.connected_lane == lane;
 }
 
+static inline uct_ep_h ucp_ep_get_connected_ep(ucp_ep_h ep)
+{
+    ucp_lane_index_t lane = ucp_ep_config(ep)->key.connected_lane;
+
+    return (lane == UCP_NULL_LANE) ? NULL : ep->uct_eps[lane];
+}
+
 static inline ucp_lane_index_t ucp_ep_get_wireup_msg_lane(ucp_ep_h ep)
 {
     ucp_lane_index_t lane = ucp_ep_config(ep)->key.wireup_lane;
