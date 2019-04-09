@@ -169,6 +169,7 @@ ucp_listener_conn_request_common_cb(uct_listener_h uct_listener,
     conn_request->listener = listener;
     conn_request->uct_req  = uct_req;
     if (listener->is_wcm) {
+        conn_request->uct_listener = uct_listener;
         ucs_assert(strlen(local_dev_name) < UCT_DEVICE_NAME_MAX);
         strncpy(conn_request->local_dev_name, local_dev_name,
                 UCT_DEVICE_NAME_MAX);
@@ -411,15 +412,22 @@ void ucp_listener_destroy(ucp_listener_h listener)
 ucs_status_t ucp_listener_reject(ucp_listener_h listener,
                                  ucp_conn_request_h conn_request)
 {
-    ucp_worker_h worker = listener->wiface.worker;
+    ucp_worker_h worker = listener->is_wcm ? listener->wcm.worker :
+                          listener->wiface.worker;
+    ucs_status_t status;
 
     UCS_ASYNC_BLOCK(&worker->async);
 
-    uct_iface_reject(listener->wiface.iface, conn_request->uct_req);
+    if (listener->is_wcm) {
+        status = uct_listener_reject(conn_request->uct_listener,
+                                     conn_request->uct_req);
+    } else {
+        status = uct_iface_reject(listener->wiface.iface, conn_request->uct_req);
+    }
 
     UCS_ASYNC_UNBLOCK(&worker->async);
 
     ucs_free(conn_request);
 
-    return UCS_OK;
+    return status;
 }

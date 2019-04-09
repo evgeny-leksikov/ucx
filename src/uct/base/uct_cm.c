@@ -65,6 +65,12 @@ ucs_status_t uct_listener_create(const uct_listener_params_t *params,
     return params->cm->ops->listener_create(params, listener_p);
 }
 
+ucs_status_t uct_listener_reject(uct_listener_h listener,
+                                 uct_conn_request_h conn_request)
+{
+    return listener->cm->ops->listener_reject(listener, conn_request);
+}
+
 void uct_listener_destroy(uct_listener_h listener)
 {
     listener->cm->ops->listener_destroy(listener);

@@ -343,6 +343,7 @@ typedef struct ucp_wireup_client_data {
 
 typedef struct ucp_conn_request {
     ucp_listener_h              listener;
+    uct_listener_h              uct_listener;
     uct_conn_request_h          uct_req;
     char                        local_dev_name[UCT_DEVICE_NAME_MAX]; /* TODO: replace with cm index */
     uct_device_addr_t           *dev_addr;

@@ -100,6 +100,27 @@ out:
     return status;
 }
 
+static ucs_status_t uct_rdmacm_listener_reject(uct_listener_h listener,
+                                               uct_conn_request_h conn_request)
+{
+    struct rdma_cm_event *event = (struct rdma_cm_event *)conn_request;
+    uct_rdmacm_listener_t *rdmacm_listener;
+
+    rdmacm_listener = ucs_derived_of(listener, uct_rdmacm_listener_t);
+    ucs_assert_always(rdmacm_listener->id == event->listen_id);
+
+    if (rdma_reject(event->id, NULL, 0)) {
+        ucs_error("rdma_reject failed with error: %m");
+    }
+
+    if (rdma_ack_cm_event(event)) {
+        ucs_error("rdma_ack_cm_event failed with error: %m");
+        return UCS_ERR_IO_ERROR;
+    }
+
+    return UCS_OK;
+}
+
 UCS_CLASS_CLEANUP_FUNC(uct_rdmacm_listener_t)
 {
     rdma_destroy_id(self->id);
@@ -267,6 +288,7 @@ uct_cm_ops_t uct_rdmacm_cm_ops = {
     .close            = uct_rdmacm_cm_cleanup,
     .cm_query         = uct_rdmacm_cm_query,
     .listener_create  = UCS_CLASS_NEW_FUNC_NAME(uct_rdmacm_listener_t),
+    .listener_reject  = uct_rdmacm_listener_reject,
     .listener_destroy = UCS_CLASS_DELETE_FUNC_NAME(uct_rdmacm_listener_t),
     .ep_create        = UCS_CLASS_NEW_FUNC_NAME(uct_rdmacm_cep_t)
 };

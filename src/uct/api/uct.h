@@ -2811,6 +2811,20 @@ ucs_status_t uct_listener_create(const uct_listener_params_t *params,
 
 /**
  * @ingroup UCT_RESOURCE
+ * @brief Reject connection request.
+ *
+ * @param [in] listener     TODO
+ * @param [in] conn_request TODO
+ *
+ *
+ * @return Error code. (@ref ucs_status_t)
+ */
+ucs_status_t uct_listener_reject(uct_listener_h listener,
+                                 uct_conn_request_h conn_request);
+
+
+/**
+ * @ingroup UCT_RESOURCE
  * @brief Destroy a listener.
  *
  * @param [in]  listener    Listener to destroy.
