@@ -617,7 +617,6 @@ ucp_wireup_ep_set_client_connected_lane_cb(uct_ep_h ep, void *arg,
     ucp_wireup_ep_t *wireup_ep = ucp_ep_get_wireup_ep(ucp_ep);
     ucp_ep_config_key_t cfg_key;
 
-    ucs_assert(status == UCS_OK);
     ucs_assert(length == 0);
     ucs_assert(wireup_ep->sockaddr_ep == ep);
 
@@ -625,7 +624,13 @@ ucp_wireup_ep_set_client_connected_lane_cb(uct_ep_h ep, void *arg,
     cfg_key.connected_lane = cfg_key.num_lanes++;
     ucp_ep->cfg_index      = ucp_worker_get_ep_config(ucp_ep->worker, &cfg_key);
     ucp_ep->uct_eps[cfg_key.connected_lane] = ep;
-    ucp_ep->flags |= UCP_EP_FLAG_CM_CONNECTED;
+
+    if (status == UCS_OK) {
+        ucp_ep->flags |= UCP_EP_FLAG_CM_CONNECTED;
+    } else {
+        ucp_worker_set_ep_failed(ucp_ep->worker, ucp_ep, ep,
+                                 cfg_key.connected_lane, status);
+    }
 }
 
 ucs_status_t ucp_wireup_ep_connect_to_sockaddr_cm(ucp_wireup_ep_t *wireup_ep,

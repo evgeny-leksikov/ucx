@@ -1558,7 +1558,7 @@ ucs_status_t ucp_worker_create(ucp_context_h context,
     }
 
     /* create mem type endponts */
-    status = ucp_worker_create_mem_type_endpoints(worker);;
+    status = ucp_worker_create_mem_type_endpoints(worker);
     if (status != UCS_OK) {
         goto err_close_cms;
     }

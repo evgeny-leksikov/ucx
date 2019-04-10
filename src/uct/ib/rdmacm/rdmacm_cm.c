@@ -163,8 +163,9 @@ ucs_status_t uct_rdmacm_cep_disconnect(uct_ep_h ep)
 uct_base_iface_t dummy_iface = {
     .super = {
         .ops = {
-            .ep_disconnect = uct_rdmacm_cep_disconnect,
-            .ep_destroy    = UCS_CLASS_DELETE_FUNC_NAME(uct_rdmacm_cep_t)
+            .ep_disconnect    = uct_rdmacm_cep_disconnect,
+            .ep_destroy       = UCS_CLASS_DELETE_FUNC_NAME(uct_rdmacm_cep_t),
+            .ep_pending_purge = ucs_empty_function
         }
     }
 };
@@ -402,6 +403,18 @@ uct_rdmacm_cm_process_event(uct_rdmacm_cm_t *cm, struct rdma_cm_event *event)
         hdr = (uct_rdmacm_priv_data_hdr_t *)event->param.conn.private_data;
         cep->wireup.client.connected_cb(&cep->super.super, cep->user_data,
                                         hdr + 1, hdr->length, hdr->status);
+        return rdma_ack_cm_event(event);
+    case RDMA_CM_EVENT_REJECTED:
+        cep = event->id->context;
+        hdr = (uct_rdmacm_priv_data_hdr_t *)event->param.conn.private_data;
+        if (hdr) {
+            cep->wireup.client.connected_cb(&cep->super.super, cep->user_data,
+                                            hdr + 1, hdr->length,
+                                            UCS_ERR_REJECTED);
+        } else {
+            cep->wireup.client.connected_cb(&cep->super.super, cep->user_data,
+                                            NULL, 0, UCS_ERR_REJECTED);
+        }
         return rdma_ack_cm_event(event);
     case RDMA_CM_EVENT_ESTABLISHED:
         cep = event->id->context;
