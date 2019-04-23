@@ -186,8 +186,8 @@ ucp_address_gather_devices(ucp_worker_h worker, uint64_t tl_bitmap, int has_ep,
         dev = ucp_address_get_device(context->tl_rscs[i].tl_rsc.dev_name,
                                      devices, &num_devices);
 
-        if (!(iface_attr->cap.flags & UCT_IFACE_FLAG_CONNECT_TO_IFACE) && has_ep
-            && (flags & UCP_ADDRESS_PACK_FLAG_EP_ADDR)) {
+        if (!(iface_attr->cap.flags & UCT_IFACE_FLAG_CONNECT_TO_IFACE) &&
+            has_ep && (flags & UCP_ADDRESS_PACK_FLAG_EP_ADDR)) {
             /* ep address (its length will be packed in non-unified mode only) */
             dev->tl_addrs_size += iface_attr->ep_addr_len;
             dev->tl_addrs_size += !ucp_worker_unified_mode(worker);
@@ -474,6 +474,7 @@ static ucs_status_t ucp_address_do_pack(ucp_worker_h worker, ucp_ep_h ep,
     ucp_worker_iface_t *wiface;
     ucs_status_t status;
     ucp_rsc_index_t i;
+    ucp_rsc_index_t lane_rsc_idx;
     size_t dev_addr_len;
     size_t iface_addr_len;
     size_t ep_addr_len;
@@ -584,8 +585,9 @@ static ucs_status_t ucp_address_do_pack(ucp_worker_h worker, ucp_ep_h ep,
             }
 
             /* Pack ep address if present */
+            lane_rsc_idx = ep ? ucp_ep_get_rsc_index(ep, ucp_ep_config(ep)->key.connected_lane) : UCP_NULL_RESOURCE;
             if (!(iface_attr->cap.flags & UCT_IFACE_FLAG_CONNECT_TO_IFACE) &&
-                (ep != NULL) && (i != ucp_ep_get_rsc_index(ep, ucp_ep_config(ep)->key.connected_lane)) &&
+                (lane_rsc_idx != UCP_NULL_RESOURCE) &&
                 (flags & UCP_ADDRESS_PACK_FLAG_EP_ADDR)) {
 
                 ep_addr_len           = iface_attr->ep_addr_len;
@@ -637,9 +639,8 @@ ucs_status_t ucp_address_pack(ucp_worker_h worker, ucp_ep_h ep,
     size_t size;
 
     /* Collect all devices we want to pack */
-    status = ucp_address_gather_devices(worker,
-            tl_bitmap & (ep ? ~UCS_BIT(ucp_ep_get_rsc_index(ep, ucp_ep_config(ep)->key.connected_lane)) : -1),
-            ep != NULL, flags, &devices, &num_devices);
+    status = ucp_address_gather_devices(worker, tl_bitmap, ep != NULL, flags,
+                                        &devices, &num_devices);
     if (status != UCS_OK) {
         goto out;
     }

@@ -41,7 +41,8 @@ enum {
     UCP_WIREUP_LANE_USAGE_RMA    = UCS_BIT(2), /* Remote memory access */
     UCP_WIREUP_LANE_USAGE_RMA_BW = UCS_BIT(3), /* High-BW remote memory access */
     UCP_WIREUP_LANE_USAGE_AMO    = UCS_BIT(4), /* Atomic memory access */
-    UCP_WIREUP_LANE_USAGE_TAG    = UCS_BIT(5)  /* Tag matching offload */
+    UCP_WIREUP_LANE_USAGE_TAG    = UCS_BIT(5), /* Tag matching offload */
+    UCP_WIREUP_LANE_USAGE_CONN   = UCS_BIT(6)  /* Connection status lane */
 };
 
 
@@ -55,6 +56,7 @@ typedef struct {
     double            rma_score;
     double            rma_bw_score;
     double            amo_score;
+    double            conn_score;
 } ucp_wireup_lane_desc_t;
 
 
@@ -491,6 +493,7 @@ out_add_lane:
     lane_desc->rma_score    = 0.0;
     lane_desc->rma_bw_score = 0.0;
     lane_desc->amo_score    = 0.0;
+    lane_desc->conn_score   = 0.0;
 
 out_update_score:
     if (usage & UCP_WIREUP_LANE_USAGE_AM_BW) {
@@ -504,6 +507,9 @@ out_update_score:
     }
     if (usage & UCP_WIREUP_LANE_USAGE_AMO) {
         lane_desc->amo_score = score;
+    }
+    if (usage & UCP_WIREUP_LANE_USAGE_CONN) {
+        lane_desc->conn_score = score;
     }
 }
 
@@ -1214,6 +1220,15 @@ out:
     return UCS_OK;
 }
 
+static ucs_status_t
+ucp_wireup_add_conn_lanes(ucp_ep_h ep, ucp_wireup_lane_desc_t *lane_descs,
+                          ucp_lane_index_t *num_lanes_p)
+{
+    ucp_wireup_add_lane_desc(lane_descs, num_lanes_p, UCP_NULL_RESOURCE,
+                             255, 255, 0.0, UCP_WIREUP_LANE_USAGE_CONN, 0);
+    return UCS_OK;
+}
+
 static ucp_lane_index_t
 ucp_wireup_select_wireup_msg_lane(ucp_worker_h worker,
                                   const ucp_ep_params_t *ep_params,
@@ -1232,6 +1247,9 @@ ucp_wireup_select_wireup_msg_lane(ucp_worker_h worker,
 
     ucp_wireup_fill_aux_criteria(&criteria, ep_params);
     for (lane = 0; lane < num_lanes; ++lane) {
+        if (lane_descs[lane].usage & UCP_WIREUP_LANE_USAGE_CONN) {
+            continue;
+        }
         rsc_index  = lane_descs[lane].rsc_index;
         addr_index = lane_descs[lane].addr_index;
         resource   = &context->tl_rscs[rsc_index].tl_rsc;
@@ -1297,7 +1315,6 @@ ucs_status_t ucp_wireup_select_lanes(ucp_ep_h ep, const ucp_ep_params_t *params,
     memset(lane_descs, 0, sizeof(lane_descs));
     ucp_ep_config_key_reset(key);
     ucp_ep_config_key_set_params(key, params);
-    key->connected_lane = ucp_ep_config(ep)->key.connected_lane;
 
     status = ucp_wireup_add_rma_lanes(ep, params, ep_init_flags, address_count,
                                       address_list, lane_descs, &key->num_lanes,
@@ -1345,6 +1362,11 @@ ucs_status_t ucp_wireup_select_lanes(ucp_ep_h ep, const ucp_ep_params_t *params,
         return status;
     }
 
+    status = ucp_wireup_add_conn_lanes(ep, lane_descs, &key->num_lanes);
+    if (status != UCS_OK) {
+        return status;
+    }
+
     /* User should not create endpoints unless requested communication features */
     if (key->num_lanes == 0) {
         ucs_error("No transports selected to %s (features: 0x%lx)",
@@ -1384,6 +1406,10 @@ ucs_status_t ucp_wireup_select_lanes(ucp_ep_h ep, const ucp_ep_params_t *params,
         if (lane_descs[lane].usage & UCP_WIREUP_LANE_USAGE_TAG) {
             ucs_assert(key->tag_lane == UCP_NULL_LANE);
             key->tag_lane = lane;
+        }
+        if (lane_descs[lane].usage & UCP_WIREUP_LANE_USAGE_CONN) {
+            ucs_assert(key->connected_lane == UCP_NULL_LANE);
+            key->connected_lane = lane;
         }
     }
 

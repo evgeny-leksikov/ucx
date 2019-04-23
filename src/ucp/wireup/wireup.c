@@ -102,7 +102,8 @@ static unsigned ucp_wireup_address_index(const unsigned *order,
 
 static inline int ucp_wireup_is_ep_needed(ucp_ep_h ep)
 {
-    return (ep != NULL) && !(ep->flags & UCP_EP_FLAG_LISTENER);
+    return (ep != NULL) && !(ep->flags & UCP_EP_FLAG_LISTENER) &&
+           (ucp_ep_config(ep)->key.connected_lane == UCP_NULL_LANE);
 }
 
 /*
@@ -591,6 +592,10 @@ static ucs_status_t ucp_wireup_connect_lane(ucp_ep_h ep,
     uct_ep_h uct_ep;
     ucs_status_t status;
 
+    if (lane == ucp_ep_config(ep)->key.connected_lane) {
+        return UCS_OK;
+    }
+
     ucs_trace("ep %p: connect lane[%d]", ep, lane);
 
     /*
@@ -830,7 +835,8 @@ ucs_status_t ucp_wireup_send_request(ucp_ep_h ep)
     ucs_status_t status;
 
     for (lane = 0; lane < UCP_MAX_LANES; ++lane) {
-        if (lane < ucp_ep_num_lanes(ep)) {
+        if ((lane < ucp_ep_num_lanes(ep)) &&
+            (lane != ucp_ep_config(ep)->key.connected_lane)) {
             rsc_index = ucp_ep_get_rsc_index(ep, lane);
             rsc_tli[lane] = ucp_worker_is_tl_p2p(worker, rsc_index) ? rsc_index :
                                                                       UCP_NULL_RESOURCE;

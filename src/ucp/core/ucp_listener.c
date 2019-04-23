@@ -343,6 +343,7 @@ ucp_listener_create_on_cm(ucp_worker_h worker,
         uct_params.conn_request_cb = ucp_listener_conn_request_cb;
         uct_params.user_data       = listener;
         status = uct_listener_create(&uct_params, &listener->wcm.ucts[i]);
+        /* TODO: print error */
     }
 
     if (status != UCS_OK) {

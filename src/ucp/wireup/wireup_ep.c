@@ -622,6 +622,10 @@ ucp_wireup_ep_set_client_connected_lane_cb(uct_ep_h ep, void *arg,
 
     cfg_key                = ucp_ep_config(ucp_ep)->key;
     cfg_key.connected_lane = cfg_key.num_lanes++;
+    cfg_key.lanes[cfg_key.connected_lane].rsc_index    = UCP_NULL_RESOURCE;
+    cfg_key.lanes[cfg_key.connected_lane].proxy_lane   = UCP_NULL_LANE;
+    cfg_key.lanes[cfg_key.connected_lane].dst_md_index = 0;
+
     ucp_ep->cfg_index      = ucp_worker_get_ep_config(ucp_ep->worker, &cfg_key);
     ucp_ep->uct_eps[cfg_key.connected_lane] = ep;
 

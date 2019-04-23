@@ -44,7 +44,7 @@ static inline uct_ep_h ucp_ep_get_connected_ep(ucp_ep_h ep)
 static inline ucp_lane_index_t ucp_ep_get_wireup_msg_lane(ucp_ep_h ep)
 {
     ucp_lane_index_t lane = ucp_ep_config(ep)->key.wireup_lane;
-    return ((lane == UCP_NULL_LANE) || ucp_ep_is_lane_cm_connected(ep, lane)) ?
+    return ((lane == UCP_NULL_LANE)/* || ucp_ep_is_lane_cm_connected(ep, lane)*/) ?
            ucp_ep_get_am_lane(ep) : lane;
 }
 

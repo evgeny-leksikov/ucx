@@ -468,6 +468,9 @@ ucp_wireup_ep_set_server_connected_lane_cb(uct_ep_h ep, void *arg,
 
     cfg_key                = ucp_ep_config(ucp_ep)->key;
     cfg_key.connected_lane = cfg_key.num_lanes++;
+    cfg_key.lanes[cfg_key.connected_lane].rsc_index    = UCP_NULL_RESOURCE;
+    cfg_key.lanes[cfg_key.connected_lane].proxy_lane   = UCP_NULL_LANE;
+    cfg_key.lanes[cfg_key.connected_lane].dst_md_index = 0;
     ucp_ep->cfg_index      = ucp_worker_get_ep_config(ucp_ep->worker, &cfg_key);
     ucp_ep->uct_eps[cfg_key.connected_lane] = ep;
     ucp_ep->flags |= UCP_EP_FLAG_CM_CONNECTED;
@@ -477,6 +480,7 @@ void ucp_ep_cm_disconnected_cb(uct_ep_h ep, void *arg)
 {
     ucp_ep_h ucp_ep = (ucp_ep_h)arg;
 
+    /* TODO: Add lock */
     ucs_trace_func("uct_ep = %p, ucp_ep = %p, ucp_ep->flags = %xu", ep, ucp_ep,
                    ucp_ep->flags);
     ucs_assert(ucp_ep_get_connected_ep(ucp_ep) == ep);
