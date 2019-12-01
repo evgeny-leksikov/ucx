@@ -199,6 +199,9 @@ protected:
 
         void flush() const;
 
+        void async_block();
+        void async_unblock();
+
         static const std::string server_priv_data;
         static std::string       client_priv_data;
         size_t                   max_conn_priv;
@@ -302,7 +305,8 @@ protected:
                               ucs_time_from_sec(timeout) *
                               ucs::test_time_multiplier();
         while ((ucs_get_time() < deadline) && (!ucs_test_all_flags(*flag, mask))) {
-            short_progress_loop();
+            /* Don't do short_progress_loop() to avoid extra timings */
+            progress();
         }
     }
 

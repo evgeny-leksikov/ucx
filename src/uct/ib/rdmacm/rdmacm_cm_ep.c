@@ -17,12 +17,15 @@ const char* uct_rdmacm_cm_ep_str(uct_rdmacm_cm_ep_t *cep, char *str,
         [ucs_ilog2(UCT_RDMACM_CM_EP_ON_CLIENT)]     = "client",
         [ucs_ilog2(UCT_RDMACM_CM_EP_ON_SERVER)]     = "server",
         [ucs_ilog2(UCT_RDMACM_CM_EP_CONNECTED)]     = "connected",
+        [ucs_ilog2(UCT_RDMACM_CM_EP_DISCONNECTED)]  = "disconnected",
         [ucs_ilog2(UCT_RDMACM_CM_EP_DISCONNECTING)] = "disconnecting",
+        [ucs_ilog2(UCT_RDMACM_CM_EP_FAILED)]        = "failed",
         NULL
     };
 
     ucs_flags_str(flags_buf, sizeof(flags_buf), cep->flags, ep_flag_to_str);
-    ucs_snprintf_safe(str, max_len, "rdmacm_ep %p, flags %s" , cep, flags_buf);
+    ucs_snprintf_safe(str, max_len, "rdmacm_ep %p, status %s, flags %s",
+                      cep, ucs_status_string(cep->status), flags_buf);
     return str;
 }
 
@@ -44,9 +47,15 @@ void uct_rdmacm_cm_ep_error_cb(uct_rdmacm_cm_ep_t *cep,
                                uct_cm_remote_data_t *remote_data,
                                ucs_status_t status)
 {
+    if (cep->flags & UCT_RDMACM_CM_EP_FAILED) {
+        return;
+    }
+
+    cep->flags |= UCT_RDMACM_CM_EP_FAILED;
+    cep->status = status;
+
     if (cep->flags & UCT_RDMACM_CM_EP_CONNECTED) {
         cep->disconnect_cb(&cep->super.super, cep->user_data);
-        cep->flags &= ~UCT_RDMACM_CM_EP_CONNECTED;
     } else {
         ucs_assert(status != UCS_OK);
         if (cep->flags & UCT_RDMACM_CM_EP_ON_CLIENT) {
@@ -317,24 +326,34 @@ ucs_status_t uct_rdmacm_cm_ep_disconnect(uct_ep_h ep, unsigned flags)
     char ep_str[UCT_RDMACM_EP_STRING_LEN];
     char ip_port_str[UCS_SOCKADDR_STRING_LEN];
 
+    if (ucs_unlikely(cep->flags & UCT_RDMACM_CM_EP_FAILED)) {
+        ucs_error("%s: id=%p to peer %s",
+                  uct_rdmacm_cm_ep_str(cep, ep_str, UCT_RDMACM_EP_STRING_LEN),
+                  cep->id, ucs_sockaddr_str(rdma_get_peer_addr(cep->id),
+                                            ip_port_str,
+                                            UCS_SOCKADDR_STRING_LEN));
+        return cep->status;
+    }
+
     if (ucs_unlikely(cep->flags & UCT_RDMACM_CM_EP_DISCONNECTING)) {
-        if (cep->flags & UCT_RDMACM_CM_EP_CONNECTED) {
-            ucs_debug("%s: duplicate call of uct_ep_disconnect on an ep "
-                      "that was not disconnected yet (id=%p to peer %s).",
-                      uct_rdmacm_cm_ep_str(cep, ep_str, UCT_RDMACM_EP_STRING_LEN),
-                      cep->id, ucs_sockaddr_str(rdma_get_peer_addr(cep->id),
-                                                ip_port_str,
-                                                UCS_SOCKADDR_STRING_LEN));
-            return UCS_INPROGRESS;
-        } else {
+        if (cep->flags & UCT_RDMACM_CM_EP_DISCONNECTED) {
             ucs_error("%s: duplicate call of uct_ep_disconnect on a "
                       "disconnected ep (id=%p to peer %s)",
-                      uct_rdmacm_cm_ep_str(cep, ep_str, UCT_RDMACM_EP_STRING_LEN),
+                      uct_rdmacm_cm_ep_str(cep, ep_str,
+                                           UCT_RDMACM_EP_STRING_LEN),
                       cep->id, ucs_sockaddr_str(rdma_get_peer_addr(cep->id),
                                                 ip_port_str,
                                                 UCS_SOCKADDR_STRING_LEN));
             return UCS_ERR_NOT_CONNECTED;
         }
+
+        ucs_debug("%s: duplicate call of uct_ep_disconnect on an ep "
+                  "that was not disconnected yet (id=%p to peer %s).",
+                  uct_rdmacm_cm_ep_str(cep, ep_str, UCT_RDMACM_EP_STRING_LEN),
+                  cep->id, ucs_sockaddr_str(rdma_get_peer_addr(cep->id),
+                                            ip_port_str,
+                                            UCS_SOCKADDR_STRING_LEN));
+        return UCS_INPROGRESS;
     }
 
     if (!(cep->flags & UCT_RDMACM_CM_EP_CONNECTED)) {
@@ -347,6 +366,7 @@ ucs_status_t uct_rdmacm_cm_ep_disconnect(uct_ep_h ep, unsigned flags)
         return UCS_ERR_BUSY;
     }
 
+    cep->flags |= UCT_RDMACM_CM_EP_DISCONNECTING;
     if (rdma_disconnect(cep->id)) {
         ucs_error("%s: (id=%p) failed to disconnect from peer %p",
                   uct_rdmacm_cm_ep_str(cep, ep_str, UCT_RDMACM_EP_STRING_LEN),
@@ -354,8 +374,6 @@ ucs_status_t uct_rdmacm_cm_ep_disconnect(uct_ep_h ep, unsigned flags)
                                             UCS_SOCKADDR_STRING_LEN));
         return UCS_ERR_IO_ERROR;
     }
-
-    cep->flags |= UCT_RDMACM_CM_EP_DISCONNECTING;
 
     ucs_debug("%s: (id=%p) disconnecting from peer :%s",
               uct_rdmacm_cm_ep_str(cep, ep_str, UCT_RDMACM_EP_STRING_LEN),
@@ -404,6 +422,7 @@ UCS_CLASS_INIT_FUNC(uct_rdmacm_cm_ep_t, const uct_ep_params_t *params)
     self->cq                  = NULL;
     self->qp                  = NULL;
     self->flags               = 0;
+    self->status              = UCS_OK;
 
     if (params->field_mask & UCT_EP_PARAM_FIELD_SOCKADDR) {
         status = uct_rdamcm_cm_ep_client_init(self, params);

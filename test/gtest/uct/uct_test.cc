@@ -1148,6 +1148,14 @@ void uct_test::entity::flush() const {
     ASSERT_UCS_OK(status);
 }
 
+void uct_test::entity::async_block() {
+    UCS_ASYNC_BLOCK(&m_async.m_async);
+}
+
+void uct_test::entity::async_unblock() {
+    UCS_ASYNC_UNBLOCK(&m_async.m_async);
+}
+
 std::ostream& operator<<(std::ostream& os, const uct_tl_resource_desc_t& resource) {
     return os << resource.tl_name << "/" << resource.dev_name;
 }

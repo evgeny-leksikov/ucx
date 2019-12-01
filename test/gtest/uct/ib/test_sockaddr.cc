@@ -426,9 +426,6 @@ protected:
         EXPECT_EQ(entity::client_priv_data,
                   std::string(static_cast<const char *>(remote_data->conn_priv_data)));
 
-        self->m_cm_state |= TEST_CM_STATE_CONNECT_REQUESTED;
-        self->m_server_recv_req_cnt++;
-
         if (self->m_delay_conn_reply) {
             self->m_delayed_conn_reqs.push(conn_request);
         } else if (self->m_reject_conn_request) {
@@ -439,20 +436,28 @@ protected:
             self->server_accept(self->m_server, conn_request,
                                 server_connect_cb, server_disconnect_cb, self);
         }
+        UCS_TEST_MESSAGE << "Connection requested";
+        self->m_cm_state |= TEST_CM_STATE_CONNECT_REQUESTED;
+        self->m_server_recv_req_cnt++;
     }
 
     static void
     server_connect_cb(uct_ep_h ep, void *arg, ucs_status_t status) {
-         test_uct_cm_sockaddr *self = reinterpret_cast<test_uct_cm_sockaddr *>(arg);
-         self->m_cm_state |= TEST_CM_STATE_SERVER_CONNECTED;
-         self->m_server_connect_cb_cnt++;
+        test_uct_cm_sockaddr *self = reinterpret_cast<test_uct_cm_sockaddr *>(arg);
+
+        UCS_TEST_MESSAGE << "Server connected " << ucs_status_string(status);
+        EXPECT_EQ(UCS_OK, status);
+        self->m_cm_state |= TEST_CM_STATE_SERVER_CONNECTED;
+        self->m_server_connect_cb_cnt++;
     }
 
     static void
     server_disconnect_cb(uct_ep_h ep, void *arg) {
         test_uct_cm_sockaddr *self = reinterpret_cast<test_uct_cm_sockaddr *>(arg);
+        UCS_TEST_MESSAGE << "Server disconnected";
 
         if (!(self->m_server_start_disconnect)) {
+            UCS_TEST_MESSAGE << "Server disconnecting from disconnect callback";
             self->m_server->disconnect(ep);
         }
         self->m_cm_state |= TEST_CM_STATE_SERVER_DISCONNECTED;
@@ -479,6 +484,7 @@ protected:
             self->m_cm_state |= TEST_CM_STATE_CLIENT_CONNECTED;
             self->m_client_connect_cb_cnt++;
         }
+        UCS_TEST_MESSAGE << "Client connected " << ucs_status_string(status);
     }
 
     static void
@@ -494,6 +500,7 @@ protected:
             self->m_client->disconnect(ep);
         }
 
+        UCS_TEST_MESSAGE << "Client disconnected";
         self->m_cm_state |= TEST_CM_STATE_CLIENT_DISCONNECTED;
         self->m_client_disconnect_cnt++;
     }
@@ -594,13 +601,14 @@ protected:
     }
 
     static ucs_log_func_rc_t
-    detect_double_disconncet_error_logger(const char *file, unsigned line,
+    detect_double_disconnect_error_logger(const char *file, unsigned line,
                                           const char *function, ucs_log_level_t level,
                                           const char *message, va_list ap)
     {
         if (level == UCS_LOG_LEVEL_ERROR) {
             std::string err_str = format_message(message, ap);
-            if (strstr(err_str.c_str(), "duplicate call of uct_ep_disconnect")) {
+            if (err_str.find("duplicate call of uct_ep_disconnect") !=
+                std::string::npos) {
                 UCS_TEST_MESSAGE << err_str;
                 return UCS_LOG_FUNC_RC_STOP;
             }
@@ -885,27 +893,59 @@ UCS_TEST_P(test_uct_cm_sockaddr, connect_client_to_server_reject_with_delay)
     test_delayed_server_response(true);
 }
 
-UCS_TEST_P(test_uct_cm_sockaddr, double_ep_disconnect)
+UCS_TEST_P(test_uct_cm_sockaddr, ep_disconnect_err_codes)
 {
-    ucs_status_t status;
+    bool disconnecting = false;
 
     cm_listen_and_connect();
+
+    m_client->async_block();
+        if (m_cm_state & TEST_CM_STATE_CLIENT_CONNECTED) {
+            UCS_TEST_MESSAGE << "EXP: " << ucs_status_string(UCS_OK);
+            EXPECT_EQ(UCS_OK, uct_ep_disconnect(m_client->ep(0), 0));
+            disconnecting = true;
+        } else {
+            UCS_TEST_MESSAGE << "EXP: " << ucs_status_string(UCS_ERR_BUSY);
+            EXPECT_EQ(UCS_ERR_BUSY, uct_ep_disconnect(m_client->ep(0), 0));
+        }
+    m_client->async_unblock();
 
     wait_for_bits(&m_cm_state, TEST_CM_STATE_SERVER_CONNECTED |
                                TEST_CM_STATE_CLIENT_CONNECTED);
     EXPECT_TRUE(ucs_test_all_flags(m_cm_state, (TEST_CM_STATE_SERVER_CONNECTED |
                                                 TEST_CM_STATE_CLIENT_CONNECTED)));
 
-    ASSERT_UCS_OK(uct_ep_disconnect(m_client->ep(0), 0));
+    m_client->async_block();
+        if (disconnecting) {
+            scoped_log_handler slh(detect_double_disconnect_error_logger);
+            if (m_cm_state & TEST_CM_STATE_CLIENT_DISCONNECTED) {
+                UCS_TEST_MESSAGE << "EXP: "
+                                 << ucs_status_string(UCS_ERR_NOT_CONNECTED);
+                EXPECT_EQ(UCS_ERR_NOT_CONNECTED,
+                          uct_ep_disconnect(m_client->ep(0), 0));
+            } else {
+                UCS_TEST_MESSAGE << "EXP: "
+                                 << ucs_status_string(UCS_INPROGRESS);
+                EXPECT_EQ(UCS_INPROGRESS,
+                          uct_ep_disconnect(m_client->ep(0), 0));
+            }
+        } else {
+            UCS_TEST_MESSAGE << "EXP: " << ucs_status_string(UCS_OK);
+            ASSERT_UCS_OK(uct_ep_disconnect(m_client->ep(0), 0));
+            disconnecting = true;
+        }
+    m_client->async_unblock();
+
+    ASSERT_TRUE(disconnecting);
+    wait_for_bits(&m_cm_state, TEST_CM_STATE_CLIENT_DISCONNECTED);
+    EXPECT_TRUE(m_cm_state & TEST_CM_STATE_CLIENT_DISCONNECTED);
 
     /* wrap errors since the client will call uct_ep_disconnect the second time
      * on the same endpoint. this ep may not be disconnected yet */
     {
-        scoped_log_handler slh(detect_double_disconncet_error_logger);
-
-        status = uct_ep_disconnect(m_client->ep(0), 0);
-        EXPECT_TRUE((status == UCS_ERR_NOT_CONNECTED) ||
-                    (status == UCS_INPROGRESS));
+        scoped_log_handler slh(detect_double_disconnect_error_logger);
+        UCS_TEST_MESSAGE << "EXP: " << ucs_status_string(UCS_ERR_NOT_CONNECTED);
+        EXPECT_EQ(UCS_ERR_NOT_CONNECTED, uct_ep_disconnect(m_client->ep(0), 0));
     }
 }
 
