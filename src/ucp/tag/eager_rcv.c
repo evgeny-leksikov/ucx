@@ -65,7 +65,8 @@ ucp_eager_offload_handler(void *arg, void *data, size_t length,
         if (!UCS_STATUS_IS_ERR(status)) {
             rdesc_hdr  = (ucp_tag_t*)(rdesc + 1);
             *rdesc_hdr = recv_tag;
-            ucp_tag_unexp_recv(&worker->tm, rdesc, recv_tag);
+            ucp_tag_unexp_recv(&worker->tm, rdesc, recv_tag,
+                               UCS_PTR_MAP_KEY_INVALID);
         }
     }
 
@@ -121,9 +122,10 @@ ucp_eager_expected_handler(ucp_worker_h worker, ucp_request_t *req, void *data,
          * process other (possibly already arrived) fragments for SW flow
          * only.
          */
-        ucp_tag_frag_list_process_queue(
-                &worker->tm, req, eagerf_hdr->msg_id
-                UCS_STATS_ARG(UCP_WORKER_STAT_TAG_RX_EAGER_CHUNK_EXP));
+        ucp_tag_frag_list_process_queue(&worker->tm, req,
+                                        eagerf_hdr->msg_id,
+                                        eagerf_hdr->super.ep_id
+                                        UCS_STATS_ARG(UCP_WORKER_STAT_TAG_RX_EAGER_CHUNK_EXP));
     }
 }
 
@@ -154,7 +156,7 @@ ucp_eager_tagged_handler(void *arg, void *data, size_t length, unsigned am_flags
     status = ucp_recv_desc_init(worker, data, length, 0, am_flags, hdr_len,
                                 flags, priv_length, 1, name, &rdesc);
     if (!UCS_STATUS_IS_ERR(status)) {
-        ucp_tag_unexp_recv(&worker->tm, rdesc, eager_hdr->super.tag);
+        ucp_tag_unexp_recv(&worker->tm, rdesc, recv_tag, eager_hdr->ep_id);
     }
 
     return status;
@@ -456,7 +458,8 @@ ucp_tag_offload_eager_middle_handler(ucp_worker_h worker, void *data,
                                                         tag_frag_queue);
             first_hdr   = (ucp_offload_first_desc_t*)(first_rdesc + 1);
             ucp_tag_unexp_recv(&worker->tm, first_rdesc,
-                               first_hdr->super.super.tag);
+                               first_hdr->super.super.tag,
+                               UCS_PTR_MAP_KEY_INVALID /* unsupported in HW TM flow */ );
         } else {
             first_rdesc = ucs_queue_head_elem_non_empty(&matchq->unexp_q,
                                                         ucp_recv_desc_t,
