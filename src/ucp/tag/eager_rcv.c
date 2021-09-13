@@ -154,8 +154,12 @@ ucp_eager_tagged_handler(void *arg, void *data, size_t length, unsigned am_flags
         return UCS_OK;
     }
 
-    UCP_WORKER_GET_EP_BY_ID(&ep, worker, eager_hdr->ep_id, return UCS_OK,
-                            "eager");
+    /* check UCS_PTR_MAP_KEY_INVALID to pass CI */
+    if (ucs_likely(eager_hdr->ep_id != UCS_PTR_MAP_KEY_INVALID)) {
+        UCP_WORKER_GET_EP_BY_ID(&ep, worker, eager_hdr->ep_id, return UCS_OK,
+                                "eager");
+    }
+
     status = ucp_recv_desc_init(worker, data, length, 0, am_flags, hdr_len,
                                 flags, priv_length, 1, name, &rdesc);
     if (!UCS_STATUS_IS_ERR(status)) {
