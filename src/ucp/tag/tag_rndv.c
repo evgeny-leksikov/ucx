@@ -50,7 +50,7 @@ static void ucp_rndv_send_cancel_ack(ucp_worker_h worker,
     req->send.rndv.mdesc   = NULL;
     req->send.pending_lane = UCP_NULL_LANE;
 
-    ucp_rndv_req_send_ack(req, NULL, rndv_rts_hdr->sreq.req_id,
+    ucp_rndv_req_send_ack(req, sizeof(*rndv_rts_hdr), rndv_rts_hdr->sreq.req_id,
                           UCS_ERR_CANCELED, UCP_AM_ID_RNDV_ATS,
                           "send_ats_cancel");
 }
