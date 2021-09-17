@@ -278,6 +278,25 @@ public:
         TERMINATE_SIGNALED
     } status_t;
 
+    bool init() {
+        bool ret = UcxContext::init();
+
+        if (ret) {
+            struct sigaction new_sigaction;
+            new_sigaction.sa_handler = signal_terminate_handler;
+            new_sigaction.sa_flags   = 0;
+            sigemptyset(&new_sigaction.sa_mask);
+
+            if (sigaction(SIGINT, &new_sigaction, NULL) != 0) {
+                LOG << "ERROR: failed to set SIGINT signal handler: "
+                    << strerror(errno);
+                abort();
+            }
+        }
+
+        return ret;
+    }
+
 protected:
     typedef enum {
         XFER_TYPE_SEND,
@@ -511,17 +530,6 @@ protected:
                           test_opts.num_offcache_buffers)
     {
         _status                  = OK;
-
-        struct sigaction new_sigaction;
-        new_sigaction.sa_handler = signal_terminate_handler;
-        new_sigaction.sa_flags   = 0;
-        sigemptyset(&new_sigaction.sa_mask);
-
-        if (sigaction(SIGINT, &new_sigaction, NULL) != 0) {
-            LOG << "ERROR: failed to set SIGINT signal handler: "
-                << strerror(errno);
-            abort();
-        }
     }
 
     const options_t& opts() const {
