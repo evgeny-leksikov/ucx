@@ -198,12 +198,19 @@ UCS_PROFILE_FUNC(ucs_status_t, ucp_eager_middle_handler,
     ucp_worker_h worker         = arg;
     ucp_eager_middle_hdr_t *hdr = data;
     ucp_recv_desc_t *rdesc      = NULL;
+    ucp_ep_h ep UCS_V_UNUSED;
     ucp_tag_frag_match_t *matchq;
     ucp_request_t *req;
     ucs_status_t status;
     size_t recv_len;
     khiter_t iter;
     int ret;
+
+    /* check UCS_PTR_MAP_KEY_INVALID to pass CI */
+    if (ucs_likely(hdr->ep_id != UCS_PTR_MAP_KEY_INVALID)) {
+        UCP_WORKER_GET_VALID_EP_BY_ID(&ep, worker, hdr->ep_id, return UCS_OK,
+                                      "eager_middle");
+    }
 
     iter   = kh_put(ucp_tag_frag_hash, &worker->tm.frag_hash, hdr->msg_id, &ret);
     ucs_assert(ret >= 0);
