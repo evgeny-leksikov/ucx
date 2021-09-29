@@ -249,7 +249,12 @@ void test_ucp_mmap::test_rkey_management(ucp_mem_h memh, bool is_dummy,
 
 bool test_ucp_mmap::enable_proto() const
 {
-    return get_variant_value() == VARIANT_PROTO_ENABLE;
+    if (get_variant_value() == VARIANT_PROTO_ENABLE) {
+        // TODO: compatibility and err handling
+        UCS_TEST_SKIP_R("new protocols are disabled");
+    }
+
+    return false;
 }
 
 void test_ucp_mmap::expect_same_distance(const ucs_sys_dev_distance_t &dist1,
