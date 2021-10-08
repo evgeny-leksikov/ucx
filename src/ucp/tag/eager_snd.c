@@ -127,9 +127,9 @@ static ucs_status_t ucp_tag_eager_contig_short(uct_pending_req_t *self)
     ucs_status_t status;
 
     req->send.lane = ucp_ep_get_am_lane(ep);
-    status         = ucp_tag_send_am_short_iov(ep, req->send.buffer,
-                                               req->send.length,
-                                               req->send.msg_proto.tag);
+    status         = ucp_ep_tag_send_am_short_iov(ep, req->send.buffer,
+                                                  req->send.length,
+                                                  req->send.msg_proto.tag);
     return ucp_am_short_handle_status_from_pending(req, status);
 }
 

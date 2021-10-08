@@ -104,19 +104,26 @@ ucp_add_uct_iov_elem(uct_iov_t *iov, void *buffer, size_t length,
 }
 
 static UCS_F_ALWAYS_INLINE ucs_status_t
-ucp_tag_send_am_short_iov(ucp_ep_h ep, const void *buffer, size_t length,
-                          ucp_tag_t tag)
+ucp_tag_send_am_short_iov(uct_ep_h ep, ucs_ptr_map_key_t remote_id,
+                          const void *buffer, size_t length, ucp_tag_t tag)
 {
     size_t iov_cnt      = 0ul;
     ucp_eager_hdr_t hdr = { .super.tag = tag,
-                            .ep_id     = ucp_ep_remote_id(ep) };
+                            .ep_id     = remote_id };
     uct_iov_t iov[2];
 
     ucp_add_uct_iov_elem(iov, &hdr, sizeof(hdr), UCT_MEM_HANDLE_NULL, &iov_cnt);
     ucp_add_uct_iov_elem(iov, (void*)buffer, length, UCT_MEM_HANDLE_NULL,
                          &iov_cnt);
-    return uct_ep_am_short_iov(ucp_ep_get_am_uct_ep(ep), UCP_AM_ID_EAGER_ONLY,
-                               iov, iov_cnt);
+    return uct_ep_am_short_iov(ep, UCP_AM_ID_EAGER_ONLY, iov, iov_cnt);
+}
+
+static UCS_F_ALWAYS_INLINE ucs_status_t
+ucp_ep_tag_send_am_short_iov(ucp_ep_h ep, const void *buffer, size_t length,
+                             ucp_tag_t tag)
+{
+    return ucp_tag_send_am_short_iov(ucp_ep_get_am_uct_ep(ep),
+                                     ucp_ep_remote_id(ep), buffer, length, tag);
 }
 
 #endif
