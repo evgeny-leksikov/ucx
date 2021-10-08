@@ -162,7 +162,7 @@ ucp_tag_send_inline(ucp_ep_h ep, const void *buffer, size_t length, ucp_tag_t ta
     ucs_status_t status;
 
     if (ucp_proto_is_inline(ep, &ucp_ep_config(ep)->tag.max_eager_short, length)) {
-        status = ucp_tag_send_am_short_iov(ep, buffer, length, tag);
+        status = ucp_ep_tag_send_am_short_iov(ep, buffer, length, tag);
     } else if (ucp_proto_is_inline(ep,
                                    &ucp_ep_config(ep)->tag.offload.max_eager_short,
                                    length)) {
