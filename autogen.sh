@@ -1,5 +1,6 @@
 #!/bin/sh
 
+
 usage()
 {
 	echo "Usage: autogen.sh <options>"
