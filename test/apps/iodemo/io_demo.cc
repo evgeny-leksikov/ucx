@@ -83,6 +83,7 @@ typedef struct {
     std::vector<const char*> src_addrs;
     bool                     prereg;
     bool                     per_conn_info;
+    bool                     warmup;
 } options_t;
 
 #define LOG_PREFIX  "[DEMO]"
@@ -1317,6 +1318,9 @@ public:
         _num_sent(0), _num_completed(0),
         _start_time(get_time()),
         _read_callback_pool(opts().iomsg_size, "read callbacks") {
+        _server_info.resize(opts().servers.size());
+        std::for_each(_server_info.begin(), _server_info.end(),
+                      reset_server_info);
     }
 
     size_t get_active_server_index(const UcxConnection *conn) {
@@ -1725,8 +1729,9 @@ public:
         server_info.prev_connect_time          = 0.;
         _server_index_lookup[server_info.conn] = server_index;
         active_servers_add(server_index);
-        LOG << "Connected to " << server_name(server_index) << " after "
-            << attempts << " attempts";
+        LOG << "Connected to " << server_name(server_index) << " for "
+            << server_info.conn->lifetime_str() << "after " << attempts
+            << " attempts";
     }
 
     void connect_failed(size_t server_index, ucs_status_t status) {
@@ -1831,13 +1836,26 @@ public:
         wait_disconnected_connections();
     }
 
+    void warmup() {
+        LOG << "Warmup start";
+        connect_all(true);
+
+        while ((_status == OK) &&
+               (_active_servers.size() != opts().servers.size())) {
+            progress();
+        }
+
+        if (_status == OK) {
+            assert(_active_servers.size() == opts().servers.size());
+        } else {
+            assert(_active_servers.size() <= opts().servers.size());
+        }
+
+        destroy_servers();
+        LOG << "Warmup end";
+    }
+
     status_t run() {
-        _server_info.resize(opts().servers.size());
-        std::for_each(_server_info.begin(), _server_info.end(),
-                      reset_server_info);
-
-        _status = OK;
-
         // TODO reset these values by canceling requests
         _num_sent      = 0;
         _num_completed = 0;
@@ -2271,9 +2289,10 @@ static int parse_args(int argc, char **argv, options_t *test_opts)
     test_opts->progress_count        = 1;
     test_opts->prereg                = false;
     test_opts->per_conn_info         = false;
+    test_opts->warmup                = false;
 
     while ((c = getopt(argc, argv,
-                       "p:c:r:d:b:i:w:a:k:o:t:n:l:s:y:vqDHP:L:R:C:I:zV")) != -1) {
+                       "p:c:r:d:b:i:w:a:k:o:t:n:l:s:y:vqDHP:L:R:C:I:zVW")) != -1) {
         switch (c) {
         case 'p':
             test_opts->port_num = atoi(optarg);
@@ -2412,6 +2431,9 @@ static int parse_args(int argc, char **argv, options_t *test_opts)
         case 'V':
             test_opts->per_conn_info = true;
             break;
+        case 'W':
+            test_opts->warmup = true;
+            break;
         case 'h':
         default:
             std::cout << "Usage: io_demo [options] [server_address]" << std::endl;
@@ -2451,6 +2473,7 @@ static int parse_args(int argc, char **argv, options_t *test_opts)
             std::cout << "  -I <src_addr>              Set source IP address to select network interface on client side" << std::endl;
             std::cout << "  -z                         Enable pre-register buffers for zero-copy" << std::endl;
             std::cout << "  -V                         Print per-connection info" << std::endl;
+            std::cout << "  -W                         Warmup connection establishment" << std::endl;
             return -1;
         }
     }
@@ -2493,6 +2516,10 @@ static int do_client(options_t& test_opts)
     DemoClient client(test_opts);
     if (!client.init()) {
         return -1;
+    }
+
+    if (test_opts.warmup) {
+        client.warmup();
     }
 
     DemoClient::status_t status = client.run();
