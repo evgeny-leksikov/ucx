@@ -57,15 +57,7 @@ ucp_proto_rndv_ats_proto_progress(uct_pending_req_t *uct_req)
 {
     ucp_request_t *req = ucs_container_of(uct_req, ucp_request_t, send.uct);
 
-    if (!(req->flags & UCP_REQUEST_FLAG_PROTO_INITIALIZED)) {
-        if (req->send.rndv.rkey != NULL) {
-            ucp_proto_rndv_rkey_destroy(req);
-        }
-
-        ucp_datatype_iter_cleanup(&req->send.state.dt_iter, UCP_DT_MASK_ALL);
-        req->flags |= UCP_REQUEST_FLAG_PROTO_INITIALIZED;
-    }
-
+    req->flags |= UCP_REQUEST_FLAG_PROTO_INITIALIZED;
     return ucp_proto_rndv_ats_progress(uct_req);
 }
 
@@ -76,5 +68,6 @@ ucp_proto_t ucp_rndv_ats_proto = {
     .init     = ucp_proto_rndv_ats_init,
     .query    = ucp_proto_default_query,
     .progress = {ucp_proto_rndv_ats_proto_progress},
-    .abort    = (ucp_request_abort_func_t)ucs_empty_function_do_assert_void
+    .abort    = (ucp_request_abort_func_t)ucs_empty_function_fatal_not_implemented_void,
+    .reset    = ucp_proto_request_bcopy_reset
 };

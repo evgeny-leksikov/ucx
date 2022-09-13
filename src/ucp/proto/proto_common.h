@@ -274,8 +274,12 @@ void ucp_proto_request_bcopy_abort(ucp_request_t *request, ucs_status_t status);
 
 void ucp_proto_request_bcopy_reset(ucp_request_t *request);
 
+void ucp_proto_request_sync_bcopy_reset(ucp_request_t *request);
+
 void ucp_proto_request_zcopy_abort(ucp_request_t *request, ucs_status_t status);
 
 void ucp_proto_request_zcopy_reset(ucp_request_t *request);
+
+void ucp_proto_request_sync_zcopy_reset(ucp_request_t *request);
 
 #endif

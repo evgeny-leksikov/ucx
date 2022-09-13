@@ -410,13 +410,21 @@ void ucp_proto_rndv_rts_query(const ucp_proto_query_params_t *params,
 
 void ucp_proto_rndv_rts_abort(ucp_request_t *req, ucs_status_t status)
 {
-    if (req->flags & UCP_REQUEST_FLAG_PROTO_INITIALIZED) {
-        ucp_send_request_id_release(req);
-        ucp_datatype_iter_mem_dereg(req->send.ep->worker->context,
-                                    &req->send.state.dt_iter, UCP_DT_MASK_ALL);
+    ucp_proto_rndv_rts_reset(req);
+    ucp_request_complete_send(req, status);
+}
+
+void ucp_proto_rndv_rts_reset(ucp_request_t *req)
+{
+    if (!(req->flags & UCP_REQUEST_FLAG_PROTO_INITIALIZED)) {
+        return;
     }
 
-    ucp_request_complete_send(req, status);
+    ucp_send_request_id_release(req);
+    ucp_datatype_iter_mem_dereg(req->send.ep->worker->context,
+                                &req->send.state.dt_iter, UCP_DT_MASK_ALL);
+    ucp_datatype_iter_cleanup(&req->send.state.dt_iter, UCP_DT_MASK_ALL);
+    req->flags &= ~UCP_REQUEST_FLAG_PROTO_INITIALIZED;
 }
 
 static ucs_status_t
@@ -558,6 +566,19 @@ static size_t ucp_proto_rndv_ats_pack_ack(void *dest, void *arg)
     return ucp_proto_rndv_pack_ack(req, dest, req->send.state.dt_iter.length);
 }
 
+static UCS_F_ALWAYS_INLINE ucs_status_t
+ucp_proto_rndv_ats_complete(ucp_request_t *req)
+{
+    ucp_request_t *rreq = ucp_request_get_super(req);
+
+    if (req->send.rndv.rkey != NULL) {
+        ucp_proto_rndv_rkey_destroy(req);
+    }
+
+    ucp_datatype_iter_cleanup(&req->send.state.dt_iter, UCP_DT_MASK_ALL);
+    return ucp_proto_rndv_recv_complete_status(req, rreq->status);
+}
+
 ucs_status_t ucp_proto_rndv_ats_progress(uct_pending_req_t *uct_req)
 {
     ucp_request_t *req = ucs_container_of(uct_req, ucp_request_t, send.uct);
@@ -565,7 +586,7 @@ ucs_status_t ucp_proto_rndv_ats_progress(uct_pending_req_t *uct_req)
     return ucp_proto_rndv_ack_progress(req, req->send.proto_config->priv,
                                        UCP_AM_ID_RNDV_ATS,
                                        ucp_proto_rndv_ats_pack_ack,
-                                       ucp_proto_rndv_recv_complete);
+                                       ucp_proto_rndv_ats_complete);
 }
 
 void ucp_proto_rndv_bulk_query(const ucp_proto_query_params_t *params,
@@ -668,8 +689,10 @@ void ucp_proto_rndv_receive_start(ucp_worker_h worker, ucp_request_t *recv_req,
     uint8_t sg_count;
     ucp_ep_h ep;
 
-    UCP_WORKER_GET_VALID_EP_BY_ID(&ep, worker, rts->sreq.ep_id, return,
-                                  "RTS on non-existing endpoint");
+    UCP_WORKER_GET_VALID_EP_BY_ID(&ep, worker, rts->sreq.ep_id, {
+        ucp_rndv_recv_req_complete(recv_req, UCS_ERR_CANCELED);
+        return;
+    }, "RTS on non-existing endpoint");
 
     req = ucp_request_get(worker);
     if (req == NULL) {

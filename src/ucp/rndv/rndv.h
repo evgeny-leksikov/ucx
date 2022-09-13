@@ -81,6 +81,8 @@ void ucp_rndv_req_send_ack(ucp_request_t *ack_req, size_t ack_size,
                            ucs_ptr_map_key_t remote_req_id, ucs_status_t status,
                            ucp_am_id_t am_id, const char *ack_str);
 
+void ucp_rndv_recv_req_complete(ucp_request_t *req, ucs_status_t status);
+
 ucs_status_t ucp_rndv_progress_rma_get_zcopy(uct_pending_req_t *self);
 
 ucs_status_t ucp_rndv_progress_rma_put_zcopy(uct_pending_req_t *self);

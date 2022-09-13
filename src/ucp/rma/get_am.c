@@ -100,6 +100,14 @@ ucp_proto_get_am_bcopy_init(const ucp_proto_init_params_t *init_params)
     return ucp_proto_single_init(&params);
 }
 
+static void ucp_proto_get_am_bcopy_reset(ucp_request_t *request)
+{
+    if (request->flags & UCP_REQUEST_FLAG_PROTO_INITIALIZED) {
+        ucp_send_request_id_release(request);
+        request->flags &= ~UCP_REQUEST_FLAG_PROTO_INITIALIZED;
+    }
+}
+
 ucp_proto_t ucp_get_am_bcopy_proto = {
     .name     = "get/am/bcopy",
     .desc     = UCP_PROTO_RMA_EMULATION_DESC,
@@ -108,5 +116,5 @@ ucp_proto_t ucp_get_am_bcopy_proto = {
     .query    = ucp_proto_single_query,
     .progress = {ucp_proto_get_am_bcopy_progress},
     .abort    = (ucp_request_abort_func_t)ucs_empty_function_fatal_not_implemented_void,
-    .reset    = (ucp_request_reset_func_t)ucs_empty_function_fatal_not_implemented_void
+    .reset    = ucp_proto_get_am_bcopy_reset
 };

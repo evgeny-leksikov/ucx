@@ -336,8 +336,7 @@ void ucp_rndv_req_send_ack(ucp_request_t *ack_req, size_t ack_size,
     ucp_request_send(ack_req);
 }
 
-static UCS_F_ALWAYS_INLINE void
-ucp_rndv_recv_req_complete(ucp_request_t *req, ucs_status_t status)
+void ucp_rndv_recv_req_complete(ucp_request_t *req, ucs_status_t status)
 {
     if (req->flags & UCP_REQUEST_FLAG_RECV_AM) {
         ucp_request_complete_am_recv(req, status);
