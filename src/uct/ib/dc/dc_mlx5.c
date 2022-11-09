@@ -980,10 +980,18 @@ int uct_dc_mlx5_iface_is_reachable(const uct_iface_h tl_iface,
     iface = ucs_derived_of(tl_iface, uct_dc_mlx5_iface_t);
     ucs_assert_always(iface_addr != NULL);
 
-    return ((addr->flags & UCT_DC_MLX5_IFACE_ADDR_DC_VERS) == iface->version_flag) &&
-           (UCT_DC_MLX5_IFACE_ADDR_TM_ENABLED(addr) ==
-            UCT_RC_MLX5_TM_ENABLED(&iface->super)) &&
-           uct_ib_iface_is_reachable(tl_iface, dev_addr, iface_addr);
+    if ((addr->flags & UCT_DC_MLX5_IFACE_ADDR_DC_VERS) != iface->version_flag) {
+        ucs_diag("iface %p: unreachable due to DC version mismatch", iface);
+        return 0;
+    }
+
+    if (UCT_DC_MLX5_IFACE_ADDR_TM_ENABLED(addr) !=
+        UCT_RC_MLX5_TM_ENABLED(&iface->super)) {
+        ucs_diag("iface %p: unreachable due to TM mismatch", iface);
+        return 0;
+    }
+
+    return uct_ib_iface_is_reachable(tl_iface, dev_addr, iface_addr);
 }
 
 ucs_status_t
