@@ -849,6 +849,9 @@ static ucs_status_t uct_ib_iface_init_pkey(uct_ib_iface_t *iface,
             continue;
         }
 
+        ucs_diag("ibv_query_pkey("UCT_IB_IFACE_FMT", index=%d) 0x%x",
+                  UCT_IB_IFACE_ARG(iface), pkey_index, pkey);
+
         if ((config->pkey == UCS_HEXUNITS_AUTO) ||
             /* take only the lower 15 bits for the comparison */
             ((pkey & UCT_IB_PKEY_PARTITION_MASK) == config->pkey)) {
