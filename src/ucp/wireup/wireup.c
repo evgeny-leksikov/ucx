@@ -1361,7 +1361,8 @@ ucp_wireup_get_dst_rsc_indices(ucp_ep_h ep, ucp_ep_config_key_t *new_key,
 }
 
 static void ucp_wireup_discard_uct_eps(ucp_ep_h ep, uct_ep_h *uct_eps,
-                                       ucs_queue_head_t *replay_pending_queue)
+                                       ucs_queue_head_t *replay_pending_queue,
+                                       const char *reason)
 {
     ucp_lane_index_t index;
 
@@ -1375,7 +1376,7 @@ static void ucp_wireup_discard_uct_eps(ucp_ep_h ep, uct_ep_h *uct_eps,
                                   ucp_request_purge_enqueue_cb,
                                   replay_pending_queue,
                                   (ucp_send_nbx_callback_t)ucs_empty_function,
-                                  NULL);
+                                  NULL, reason);
     }
 }
 
@@ -1470,7 +1471,7 @@ ucp_wireup_check_config_intersect(ucp_ep_h ep, ucp_ep_config_key_t *new_key,
                         (uct_pending_purge_callback_t)
                                 ucs_empty_function_do_assert_void,
                         NULL, (ucp_send_nbx_callback_t)ucs_empty_function,
-                        NULL);
+                        NULL, "cleanup old lane on intersect");
                 ucp_ep_set_lane(ep, lane, NULL);
             }
         } else if (uct_ep != NULL) {
@@ -1488,7 +1489,8 @@ ucp_wireup_check_config_intersect(ucp_ep_h ep, ucp_ep_config_key_t *new_key,
 
     status = ucp_ep_realloc_lanes(ep, new_key->num_lanes);
     if (status != UCS_OK) {
-        ucp_wireup_discard_uct_eps(ep, new_uct_eps, replay_pending_queue);
+        ucp_wireup_discard_uct_eps(ep, new_uct_eps, replay_pending_queue,
+                                   "realloc failure");
         return status;
     }
 

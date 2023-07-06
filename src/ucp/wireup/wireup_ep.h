@@ -106,7 +106,10 @@ void ucp_wireup_ep_set_aux(ucp_wireup_ep_t *wireup_ep, uct_ep_h uct_ep,
 void ucp_wireup_ep_discard_aux_ep(ucp_wireup_ep_t *wireup_ep,
                                   unsigned ep_flush_flags,
                                   uct_pending_purge_callback_t purge_cb,
-                                  void *purge_arg);
+                                  void *purge_arg, const char *reason);
+
+uct_ep_h ucp_wireup_ep_discard(ucp_wireup_ep_t *wireup_ep,
+                               unsigned ep_flush_flags, const char *reason);
 
 int ucp_wireup_ep_has_next_ep(ucp_wireup_ep_t *wireup_ep);
 

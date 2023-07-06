@@ -267,7 +267,7 @@ ucp_wireup_ep_connect_aux(ucp_wireup_ep_t *wireup_ep, unsigned ep_init_flags,
 void ucp_wireup_ep_discard_aux_ep(ucp_wireup_ep_t *wireup_ep,
                                   unsigned ep_flush_flags,
                                   uct_pending_purge_callback_t purge_cb,
-                                  void *purge_arg)
+                                  void *purge_arg, const char *reason)
 {
     ucp_ep_h ucp_ep     = wireup_ep->super.ucp_ep;
     uct_ep_h aux_ep     = wireup_ep->aux_ep;
@@ -280,7 +280,29 @@ void ucp_wireup_ep_discard_aux_ep(ucp_wireup_ep_t *wireup_ep,
     ucp_worker_discard_uct_ep(ucp_ep, aux_ep, wireup_ep->aux_rsc_index,
                               ep_flush_flags, purge_cb, purge_arg,
                               (ucp_send_nbx_callback_t)ucs_empty_function,
-                              NULL);
+                              NULL, reason);
+}
+
+uct_ep_h ucp_wireup_ep_discard(ucp_wireup_ep_t *wireup_ep,
+                               unsigned ep_flush_flags, const char *reason)
+{
+    uct_ep_h uct_ep;
+    int is_owner;
+
+    ucs_assert(wireup_ep != NULL);
+    ucp_wireup_ep_discard_aux_ep(wireup_ep, ep_flush_flags,
+                                 ucp_destroyed_ep_pending_purge, NULL, reason);
+
+    is_owner = wireup_ep->super.is_owner;
+    uct_ep   = ucp_wireup_ep_extract_next_ep(&wireup_ep->super.super);
+
+    /* destroy WIREUP EP allocated for this UCT EP, since discard operation
+     * most likely won't have an access to UCP EP as it could be destroyed
+     * by the caller */
+    uct_ep_destroy(&wireup_ep->super.super);
+
+    /* do nothing, if this wireup EP is not an owner for UCT EP */
+    return is_owner ? uct_ep : NULL;
 }
 
 static ucs_status_t ucp_wireup_ep_flush(uct_ep_h uct_ep, unsigned flags,
@@ -417,7 +439,8 @@ static UCS_CLASS_CLEANUP_FUNC(ucp_wireup_ep_t)
     if (self->aux_ep != NULL) {
         /* No pending operations should be scheduled */
         ucp_wireup_ep_discard_aux_ep(self, UCT_FLUSH_FLAG_CANCEL,
-                                     ucp_destroyed_ep_pending_purge, ucp_ep);
+                                     ucp_destroyed_ep_pending_purge, ucp_ep,
+                                     "wireup_ep_dtor:aux_ep");
         self->aux_ep = NULL;
     }
 
@@ -427,7 +450,7 @@ static UCS_CLASS_CLEANUP_FUNC(ucp_wireup_ep_t)
                                   self->super.rsc_index, UCT_FLUSH_FLAG_CANCEL,
                                   ucp_destroyed_ep_pending_purge, ucp_ep,
                                   (ucp_send_nbx_callback_t)ucs_empty_function,
-                                  NULL);
+                                  NULL, "wireup_ep_dtor:next_ep");
         ucp_proxy_ep_set_uct_ep(&self->super, NULL, 0, UCP_NULL_RESOURCE);
     }
 

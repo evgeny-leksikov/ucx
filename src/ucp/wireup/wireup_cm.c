@@ -368,7 +368,7 @@ err:
 }
 
 static void
-ucp_wireup_cm_ep_cleanup(ucp_ep_t *ucp_ep)
+ucp_wireup_cm_ep_cleanup(ucp_ep_t *ucp_ep, const char *reason)
 {
     ucp_lane_index_t lane_idx;
 
@@ -383,7 +383,8 @@ ucp_wireup_cm_ep_cleanup(ucp_ep_t *ucp_ep)
                 ucp_ep, ucp_ep_get_lane(ucp_ep, lane_idx),
                 ucp_ep_get_rsc_index(ucp_ep, lane_idx), UCT_FLUSH_FLAG_CANCEL,
                 (uct_pending_purge_callback_t)ucs_empty_function_do_assert_void,
-                NULL, (ucp_send_nbx_callback_t)ucs_empty_function, NULL);
+                NULL, (ucp_send_nbx_callback_t)ucs_empty_function, NULL,
+                reason);
         ucp_ep_set_lane(ucp_ep, lane_idx, NULL);
     }
 }
@@ -501,7 +502,7 @@ static unsigned ucp_cm_client_uct_connect_progress(void *arg)
         }
 
         ucp_wireup_eps_pending_extract(ep, &tmp_pending_queue);
-        ucp_wireup_cm_ep_cleanup(ep);
+        ucp_wireup_cm_ep_cleanup(ep, "client ep reconfig before connect");
         ucp_ep_realloc_lanes(ep, key.num_lanes);
 
         status = ucp_worker_get_ep_config(worker, &key, ep_init_flags,

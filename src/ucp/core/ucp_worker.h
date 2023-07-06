@@ -403,7 +403,8 @@ ucs_status_t ucp_worker_discard_uct_ep(ucp_ep_h ucp_ep, uct_ep_h uct_ep,
                                        uct_pending_purge_callback_t purge_cb,
                                        void *purge_arg,
                                        ucp_send_nbx_callback_t discarded_cb,
-                                       void *discarded_cb_arg);
+                                       void *discarded_cb_arg,
+                                       const char *reason);
 
 void ucp_worker_vfs_refresh(void *obj);
 

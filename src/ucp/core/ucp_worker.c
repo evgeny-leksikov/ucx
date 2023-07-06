@@ -479,7 +479,8 @@ ucp_worker_iface_handle_uct_ep_failure(ucp_ep_h ucp_ep, ucp_lane_index_t lane,
      * operations or KA.
      */
     ucp_wireup_ep_discard_aux_ep(wireup_ep, UCT_FLUSH_FLAG_CANCEL,
-                                 ucp_destroyed_ep_pending_purge, ucp_ep);
+                                 ucp_destroyed_ep_pending_purge, ucp_ep,
+                                 "not ACKed aux_ep failure");
     ucp_wireup_remote_connected(ucp_ep);
     return UCS_OK;
 }
@@ -3492,28 +3493,6 @@ ucp_worker_discard_tl_uct_ep(ucp_ep_h ucp_ep, uct_ep_h uct_ep,
     return UCS_INPROGRESS;
 }
 
-static uct_ep_h ucp_worker_discard_wireup_ep(
-        ucp_ep_h ucp_ep, ucp_wireup_ep_t *wireup_ep, unsigned ep_flush_flags)
-{
-    uct_ep_h uct_ep;
-    int is_owner;
-
-    ucs_assert(wireup_ep != NULL);
-    ucp_wireup_ep_discard_aux_ep(wireup_ep, ep_flush_flags,
-                                 ucp_destroyed_ep_pending_purge, NULL);
-
-    is_owner = wireup_ep->super.is_owner;
-    uct_ep   = ucp_wireup_ep_extract_next_ep(&wireup_ep->super.super);
-
-    /* destroy WIREUP EP allocated for this UCT EP, since discard operation
-     * most likely won't have an access to UCP EP as it could be destroyed
-     * by the caller */
-    uct_ep_destroy(&wireup_ep->super.super);
-
-    /* do nothing, if this wireup EP is not an owner for UCT EP */
-    return is_owner ? uct_ep : NULL;
-}
-
 int ucp_worker_is_uct_ep_discarding(ucp_worker_h worker, uct_ep_h uct_ep)
 {
     UCP_WORKER_THREAD_CS_CHECK_IS_BLOCKED(worker);
@@ -3528,17 +3507,21 @@ ucs_status_t ucp_worker_discard_uct_ep(ucp_ep_h ucp_ep, uct_ep_h uct_ep,
                                        uct_pending_purge_callback_t purge_cb,
                                        void *purge_arg,
                                        ucp_send_nbx_callback_t discarded_cb,
-                                       void *discarded_cb_arg)
+                                       void *discarded_cb_arg,
+                                       const char *reason)
 {
     UCP_WORKER_THREAD_CS_CHECK_IS_BLOCKED(ucp_ep->worker);
     ucs_assert(uct_ep != NULL);
     ucs_assert(purge_cb != NULL);
 
+    ucs_debug("ucp_ep %p: discard uct_ep %p,"
+              "rsc_index %d flush_flags 0x%x reason \"%s\"",
+              ucp_ep, uct_ep, rsc_index, ep_flush_flags, reason);
     uct_ep_pending_purge(uct_ep, purge_cb, purge_arg);
 
     if (ucp_wireup_ep_test(uct_ep)) {
-        uct_ep = ucp_worker_discard_wireup_ep(ucp_ep, ucp_wireup_ep(uct_ep),
-                                              ep_flush_flags);
+        uct_ep = ucp_wireup_ep_discard(ucp_wireup_ep(uct_ep), ep_flush_flags,
+                                       reason);
         if (uct_ep == NULL) {
             return UCS_OK;
         }
