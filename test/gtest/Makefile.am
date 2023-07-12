@@ -58,7 +58,8 @@ gtest_LDADD = \
 	$(top_builddir)/src/tools/perf/lib/libucxperf.la \
 	common/googletest/libgtest.la \
 	$(OPENMP_CFLAGS) \
-	$(GTEST_LIBS)
+	$(GTEST_LIBS) \
+	$(UROM_LIBS)
 
 
 gtest_CPPFLAGS = \
@@ -71,7 +72,7 @@ gtest_CPPFLAGS = \
 	$(GTEST_CPPFLAGS) \
 	$(OPENMP_CFLAGS)
 
-gtest_LDFLAGS  = $(GTEST_LDFLAGS) -no-install $(LDFLAGS_DYNAMIC_LIST_DATA)
+gtest_LDFLAGS  = $(GTEST_LDFLAGS) $(UROM_LDFLAGS) -no-install $(LDFLAGS_DYNAMIC_LIST_DATA)
 gtest_CFLAGS   = $(BASE_CFLAGS)
 gtest_CXXFLAGS = \
 	$(BASE_CXXFLAGS) $(GTEST_CXXFLAGS) -std=c++11 \
@@ -153,6 +154,7 @@ gtest_SOURCES = \
 	ucp/test_ucp_wakeup.cc \
 	ucp/test_ucp_fence.cc \
 	ucp/test_ucp_sockaddr.cc \
+	ucp/test_ucp_rdmo.cc \
 	ucp/ucp_test.cc \
 	ucp/ucp_datatype.cc \
 	\

@@ -9,7 +9,7 @@ bin_PROGRAMS = io_demo
 noinst_HEADERS = \
 	ucx_wrapper.h
 
-io_demo_LDFLAGS  = -ldl
+io_demo_LDFLAGS  = -ldl $(UROM_LDFLAGS) $(UROM_LIBS)
 
 if IODEMO_CUDA
 io_demo_CUDA_LIBS     = $(CUDART_LIBS)

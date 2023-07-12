@@ -223,6 +223,7 @@ AS_IF([test "x$with_docs_only" = xyes],
      AM_CONDITIONAL([IODEMO_CUDA], [false])
      AM_CONDITIONAL([HAVE_GCOV], [false])
      AM_CONDITIONAL([HAVE_LCOV], [false])
+     AM_CONDITIONAL([HAVE_UROM], [false])
     ],
     [
      AM_CONDITIONAL([DOCS_ONLY], [false])
@@ -238,6 +239,7 @@ AS_IF([test "x$with_docs_only" = xyes],
      m4_include([config/m4/gdrcopy.m4])
      m4_include([config/m4/mad.m4])
      m4_include([config/m4/lcov.m4])
+     m4_include([config/m4/urom.m4])
      m4_include([src/ucm/configure.m4])
      m4_include([src/ucs/configure.m4])
      m4_include([src/uct/configure.m4])
@@ -406,6 +408,7 @@ AC_MSG_NOTICE([        C++ compiler:   ${CXX} ${BASE_CXXFLAGS}])
 AC_MSG_NOTICE([        Multi-thread:   ${mt_enable}])
 AC_MSG_NOTICE([           MPI tests:   ${mpi_enable}])
 AC_MSG_NOTICE([         VFS support:   ${vfs_enable}])
+AC_MSG_NOTICE([        RDMO support:   ${urom_enable}])
 AC_MSG_NOTICE([       Devel headers:   ${enable_devel_headers}])
 AC_MSG_NOTICE([io_demo CUDA support:   ${with_iodemo_cuda}])
 AC_MSG_NOTICE([            Bindings:   <$(echo ${build_bindings}|tr ':' ' ') >])

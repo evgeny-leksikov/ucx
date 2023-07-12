@@ -34,7 +34,9 @@ ucx_perftest_CFLAGS   = $(BASE_CFLAGS) $(OPENMP_CFLAGS) $(MAD_CFLAGS)
 ucx_perftest_LDFLAGS  = \
 	$(LDFLAGS_DYNAMIC_LIST_DATA) \
 	$(MAD_LDFLAGS) \
-	$(MAD_LIBS)
+	$(MAD_LIBS) \
+	$(UROM_LDFLAGS) $(UROM_LIBS)
+
 
 ucx_perftest_LDADD    = \
 	$(abs_top_builddir)/src/uct/libuct.la \

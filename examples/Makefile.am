@@ -46,10 +46,10 @@ noinst_PROGRAMS = \
 ucp_hello_world_SOURCES  = ucp_hello_world.c
 ucp_hello_world_CFLAGS   = $(BASE_CFLAGS) $(EXAMPLE_CUDA_CFLAGS)
 ucp_hello_world_CPPFLAGS = $(BASE_CPPFLAGS) $(EXAMPLE_CUDA_CPPFLAGS)
-ucp_hello_world_LDFLAGS  = $(EXAMPLE_CUDA_LD_FLAGS)
+ucp_hello_world_LDFLAGS  = $(EXAMPLE_CUDA_LD_FLAGS) $(UROM_LDFLAGS)
 ucp_hello_world_LDADD    = $(top_builddir)/src/ucs/libucs.la \
                            $(top_builddir)/src/ucp/libucp.la \
-                           $(EXAMPLE_CUDA_LIBS)
+                           $(EXAMPLE_CUDA_LIBS) $(UROM_LIBS)
 
 uct_hello_world_SOURCES  = uct_hello_world.c
 uct_hello_world_CFLAGS   = $(BASE_CFLAGS) $(EXAMPLE_CUDA_CFLAGS)
@@ -62,9 +62,9 @@ uct_hello_world_LDADD    = $(top_builddir)/src/ucs/libucs.la \
 ucp_client_server_SOURCES  = ucp_client_server.c
 ucp_client_server_CFLAGS   = $(BASE_CFLAGS) $(EXAMPLE_CUDA_CFLAGS)
 ucp_client_server_CPPFLAGS = $(BASE_CPPFLAGS) $(EXAMPLE_CUDA_CPPFLAGS)
-ucp_client_server_LDFLAGS  = $(EXAMPLE_CUDA_LD_FLAGS)
+ucp_client_server_LDFLAGS  = $(EXAMPLE_CUDA_LD_FLAGS) $(UROM_LDFLAGS)
 ucp_client_server_LDADD    = $(top_builddir)/src/ucs/libucs.la \
                              $(top_builddir)/src/ucp/libucp.la \
-                             $(EXAMPLE_CUDA_LIBS)
+                             $(EXAMPLE_CUDA_LIBS) $(UROM_LIBS)
 
 endif

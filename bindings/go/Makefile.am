@@ -8,7 +8,9 @@ if HAVE_GO
 GOOBJDIR=$(abs_top_builddir)/bindings/go/$(objdir)
 GOPATH=$(abs_top_srcdir)/bindings/go/
 CGOCFLAGS=-I$(abs_top_builddir)/src -I$(abs_top_srcdir)/src
-CGOLDFLAGS=-L$(abs_top_builddir)/src/ucp/$(objdir) -lucp -L$(abs_top_builddir)/src/ucs/$(objdir) -lucs
+CGOLDFLAGS=-L$(abs_top_builddir)/src/ucp/$(objdir) -lucp \
+           -L$(abs_top_builddir)/src/ucs/$(objdir) -lucs \
+           $(UROM_LDFLAGS) $(UROM_LIBS)
 UCX_SOPATH=$(abs_top_builddir)/src/ucp/$(objdir):$(abs_top_builddir)/src/ucs/$(objdir):$(abs_top_builddir)/src/ucm/$(objdir):$(abs_top_builddir)/src/uct/$(objdir)
 GOTMPDIR=$(GOOBJDIR)/tmp
 GOCACHE=$(GOTMPDIR)

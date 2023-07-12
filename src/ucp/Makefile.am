@@ -8,8 +8,8 @@
 lib_LTLIBRARIES     = libucp.la
 
 libucp_la_CFLAGS   = $(BASE_CFLAGS)
-libucp_la_LIBS     =
-libucp_la_CPPFLAGS = $(BASE_CPPFLAGS)
+libucp_la_LIBS     = $(UROM_LIBS)
+libucp_la_CPPFLAGS = $(BASE_CPPFLAGS) $(UROM_CPPFLAGS)
 libucp_la_LDFLAGS  = -ldl -version-info $(SOVERSION)
 libucp_la_LIBADD   = ../ucs/libucs.la ../uct/libuct.la
 libucp_ladir       = $(includedir)/ucp

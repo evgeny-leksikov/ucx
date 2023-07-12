@@ -25,6 +25,8 @@ if HAVE_CRAY_UGNI
 ucx_info_CFLAGS   += $(CRAY_UGNI_CFLAGS)
 endif
 
+ucx_info_LDFLAGS = $(UROM_LDFLAGS) $(UROM_LIBS)
+
 ucx_info_SOURCES  = \
 	build_info.c \
 	proto_info.c \
