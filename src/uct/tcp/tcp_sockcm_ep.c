@@ -80,7 +80,7 @@ uct_tcp_sockcm_ep_pack_priv_data(uct_tcp_sockcm_ep_t *cep, const void *data,
     ucs_assert(cep->comm_ctx.offset == 0);
     ucs_assert(!(cep->state & UCT_TCP_SOCKCM_EP_PRIV_DATA_PACKED));
 
-    if (data_length > uct_tcp_sockcm_ep_get_cm(cep)->priv_data_len) {
+    if (data_length > uct_tcp_sockcm_ep_get_cm(cep)->config.priv_data_len) {
         cep->state |= UCT_TCP_SOCKCM_EP_PACK_CB_FAILED;
         return UCS_ERR_BUFFER_TOO_SMALL;
     }
@@ -225,10 +225,9 @@ uct_tcp_sockcm_ep_invoke_pack_cb(uct_tcp_sockcm_ep_t *cep,
 
     ucs_assert(cep->comm_ctx.offset == 0);
     hdr = (uct_tcp_sockcm_priv_data_hdr_t*)cep->comm_ctx.buf;
-    status = uct_cm_ep_pack_cb(&cep->super, cep->super.user_data, &pack_args,
-                               hdr + 1,
-                               uct_tcp_sockcm_ep_get_cm(cep)->priv_data_len,
-                               &hdr->length);
+    status = uct_cm_ep_pack_cb(
+            &cep->super, cep->super.user_data, &pack_args, hdr + 1,
+            uct_tcp_sockcm_ep_get_cm(cep)->config.priv_data_len, &hdr->length);
     if (status != UCS_OK) {
         cep->state |= UCT_TCP_SOCKCM_EP_PACK_CB_FAILED;
         return status;
@@ -766,7 +765,7 @@ static ucs_status_t uct_tcp_sockcm_ep_recv_nb(uct_tcp_sockcm_ep_t *cep)
     size_t recv_length;
     ucs_status_t status;
 
-    recv_length = uct_tcp_sockcm_ep_get_cm(cep)->priv_data_len +
+    recv_length = uct_tcp_sockcm_ep_get_cm(cep)->config.priv_data_len +
                   sizeof(uct_tcp_sockcm_priv_data_hdr_t) - cep->comm_ctx.offset;
     status = ucs_socket_recv_nb(cep->fd,
                                 UCS_PTR_BYTE_OFFSET(cep->comm_ctx.buf,
@@ -843,13 +842,14 @@ ucs_status_t uct_tcp_sockcm_ep_set_sockopt(uct_tcp_sockcm_ep_t *ep)
     uct_tcp_sockcm_t *tcp_sockcm = uct_tcp_sockcm_ep_get_cm(ep);
     ucs_status_t status;
 
-    status = ucs_socket_set_buffer_size(ep->fd, tcp_sockcm->sockopt_sndbuf,
-                                        tcp_sockcm->sockopt_rcvbuf);
+    status = ucs_socket_set_buffer_size(
+            ep->fd, tcp_sockcm->config.sockopt_sndbuf,
+            tcp_sockcm->config.sockopt_rcvbuf);
     if (status != UCS_OK) {
         return status;
     }
 
-    return ucs_tcp_base_set_syn_cnt(ep->fd, tcp_sockcm->syn_cnt);
+    return ucs_tcp_base_set_syn_cnt(ep->fd, tcp_sockcm->config.syn_cnt);
 }
 
 static ucs_status_t uct_tcp_sockcm_ep_client_init(uct_tcp_sockcm_ep_t *cep,
@@ -887,6 +887,11 @@ static ucs_status_t uct_tcp_sockcm_ep_client_init(uct_tcp_sockcm_ep_t *cep,
     }
 
     status = uct_tcp_sockcm_ep_set_sockopt(cep);
+    if (status != UCS_OK) {
+        goto err_close_socket;
+    }
+
+    status = uct_tcp_keepalive_enable(cep->fd, &tcp_sockcm->config.keepalive);
     if (status != UCS_OK) {
         goto err_close_socket;
     }
@@ -950,7 +955,8 @@ static ssize_t uct_tcp_sockcm_ep_pack_cb(uct_tcp_sockcm_ep_t *tcp_ep,
     pack_args.field_mask = UCT_CM_EP_PRIV_DATA_PACK_ARGS_FIELD_DEVICE_NAME;
     ucs_strncpy_safe(pack_args.dev_name, ifname_str, UCT_DEVICE_NAME_MAX);
     status = uct_cm_ep_pack_cb(&tcp_ep->super, tcp_ep->super.user_data,
-                               &pack_args, data_buf, tcp_sockcm->priv_data_len,
+                               &pack_args, data_buf,
+                               tcp_sockcm->config.priv_data_len,
                                &priv_data_ret);
     if (status != UCS_OK) {
         tcp_ep->state |= UCT_TCP_SOCKCM_EP_PACK_CB_FAILED;
@@ -1067,7 +1073,9 @@ static ucs_status_t uct_tcp_sockcm_ep_server_create(uct_tcp_sockcm_ep_t *tcp_ep,
         priv_data        = params->private_data;
         priv_data_length = params->private_data_length;
     } else if (params->field_mask & UCT_EP_PARAM_FIELD_SOCKADDR_PACK_CB) {
-        data_buf = ucs_malloc(tcp_sockcm->priv_data_len, "tcp_priv_data");
+        data_buf = ucs_malloc(tcp_sockcm->config.priv_data_len  +
+                              sizeof(uct_tcp_sockcm_priv_data_hdr_t),
+                              "tcp_priv_data");
         if (data_buf == NULL) {
             status = UCS_ERR_NO_MEMORY;
             goto err;
@@ -1097,14 +1105,16 @@ err:
 
 UCS_CLASS_INIT_FUNC(uct_tcp_sockcm_ep_t, const uct_ep_params_t *params)
 {
+    size_t total_priv_data_len;
     ucs_status_t status;
 
     UCS_CLASS_CALL_SUPER_INIT(uct_cm_base_ep_t, params);
 
     uct_tcp_sockcm_ep_reset_comm_ctx(self);
-    self->state        = 0;
-    self->comm_ctx.buf = ucs_calloc(1, uct_tcp_sockcm_ep_get_cm(self)->priv_data_len +
-                                    sizeof(uct_tcp_sockcm_priv_data_hdr_t),
+    self->state         = 0;
+    total_priv_data_len = uct_tcp_sockcm_ep_get_cm(self)->config.priv_data_len +
+                          sizeof(uct_tcp_sockcm_priv_data_hdr_t);
+    self->comm_ctx.buf  = ucs_calloc(1, total_priv_data_len,
                                     "tcp_sockcm priv data");
     if (self->comm_ctx.buf == NULL) {
         ucs_error("failed to allocate memory for the ep's send/recv buf");

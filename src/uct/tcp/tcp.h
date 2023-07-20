@@ -60,13 +60,6 @@
 /* Maximal value for connection sequence number */
 #define UCT_TCP_CM_CONN_SN_MAX               UINT64_MAX
 
-/* The seconds the connection needs to remain idle before TCP starts sending
- * keepalive probes */
-#define UCT_TCP_EP_DEFAULT_KEEPALIVE_IDLE    10
-
-/* The seconds between individual keepalive probes */
-#define UCT_TCP_EP_DEFAULT_KEEPALIVE_INTVL   2
-
 
 /**
  * TCP EP connection manager ID
@@ -408,16 +401,7 @@ typedef struct uct_tcp_iface {
                                                       * before aborting the attempt to connect.
                                                       * It cannot exceed 255. */
         double                    max_bw;            /* Upper bound to TCP iface bandwidth */
-        struct {
-            ucs_time_t            idle;              /* The time the connection needs to remain
-                                                      * idle before TCP starts sending keepalive
-                                                      * probes (TCP_KEEPIDLE socket option) */
-            unsigned long         cnt;               /* The maximum number of keepalive probes TCP
-                                                      * should send before dropping the connection
-                                                      * (TCP_KEEPCNT socket option). */
-            ucs_time_t            intvl;             /* The time between individual keepalive
-                                                      * probes (TCP_KEEPINTVL socket option). */
-        } keepalive;
+        uct_tcp_keepalive_config_t        keepalive;         /* Keep alive configuration */
     } config;
 
     struct {
@@ -644,8 +628,6 @@ ucs_status_t uct_tcp_cm_handle_incoming_conn(uct_tcp_iface_t *iface,
                                              int fd);
 
 ucs_status_t uct_tcp_cm_conn_start(uct_tcp_ep_t *ep);
-
-int uct_tcp_keepalive_is_enabled(uct_tcp_iface_t *iface);
 
 static UCS_F_ALWAYS_INLINE int uct_tcp_ep_ctx_buf_empty(uct_tcp_ep_ctx_t *ctx)
 {

@@ -91,8 +91,8 @@ static ucs_config_field_t uct_tcp_iface_config_table[] = {
     "Upper bound to TCP iface bandwidth. 'auto' means BW is unlimited.",
     ucs_offsetof(uct_tcp_iface_config_t, max_bw), UCS_CONFIG_TYPE_BW},
 
-#ifdef UCT_TCP_EP_KEEPALIVE
-  {"KEEPIDLE", UCS_PP_MAKE_STRING(UCT_TCP_EP_DEFAULT_KEEPALIVE_IDLE) "s",
+#if UCT_TCP_EP_KEEPALIVE
+  {"KEEPIDLE", UCS_PP_MAKE_STRING(UCT_TCP_DEFAULT_KEEPALIVE_IDLE) "s",
    "The time the connection needs to remain idle before TCP starts sending "
    "keepalive probes. Specifying \"inf\" disables keepalive.",
    ucs_offsetof(uct_tcp_iface_config_t, keepalive.idle),
@@ -104,7 +104,7 @@ static ucs_config_field_t uct_tcp_iface_config_table[] = {
    ucs_offsetof(uct_tcp_iface_config_t, keepalive.cnt),
                 UCS_CONFIG_TYPE_ULUNITS},
 
-  {"KEEPINTVL", UCS_PP_MAKE_STRING(UCT_TCP_EP_DEFAULT_KEEPALIVE_INTVL) "s",
+  {"KEEPINTVL", UCS_PP_MAKE_STRING(UCT_TCP_DEFAULT_KEEPALIVE_INTVL) "s",
    "The time between individual keepalive probes. Specifying \"inf\" disables"
    " keepalive.",
    ucs_offsetof(uct_tcp_iface_config_t, keepalive.intvl),
@@ -306,7 +306,7 @@ static ucs_status_t uct_tcp_iface_query(uct_iface_h tl_iface,
     attr->cap.am.max_short = am_buf_size;
     attr->cap.am.max_bcopy = am_buf_size;
 
-    if (uct_tcp_keepalive_is_enabled(iface)) {
+    if (uct_tcp_keepalive_is_enabled(&iface->config.keepalive)) {
         attr->cap.flags   |= UCT_IFACE_FLAG_EP_KEEPALIVE;
     }
 
@@ -717,7 +717,7 @@ static UCS_CLASS_INIT_FUNC(uct_tcp_iface_t, uct_md_h md, uct_worker_h worker,
     } else {
         /* Use the default keepalive interval */
         self->config.keepalive.idle =
-            ucs_time_from_sec(UCT_TCP_EP_DEFAULT_KEEPALIVE_IDLE);
+                ucs_time_from_sec(UCT_TCP_DEFAULT_KEEPALIVE_IDLE);
     }
 
     self->config.max_bw = UCS_CONFIG_DBL_IS_AUTO(config->max_bw) ?
@@ -967,17 +967,6 @@ out_closedir:
     closedir(dir);
 out:
     return status;
-}
-
-int uct_tcp_keepalive_is_enabled(uct_tcp_iface_t *iface)
-{
-#ifdef UCT_TCP_EP_KEEPALIVE
-    return (iface->config.keepalive.idle != UCS_TIME_INFINITY) &&
-           (iface->config.keepalive.cnt != UCS_ULUNITS_INF) &&
-           (iface->config.keepalive.intvl != UCS_TIME_INFINITY);
-#else /* UCT_TCP_EP_KEEPALIVE */
-    return 0;
-#endif /* UCT_TCP_EP_KEEPALIVE */
 }
 
 UCT_TL_DEFINE_ENTRY(&uct_tcp_component, tcp, uct_tcp_query_devices,

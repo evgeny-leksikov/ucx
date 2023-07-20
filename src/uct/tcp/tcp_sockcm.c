@@ -26,6 +26,26 @@ ucs_config_field_t uct_tcp_sockcm_config_table[] = {
 
    UCT_TCP_SYN_CNT(ucs_offsetof(uct_tcp_sockcm_config_t, syn_cnt)),
 
+#if UCT_TCP_EP_KEEPALIVE
+  {"KEEPIDLE", UCS_PP_MAKE_STRING(UCT_TCP_DEFAULT_KEEPALIVE_IDLE) "s",
+   "The time the connection needs to remain idle before TCP starts sending "
+   "keepalive probes. Specifying \"inf\" disables keepalive.",
+   ucs_offsetof(uct_tcp_sockcm_config_t, keepalive.idle),
+                UCS_CONFIG_TYPE_TIME_UNITS},
+
+  {"KEEPCNT", "auto",
+   "The maximum number of keepalive probes TCP should send before "
+   "dropping the connection. Specifying \"inf\" disables keepalive.",
+   ucs_offsetof(uct_tcp_sockcm_config_t, keepalive.cnt),
+                UCS_CONFIG_TYPE_ULUNITS},
+
+  {"KEEPINTVL", UCS_PP_MAKE_STRING(UCT_TCP_DEFAULT_KEEPALIVE_INTVL) "s",
+   "The time between individual keepalive probes. Specifying \"inf\" disables"
+   " keepalive.",
+   ucs_offsetof(uct_tcp_sockcm_config_t, keepalive.intvl),
+                UCS_CONFIG_TYPE_TIME_UNITS},
+#endif /* UCT_TCP_EP_KEEPALIVE */
+
   {NULL}
 };
 
@@ -34,7 +54,7 @@ static ucs_status_t uct_tcp_sockcm_query(uct_cm_h cm, uct_cm_attr_t *cm_attr)
     uct_tcp_sockcm_t *tcp_sockcm = ucs_derived_of(cm, uct_tcp_sockcm_t);
 
     if (cm_attr->field_mask & UCT_CM_ATTR_FIELD_MAX_CONN_PRIV) {
-        cm_attr->max_conn_priv = tcp_sockcm->priv_data_len;
+        cm_attr->max_conn_priv = tcp_sockcm->config.priv_data_len;
     }
 
     return UCS_OK;
@@ -213,11 +233,11 @@ UCS_CLASS_INIT_FUNC(uct_tcp_sockcm_t, uct_component_h component,
                               &uct_tcp_sockcm_iface_internal_ops,
                               worker, component, config);
 
-    self->priv_data_len  = cm_config->priv_data_len +
-                                   sizeof(uct_tcp_sockcm_priv_data_hdr_t);
-    self->sockopt_sndbuf = cm_config->sockopt.sndbuf;
-    self->sockopt_rcvbuf = cm_config->sockopt.rcvbuf;
-    self->syn_cnt        = cm_config->syn_cnt;
+    self->config.priv_data_len  = cm_config->priv_data_len;
+    self->config.sockopt_sndbuf = cm_config->sockopt.sndbuf;
+    self->config.sockopt_rcvbuf = cm_config->sockopt.rcvbuf;
+    self->config.syn_cnt        = cm_config->syn_cnt;
+    self->config.keepalive      = cm_config->keepalive;
 
     ucs_list_head_init(&self->ep_list);
 

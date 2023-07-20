@@ -15,12 +15,38 @@ typedef struct uct_tcp_sockcm_ep   uct_tcp_sockcm_ep_t;
  * A TCP connection manager
  */
 typedef struct uct_tcp_sockcm {
-    uct_cm_t            super;
-    size_t              priv_data_len;
-    size_t              sockopt_sndbuf;  /** SO_SNDBUF */
-    size_t              sockopt_rcvbuf;  /** SO_RCVBUF */
-    unsigned            syn_cnt;         /** TCP_SYNCNT */
-    ucs_list_link_t     ep_list;         /** List of endpoints */
+    uct_cm_t                        super;
+    /**
+     * List of endpoints
+     */
+    ucs_list_link_t                 ep_list;
+
+    struct {
+        /**
+         * Private data length without header size
+         */
+        size_t                      priv_data_len;
+
+        /**
+         * SO_SNDBUF
+         */
+        size_t                      sockopt_sndbuf;
+
+        /**
+         * SO_RCVBUF
+         */
+        size_t                      sockopt_rcvbuf;
+
+        /**
+         *  TCP_SYNCNT
+         */
+        unsigned                    syn_cnt;
+
+        /**
+         * TCP keep alive
+         */
+        uct_tcp_keepalive_config_t  keepalive;
+    } config;
 } uct_tcp_sockcm_t;
 
 /**
@@ -31,6 +57,7 @@ typedef struct uct_tcp_sockcm_config {
     size_t                          priv_data_len;
     uct_tcp_send_recv_buf_config_t  sockopt;
     unsigned                        syn_cnt;
+    uct_tcp_keepalive_config_t      keepalive;
 } uct_tcp_sockcm_config_t;
 
 
