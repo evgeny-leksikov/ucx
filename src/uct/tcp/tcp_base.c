@@ -53,6 +53,7 @@ uct_tcp_keepalive_enable(int fd, const uct_tcp_keepalive_config_t *config)
     int idle_sec;
     int intvl_sec;
     int keepalive_cnt;
+    int user_timeout;
     ucs_status_t status;
 
     if (!uct_tcp_keepalive_is_enabled(config)) {
@@ -83,6 +84,9 @@ uct_tcp_keepalive_enable(int fd, const uct_tcp_keepalive_config_t *config)
         if (status != UCS_OK) {
             return status;
         }
+    } else {
+        status = ucs_socket_getopt(fd, IPPROTO_TCP, TCP_KEEPCNT,
+                                   &keepalive_cnt, sizeof(keepalive_cnt));
     }
 
     status = ucs_socket_setopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &idle_sec,
@@ -91,6 +95,19 @@ uct_tcp_keepalive_enable(int fd, const uct_tcp_keepalive_config_t *config)
         return status;
     }
 
+    ucs_socket_getopt(fd, IPPROTO_TCP, TCP_USER_TIMEOUT,
+                      &user_timeout, sizeof(user_timeout));
+    ucs_debug("fd %d: user_timeout dflt %d", fd, user_timeout);
+
+    user_timeout = idle_sec + intvl_sec * keepalive_cnt;
+    status       = ucs_socket_setopt(fd, IPPROTO_TCP, TCP_USER_TIMEOUT,
+                                     &user_timeout, sizeof(user_timeout));
+    if (status != UCS_OK) {
+        return status;
+    }
+
+    ucs_debug("fd %d KA parameters: idle %d, intvl %d, cnt %d, user_timeout %d",
+              fd, idle_sec, intvl_sec, keepalive_cnt, user_timeout);
     return ucs_socket_setopt(fd, SOL_SOCKET, SO_KEEPALIVE, &optval,
                              sizeof(optval));
 #else /* UCT_TCP_EP_KEEPALIVE */
