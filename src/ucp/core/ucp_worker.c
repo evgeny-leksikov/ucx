@@ -561,7 +561,32 @@ out:
 
 }
 
-ucs_status_t ucp_worker_urom_spawn_workers(ucp_worker_h worker)
+static void ucp_worker_urom_close_workers(ucp_worker_h worker)
+{
+    urom_status_t urom_status;
+    urom_worker_h urom_worker;
+    int i;
+
+    for (i = 0; i < worker->num_uroms; ++i) {
+        urom_worker = worker->uroms[i].worker;
+        if (urom_worker == NULL) {
+            continue;
+        }
+
+        ucs_free(worker->uroms[i].addr);
+        urom_status = urom_worker_disconnect(urom_worker);
+        if (urom_status != UROM_OK) {
+            ucs_warn("worker %p: urom_worker_disconnect(%d) returned  error: %s",
+                     worker, i, urom_status_string(urom_status));
+        }
+
+        worker->uroms[i].addr        = NULL;
+        worker->uroms[i].worker      = NULL;
+        worker->uroms[i].addr_length = 0;
+    }
+}
+
+static ucs_status_t ucp_worker_urom_spawn_workers(ucp_worker_h worker)
 {
     urom_service_cmd_t service_cmd = {
         .type                      = UROM_SERVICE_CMD_SPAWN_WORKER,
@@ -679,14 +704,27 @@ ucs_status_t ucp_worker_urom_spawn_workers(ucp_worker_h worker)
             goto out;
         }
 
-        ucs_assertv_always(0, "TODO: store notif->rdmo.client_init.addr and len");
+        worker->uroms[i].addr_length = worker_notif->rdmo.client_init.addr_len;
+        worker->uroms[i].addr        = ucs_malloc(worker->uroms[i].addr_length,
+                                                  "urom_worker_addr");
+        if (worker->uroms[i].addr == NULL) {
+            status = UCS_ERR_NO_MEMORY;
+            goto err_close;
+        }
+
+        memcpy(worker->uroms[i].addr, worker_notif->rdmo.client_init.addr,
+               worker->uroms[i].addr_length);
 
         urom_worker_free_notif(worker->uroms[i].worker, worker_notif);
     }
 
     ucs_assertv_always(0, "TODO: create RDMO_RQ");
     ucs_assertv_always(0, "TODO: create rdmo lanes in ucp_ep_create");
+    ucs_assert(status == UCS_OK);
+    goto out;
 
+err_close:
+    ucp_worker_urom_close_workers(worker);
 out:
     ucs_free(self_addr);
     return status;
