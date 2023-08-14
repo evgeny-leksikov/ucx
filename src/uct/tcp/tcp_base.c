@@ -55,6 +55,7 @@ uct_tcp_keepalive_enable(int fd, const uct_tcp_keepalive_config_t *config)
     int keepalive_cnt;
     int user_timeout;
     ucs_status_t status;
+    struct timeval rcvtimeo;
 
     if (!uct_tcp_keepalive_is_enabled(config)) {
         return UCS_OK;
@@ -102,6 +103,22 @@ uct_tcp_keepalive_enable(int fd, const uct_tcp_keepalive_config_t *config)
     user_timeout = idle_sec + intvl_sec * keepalive_cnt;
     status       = ucs_socket_setopt(fd, IPPROTO_TCP, TCP_USER_TIMEOUT,
                                      &user_timeout, sizeof(user_timeout));
+    if (status != UCS_OK) {
+        return status;
+    }
+
+    status = ucs_socket_getopt(fd, SOL_SOCKET, SO_RCVTIMEO,
+                               &rcvtimeo, sizeof(rcvtimeo));
+    if (status != UCS_OK) {
+        return status;
+    }
+
+    ucs_debug("fd %d: recv time out dflt %f, reset to 0", fd,
+              ucs_timeval_to_sec(&rcvtimeo));
+
+    memset(&rcvtimeo, 0, sizeof(rcvtimeo));
+    status = ucs_socket_setopt(fd, SOL_SOCKET, SO_RCVTIMEO,
+                               &rcvtimeo, sizeof(rcvtimeo));
     if (status != UCS_OK) {
         return status;
     }
