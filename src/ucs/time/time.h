@@ -146,6 +146,14 @@ static inline void ucs_sec_to_timeval(double seconds, struct timeval *tv)
     tv->tv_usec = usec % UCS_USEC_PER_SEC;
 }
 
+/* Convert POSIX timeval to seconds */
+static inline double ucs_timeval_to_sec(const struct timeval *tv)
+{
+    double usec = (tv->tv_sec * UCS_USEC_PER_SEC) + tv->tv_usec;
+
+    return ucs_time_to_sec(ucs_time_from_usec(usec));
+}
+
 /* Convert seconds to POSIX timespec */
 static inline void ucs_sec_to_timespec(double seconds, struct timespec *ts)
 {
