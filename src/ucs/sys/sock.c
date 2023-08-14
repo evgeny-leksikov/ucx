@@ -24,6 +24,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <string.h>
+#include <linux/sockios.h>
 
 
 #define UCS_NETIF_BOND_AD_NUM_PORTS_FMT  "/sys/class/net/%s/bonding/ad_num_ports"
@@ -506,6 +507,18 @@ int ucs_socket_max_conn()
     }
 }
 
+/**
+ * returns number of bytes in queue SIOCINQ | SIOCOUTQ
+ * or error if fd is in wrong state
+ */
+static int uca_socket_get_snd_sio_pending(int fd, int io_queue)
+{
+    int err, pending;
+
+    err = ioctl(fd, io_queue, &pending);
+    return (err < 0) ? err : pending;
+}
+
 static ucs_status_t
 ucs_socket_handle_io_error(int fd, const char *name, ssize_t io_retval, int io_errno)
 {
@@ -518,7 +531,10 @@ ucs_socket_handle_io_error(int fd, const char *name, ssize_t io_retval, int io_e
         ucs_trace("fd %d is closed", fd);
         status = UCS_ERR_NOT_CONNECTED; /* Connection closed by peer */
     } else {
-        ucs_debug("%s(%d) failed: %s", name, fd, strerror(io_errno));
+        ucs_debug("%s(%d) failed: %s, ret_val=%ld snd_pending=%d rcv_pending=%d",
+                  name, fd, strerror(io_errno), io_retval,
+                  uca_socket_get_snd_sio_pending(fd, SIOCOUTQ),
+                  uca_socket_get_snd_sio_pending(fd, SIOCINQ));
         status = ucs_socket_check_errno(io_errno);
     }
 
