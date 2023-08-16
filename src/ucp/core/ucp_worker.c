@@ -704,6 +704,7 @@ static ucs_status_t ucp_worker_urom_spawn_workers(ucp_worker_h worker)
             goto out;
         }
 
+        ucs_assert(worker_notif->rdmo.client_init.addr_len != 0);
         worker->uroms[i].addr_length = worker_notif->rdmo.client_init.addr_len;
         worker->uroms[i].addr        = ucs_malloc(worker->uroms[i].addr_length,
                                                   "urom_worker_addr");
@@ -718,8 +719,7 @@ static ucs_status_t ucp_worker_urom_spawn_workers(ucp_worker_h worker)
         urom_worker_free_notif(worker->uroms[i].worker, worker_notif);
     }
 
-    ucs_assertv_always(0, "TODO: create RDMO_RQ");
-    ucs_assertv_always(0, "TODO: create rdmo lanes in ucp_ep_create");
+    /* TODO: create RDMO_RQ (check if needed?)  */
     ucs_assert(status == UCS_OK);
     goto out;
 
@@ -736,13 +736,19 @@ static ucs_status_t ucp_worker_rdmo_check_init(ucp_worker_h worker)
 {
     ucs_status_t status;
 
+#if HAVE_UROM
+    worker->num_uroms = 0;
+    worker->uroms     = NULL;
+#endif
+
     if (!(worker->context->config.features & UCP_FEATURE_RDMO)) {
         return UCS_OK;
     }
 
-    if (!HAVE_UROM) {
-        return UCS_ERR_UNSUPPORTED;
-    }
+#if !HAVE_UROM
+    status = UCS_ERR_UNSUPPORTED;
+    return status;
+#else
 
     status = ucp_worker_urom_service_connect(worker);
     if (status != UCS_OK) {
@@ -759,6 +765,7 @@ static ucs_status_t ucp_worker_rdmo_check_init(ucp_worker_h worker)
 err_service_disconnect:
     ucp_worker_urom_service_disconnect(worker);
     return status;
+#endif
 }
 
 static void ucp_worker_destroy_rdmo(ucp_worker_h worker)

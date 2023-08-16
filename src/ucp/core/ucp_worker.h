@@ -267,12 +267,14 @@ UCS_PTR_MAP_TYPE(ep, 1);
 UCS_PTR_MAP_TYPE(request, 0);
 
 
+#if HAVE_UROM
 typedef struct ucp_worker_urom_data {
     urom_service_h                   service;            /* urom services array for RDMO ops */
     urom_worker_h                    worker;             /* urom workers array for RDMO ops */
     void                             *addr;
     size_t                           addr_length;
 } ucp_worker_urom_data_t;
+#endif
 
 /**
  * UCP worker (thread context).
@@ -351,7 +353,7 @@ typedef struct ucp_worker {
 
 #if HAVE_UROM
     ucp_worker_urom_data_t           *uroms;
-    int                              num_uroms;           /* number of urom services */
+    uint8_t                          num_uroms;           /* number of urom services */
 #endif
 
     struct {

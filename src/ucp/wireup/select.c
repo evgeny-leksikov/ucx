@@ -1332,7 +1332,8 @@ ucp_wireup_is_am_required(const ucp_wireup_select_params_t *select_params,
 
     if (ucp_ep_get_context_features(ep) & (UCP_FEATURE_TAG |
                                            UCP_FEATURE_STREAM |
-                                           UCP_FEATURE_AM)) {
+                                           UCP_FEATURE_AM |
+                                           UCP_FEATURE_RDMO)) {
         return 1;
     }
 

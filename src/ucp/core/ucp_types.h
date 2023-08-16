@@ -243,6 +243,7 @@ typedef enum {
 typedef enum {
     UCP_OBJECT_VERSION_V1,
     UCP_OBJECT_VERSION_V2,
+    UCP_OBJECT_VERSION_V3,
     UCP_OBJECT_VERSION_LAST
 } ucp_object_version_t;
 

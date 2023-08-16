@@ -34,7 +34,7 @@
 /*
  * Packed address layout:
  *
- * [ header(8bit) | uuid(64bit) | client_id | worker_name(string) ]
+ * [ header(8bit) | uuid(64bit) | client_id | worker_name(string) | num_uroms(8bit) ]
  * [ device1_md_index | device1_address(var) ]
  *    [ tl1_name_csum(string) | tl1_info | tl1_address(var) ]
  *    [ tl2_name_csum(string) | tl2_info | tl2_address(var) ]
@@ -120,6 +120,12 @@ typedef struct {
     ucs_sys_device_t sys_dev;
     size_t           tl_addrs_size;
 } ucp_address_packed_device_t;
+
+
+typedef struct {
+    uint16_t         urom_worker_addr_len;
+    char             urom_worker_addr[0];
+} UCS_S_PACKED ucp_address_urom_worker_packed_t;
 
 
 typedef struct {
@@ -450,6 +456,27 @@ ucp_address_gather_devices(ucp_worker_h worker, const ucp_ep_config_key_t *key,
     return UCS_OK;
 }
 
+static size_t ucp_address_urom_packed_size(ucp_worker_h worker)
+{
+    size_t size = 0;
+
+#if HAVE_UROM
+    int i;
+
+    for (i = 0; i < worker->num_uroms; ++i) {
+        if (worker->uroms[i].addr == NULL) {
+            ucs_assert(worker->uroms[i].addr_length == 0);
+            continue;
+        }
+
+        size += ucs_offsetof(ucp_address_urom_worker_packed_t, urom_worker_addr);
+        size += worker->uroms[i].addr_length;
+    }
+#endif
+
+    return size;
+}
+
 static size_t
 ucp_address_packed_size(ucp_worker_h worker,
                         const ucp_address_packed_device_t *devices,
@@ -482,6 +509,8 @@ ucp_address_packed_size(ucp_worker_h worker,
         (pack_flags & UCP_ADDRESS_PACK_FLAG_WORKER_NAME)) {
         size += strlen(ucp_worker_get_address_name(worker)) + 1;
     }
+
+    size += 1; /*num uroms */
 
     if (num_devices == 0) {
         size += 1; /* NULL md_index */
@@ -517,6 +546,8 @@ ucp_address_packed_size(ucp_worker_h worker,
             size += 2;
         }
     }
+
+    size += ucp_address_urom_packed_size(worker);
     return size;
 }
 
@@ -1247,16 +1278,26 @@ ucp_address_do_pack(ucp_worker_h worker, ucp_ep_h ep, void *buffer, size_t size,
         addr_flags |= UCP_ADDRESS_HEADER_FLAG_DEBUG_INFO;
 
         if (pack_flags & UCP_ADDRESS_PACK_FLAG_WORKER_NAME) {
-            ptr            = ucp_address_pack_worker_address_name(worker, ptr);
+            ptr = ucp_address_pack_worker_address_name(worker, ptr);
         }
     }
+
+#if HAVE_UROM
+    *(uint8_t*)ptr = ((worker->num_uroms > 0) && (worker->uroms[0].addr)) ?
+                     worker->num_uroms : 0;
+#else
+    *(uint8_t*)ptr = 0;
+#endif
+    ucs_warn("packed uroms %d by offset %lu", *(uint8_t*)ptr,
+             UCS_PTR_BYTE_DIFF(buffer, ptr));
+    ptr = UCS_PTR_TYPE_OFFSET(ptr, uint8_t);
 
     ucp_address_pack_header_flags(address_header_p, addr_version, addr_flags);
 
     if (num_devices == 0) {
         *((uint8_t*)ptr) = UCP_NULL_RESOURCE;
         ptr = UCS_PTR_TYPE_OFFSET(ptr, UCP_NULL_RESOURCE);
-        goto out;
+        goto urom_pack;
     }
 
     for (dev = devices; dev < (devices + num_devices); ++dev) {
@@ -1494,6 +1535,25 @@ ucp_address_do_pack(ucp_worker_h worker, ucp_ep_h ep, void *buffer, size_t size,
         *(uint8_t*)dev_flags_ptr |= UCP_ADDRESS_FLAG_LAST;
     }
 
+urom_pack:
+#if HAVE_UROM
+    for (addr_index = 0; addr_index < worker->num_uroms; ++ addr_index) {
+        ucp_address_urom_worker_packed_t *urom = ptr;
+
+        if (worker->uroms[addr_index].addr == NULL) {
+            ucs_assert(worker->uroms[addr_index].addr_length == 0);
+            continue;
+        }
+
+        ucs_assert(worker->uroms[addr_index].addr_length != 0);
+        urom->urom_worker_addr_len = worker->uroms[addr_index].addr_length;
+        memcpy(urom->urom_worker_addr, worker->uroms[addr_index].addr,
+               worker->uroms[addr_index].addr_length);
+        ptr = UCS_PTR_TYPE_OFFSET(ptr, urom->urom_worker_addr_len);
+        ptr = UCS_PTR_BYTE_OFFSET(ptr, urom->urom_worker_addr_len);
+    }
+#endif
+
 out:
     ucs_assertv(UCS_PTR_BYTE_OFFSET(buffer, size) == ptr,
                 "buffer=%p size=%zu ptr=%p ptr-buffer=%zd",
@@ -1635,6 +1695,9 @@ ucs_status_t ucp_address_unpack(ucp_worker_t *worker, const void *buffer,
     ucs_sys_device_t sys_dev;
     ucp_md_index_t md_index;
     unsigned dev_num_paths;
+    const ucp_address_urom_worker_packed_t *urom_packed;
+    unsigned num_uroms;
+    unsigned urom_index;
     ucs_status_t status;
     int empty_dev;
     uint8_t dev_addr_len, iface_addr_len, ep_addr_len;
@@ -1685,6 +1748,11 @@ ucs_status_t ucp_address_unpack(ucp_worker_t *worker, const void *buffer,
         ucs_strncpy_safe(unpacked_address->name, UCP_WIREUP_EMPTY_PEER_NAME,
                          sizeof(unpacked_address->name));
     }
+
+    num_uroms = *(uint8_t*)ptr;
+    ucs_warn("unpack num uroms %d by offset %lu", num_uroms,
+             UCS_PTR_BYTE_DIFF(buffer, ptr));
+    ptr       = UCS_PTR_TYPE_OFFSET(ptr, uint8_t);
 
     /* Empty address list */
     if (*(uint8_t*)ptr == UCP_NULL_RESOURCE) {
@@ -1842,6 +1910,31 @@ ucs_status_t ucp_address_unpack(ucp_worker_t *worker, const void *buffer,
     unpacked_address->dst_version   = dst_version;
     unpacked_address->address_count = address - address_list;
     unpacked_address->address_list  = address_list;
+
+    unpacked_address->urom_worker_count = num_uroms;
+    if (num_uroms == 0) {
+        unpacked_address->urom_worker_list = NULL;
+    } else {
+        unpacked_address->urom_worker_list =
+                ucs_calloc(num_uroms, sizeof(ucp_unpacked_address_t),
+                           "urom_addr_list");
+    }
+
+    for (urom_index = 0; urom_index < num_uroms; ++urom_index) {
+        urom_packed = ptr;
+
+        ucs_warn("try unpack address[%d] length %d", urom_index,
+                 (int)urom_packed->urom_worker_addr_len);
+        status = ucp_address_unpack(worker, urom_packed->urom_worker_addr,
+                                    UCP_WORKER_ADDRESS_FLAG_NET_ONLY,
+//                                    UCP_ADDRESS_PACK_FLAGS_ALL,
+//                                    ucp_worker_default_address_pack_flags(worker),
+                                    &unpacked_address->urom_worker_list[urom_index]);
+        ucs_assert_always(status == UCS_OK); /* TODO: handle error */
+        ptr = UCS_PTR_TYPE_OFFSET(ptr, urom_packed->urom_worker_addr_len);
+        ptr = UCS_PTR_BYTE_OFFSET(ptr, urom_packed->urom_worker_addr_len);
+    }
+
     return UCS_OK;
 
 err_free:

@@ -167,6 +167,8 @@ struct ucp_unpacked_address {
     ucp_address_entry_t         *address_list;  /* Pointer to address list */
     ucp_object_version_t        addr_version;   /* Peer address version */
     unsigned                    dst_version;    /* Peer release version */
+    unsigned                    urom_worker_count;
+    ucp_unpacked_address_t      *urom_worker_list;
 };
 
 
