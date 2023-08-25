@@ -25,6 +25,7 @@
 #include <errno.h>
 #include <string.h>
 #include <linux/sockios.h>
+#include <netinet/tcp.h>
 
 
 #define UCS_NETIF_BOND_AD_NUM_PORTS_FMT  "/sys/class/net/%s/bonding/ad_num_ports"
@@ -511,7 +512,7 @@ int ucs_socket_max_conn()
  * returns number of bytes in queue SIOCINQ | SIOCOUTQ
  * or error if fd is in wrong state
  */
-static int uca_socket_get_snd_sio_pending(int fd, int io_queue)
+static int ucs_socket_get_snd_sio_pending(int fd, int io_queue)
 {
     int err, pending;
 
@@ -519,9 +520,42 @@ static int uca_socket_get_snd_sio_pending(int fd, int io_queue)
     return (err < 0) ? err : pending;
 }
 
+static void ucs_socket_get_info_str(int fd, ucs_string_buffer_t *str)
+{
+    struct tcp_info info = {0};
+    int err;
+
+    err = ioctl(fd, TCP_INFO, &info);
+    if (err < 0) {
+        ucs_string_buffer_reset(str);
+        return;
+    }
+
+    ucs_string_buffer_appendf(str,
+        "state=%d, ca_state=%d, retransmits=%d, probes=%d, backoff=%d, "
+        "options=%d, snd_wscale=%d, rcv_wscale=%d, rto=%d, ato=%d, snd_mss=%d, "
+        "rcv_mss=%d, unacked=%d, sacked=%d, lost=%d, retrans=%d, fackets=%d, "
+        "last_data_sent=%d, last_ack_sent=%d, last_data_recv=%d, "
+        "last_ack_recv=%d, pmtu=%d, rcv_ssthresh=%d, rtt=%d, rttvar=%d, "
+        " snd_ssthresh=%d, snd_cwnd=%d, advmss=%d, reordering=%d, rcv_rtt=%d, "
+        "rcv_space=%d, total_retrans=%d ",
+        info.tcpi_state, info.tcpi_ca_state, info.tcpi_retransmits,
+        info.tcpi_probes, info.tcpi_backoff, info.tcpi_options,
+        info.tcpi_snd_wscale, info.tcpi_rcv_wscale, info.tcpi_rto,
+        info.tcpi_ato, info.tcpi_snd_mss, info.tcpi_rcv_mss, info.tcpi_unacked,
+        info.tcpi_sacked, info.tcpi_lost, info.tcpi_retrans, info.tcpi_fackets,
+        info.tcpi_last_data_sent, info.tcpi_last_ack_sent,
+        info.tcpi_last_data_recv, info.tcpi_last_ack_recv, info.tcpi_pmtu,
+        info.tcpi_rcv_ssthresh, info.tcpi_rtt, info.tcpi_rttvar,
+        info.tcpi_snd_ssthresh, info.tcpi_snd_cwnd, info.tcpi_advmss,
+        info.tcpi_reordering, info.tcpi_rcv_rtt, info.tcpi_rcv_space,
+        info.tcpi_total_retrans);
+}
+
 static ucs_status_t
 ucs_socket_handle_io_error(int fd, const char *name, ssize_t io_retval, int io_errno)
 {
+    UCS_STRING_BUFFER_ONSTACK(fd_strbuf, UCS_KBYTE);
     ucs_status_t status;
 
     if (io_retval == 0) {
@@ -531,10 +565,12 @@ ucs_socket_handle_io_error(int fd, const char *name, ssize_t io_retval, int io_e
         ucs_trace("fd %d is closed", fd);
         status = UCS_ERR_NOT_CONNECTED; /* Connection closed by peer */
     } else {
-        ucs_debug("%s(%d) failed: %s, ret_val=%ld snd_pending=%d rcv_pending=%d",
+        ucs_socket_get_info_str(fd, &fd_strbuf);
+        ucs_debug("%s(%d) failed: %s, ret_val=%ld snd_pending=%d rcv_pending=%d, info: %s",
                   name, fd, strerror(io_errno), io_retval,
-                  uca_socket_get_snd_sio_pending(fd, SIOCOUTQ),
-                  uca_socket_get_snd_sio_pending(fd, SIOCINQ));
+                  ucs_socket_get_snd_sio_pending(fd, SIOCOUTQ),
+                  ucs_socket_get_snd_sio_pending(fd, SIOCINQ),
+                  ucs_string_buffer_cstr(&fd_strbuf));
         status = ucs_socket_check_errno(io_errno);
     }
 
