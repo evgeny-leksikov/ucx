@@ -445,6 +445,303 @@ void ucp_worker_signal_internal(ucp_worker_h worker)
     }
 }
 
+static ucs_status_t ucp_worker_address_pack(ucp_worker_h worker,
+                                            uint32_t address_flags,
+                                            size_t *address_length_p,
+                                            void **address_p)
+{
+    ucp_context_h context = worker->context;
+    unsigned flags        = ucp_worker_default_address_pack_flags(worker);
+    ucp_tl_bitmap_t tl_bitmap;
+    ucp_rsc_index_t tl_id;
+
+    /* Make sure that UUID is packed to the address intended for the user,
+     * because ucp_worker_address_query routine assumes that uuid is always
+     * packed.
+     */
+    ucs_assert(flags & UCP_ADDRESS_PACK_FLAG_WORKER_UUID);
+
+    if (address_flags & UCP_WORKER_ADDRESS_FLAG_NET_ONLY) {
+        UCS_BITMAP_CLEAR(&tl_bitmap);
+        UCS_BITMAP_FOR_EACH_BIT(worker->context->tl_bitmap, tl_id) {
+            if (context->tl_rscs[tl_id].tl_rsc.dev_type == UCT_DEVICE_TYPE_NET) {
+                UCS_BITMAP_SET(tl_bitmap, tl_id);
+            }
+        }
+    } else {
+        UCS_BITMAP_SET_ALL(tl_bitmap);
+    }
+
+    return ucp_address_pack(worker, NULL, &tl_bitmap, flags,
+                            context->config.ext.worker_addr_version, NULL,
+                            address_length_p, (void**)address_p);
+}
+
+#if HAVE_UROM
+
+static void ucp_worker_urom_service_disconnect(ucp_worker_h worker)
+{
+    int i;
+    urom_status_t status;
+
+    for (i = 0; i < worker->num_uroms; ++i) {
+         status = urom_service_disconnect(worker->uroms[i].service);
+         ucs_warn("worker %p: urom_service_disconnect(%p) failed with status %s",
+                  worker, worker->uroms[i].service, urom_status_string(status));
+    }
+
+    ucs_free(worker->uroms);
+    worker->uroms     = NULL;
+    worker->num_uroms = 0;
+}
+
+static ucs_status_t ucp_worker_urom_service_connect(ucp_worker_h worker)
+{
+    ucs_status_t status = UCS_OK;
+    urom_service_params_t service_params;
+    urom_status_t urom_status;
+    struct urom_device *device, *device_list;
+    int num_devices;
+
+    worker->uroms       = NULL;
+    worker->num_uroms   = 0;
+
+    urom_status = urom_get_device_list(&device_list, &num_devices);
+    if (urom_status != UROM_OK) {
+        ucs_error("urom_get_device_list() returned error: %s\n",
+                  urom_status_string(urom_status));
+        status = UCS_ERR_NO_DEVICE;
+        goto out;
+    };
+
+    worker->uroms = ucs_calloc(num_devices, sizeof(*worker->uroms), "uroms");
+    if (worker->uroms == NULL) {
+        ucs_error("worker %p: cannot allocate uroms", worker);
+        status = UCS_ERR_NO_MEMORY;
+        goto free_devices;
+    }
+
+    memset(&service_params, 0, sizeof(service_params));
+    for (device = device_list; device != NULL; device = device->next) {
+        service_params.flags  = UROM_SERVICE_PARAM_DEVICE;
+        service_params.device = device;
+
+        urom_status = 
+                urom_service_connect(&service_params,
+                                     &worker->uroms[worker->num_uroms].service);
+        if (urom_status != UROM_OK) {
+            ucs_diag("worker %p: cannot connect to urom device %s status %s",
+                     worker, device->name, urom_status_string(urom_status));
+            continue;
+        }
+
+        worker->num_uroms++;
+    }
+
+    if (worker->num_uroms == 0) {
+        status = UCS_ERR_NO_DEVICE;
+    }
+
+free_devices:
+    urom_status = urom_free_device_list(device_list);
+    if (urom_status != UROM_OK) {
+        ucs_error("urom_free_device_list() returned error: %s\n",
+                       urom_status_string(urom_status));
+        if (status == UCS_OK) {
+            status = UCS_ERR_IO_ERROR;
+        }
+    };
+
+out:
+    if (status != UCS_OK) {
+        ucp_worker_urom_service_disconnect(worker);
+    }
+
+    return status;
+
+}
+
+ucs_status_t ucp_worker_urom_spawn_workers(ucp_worker_h worker)
+{
+    urom_service_cmd_t service_cmd = {
+        .type                      = UROM_SERVICE_CMD_SPAWN_WORKER,
+        .spawn_worker.worker_type  = UROM_WORKER_TYPE_RDMO,
+        .spawn_worker.worker_id    = 0
+    };
+    urom_service_notify_t service_notif;
+    urom_worker_params_t worker_params;
+    urom_worker_cmd_t worker_cmd;
+    urom_worker_notify_t *worker_notif;
+    void *self_addr;
+    size_t self_addr_len;
+    urom_status_t urom_status;
+    ucs_status_t status;
+    int i;
+
+    for (i = 0; i < worker->num_uroms; ++i) {
+        urom_status = urom_service_push_cmdq(worker->uroms[i].service,
+                                             &service_cmd);
+        if (urom_status != UROM_OK) {
+            ucs_error("worker %p: urom_service_push_cmdq(%p) returned error: %s",
+                      worker, worker->uroms[i].service,
+                      urom_status_string(urom_status));
+            return UCS_ERR_IO_ERROR;
+        }
+    }
+
+    for (--i; i >= 0; --i) {
+        for (urom_status = urom_service_pop_notifyq(worker->uroms[i].service,
+                                                    &service_notif);
+             urom_status == UROM_ERR_QUEUE_EMPTY;
+             urom_status = urom_service_pop_notifyq(worker->uroms[i].service,
+                                                    &service_notif)) {
+            sched_yield();
+        }
+
+        if (urom_status != UROM_OK) {
+            ucs_error("worker %p: urom_worker_spawn(%p) returned error: %s\n",
+                      worker, worker->uroms[i].service,
+                      urom_status_string(urom_status));
+            return UCS_ERR_IO_ERROR;
+        }
+
+        if ((service_notif.type   != UROM_SERVICE_NOTIFY_SPAWN_WORKER) ||
+            (service_notif.status != UROM_OK)) {
+            ucs_error("worker %p: urom_worker_spawn(%p) bad notify type %"PRIu64
+                      ", status %s", worker, worker->uroms[i].service,
+                      service_notif.type,
+                      urom_status_string(service_notif.status));
+            return UCS_ERR_IO_ERROR;
+        }
+
+        worker_params.serviceh        = worker->uroms[i].service;
+        worker_params.num_cmd_notifyq = 1;
+        worker_params.addr            = &service_notif.spawn_worker.worker_addr;
+        worker_params.addr_len        =
+                service_notif.spawn_worker.worker_addr_len;
+        urom_status = urom_worker_connect(&worker_params,
+                                          &worker->uroms[i].worker);
+        if (urom_status != UROM_OK) {
+            ucs_error("worker %p: urom_worker_connect(%p) returned error: %s",
+                      worker, worker->uroms[i].service,
+                      urom_status_string(urom_status));
+            return UCS_ERR_IO_ERROR;
+        }
+    }
+
+    status = ucp_worker_address_pack(worker, UCP_WORKER_ADDRESS_FLAG_NET_ONLY,
+                                     &self_addr_len, &self_addr);
+    if (status != UCS_OK) {
+        return UCS_OK;
+    }
+
+    /* Initialize RDMO host channel */
+    worker_cmd.cmd_type                  = UROM_WORKER_CMD_RDMO;
+    worker_cmd.rdmo.type                 = UROM_WORKER_CMD_RDMO_CLIENT_INIT;
+    worker_cmd.rdmo.client_init.id       = worker->uuid;
+    worker_cmd.rdmo.client_init.addr     = self_addr;
+    worker_cmd.rdmo.client_init.addr_len = self_addr_len;
+    for (i = 0; i < worker->num_uroms; ++i) {
+        urom_status = urom_worker_push_cmdq(worker->uroms[i].worker, 0,
+                                            &worker_cmd);
+        if (urom_status != UROM_OK) {
+            ucs_error("worker %p: urom_worker_push_cmdq(%p) returned error: %s",
+                      worker, worker->uroms[i].worker,
+                      urom_status_string(urom_status));
+            status = UCS_ERR_IO_ERROR;
+            goto out;
+        }
+    }
+
+    for (--i; i >= 0; --i) {
+        for (urom_status = urom_worker_pop_notifyq(worker->uroms[i].worker, 0,
+                                                   &worker_notif);
+             urom_status == UROM_ERR_QUEUE_EMPTY;
+             urom_status = urom_worker_pop_notifyq(worker->uroms[i].worker, 0,
+                                                   &worker_notif)) {
+            sched_yield();
+        }
+
+        if (urom_status != UROM_OK) {
+            ucs_error("worker %p: rdmo_client_init(%p) returned error: %s\n",
+                      worker, worker->uroms[i].worker,
+                      urom_status_string(urom_status));
+            status = UCS_ERR_IO_ERROR;
+            goto out;
+        }
+
+        if ((worker_notif->notify_type != UROM_WORKER_NOTIFY_RDMO) ||
+            (worker_notif->rdmo.type != UROM_WORKER_NOTIFY_RDMO_CLIENT_INIT)) {
+            ucs_error("worker %p: rdmo_client_init(%p) bad notify type %"PRIu64
+                      ", rdmo type %"PRIu64, worker, worker->uroms[i].service,
+                      worker_notif->notify_type, worker_notif->rdmo.type);
+            status = UCS_ERR_IO_ERROR;
+            goto out;
+        }
+
+        ucs_assertv_always(0, "TODO: store notif->rdmo.client_init.addr and len");
+
+        urom_worker_free_notif(worker->uroms[i].worker, worker_notif);
+    }
+
+    ucs_assertv_always(0, "TODO: create RDMO_RQ");
+    ucs_assertv_always(0, "TODO: create rdmo lanes in ucp_ep_create");
+
+out:
+    ucs_free(self_addr);
+    return status;
+}
+
+#endif /* HAVE_UROM */
+
+static ucs_status_t ucp_worker_rdmo_check_init(ucp_worker_h worker)
+{
+    ucs_status_t status;
+
+    if (!(worker->context->config.features & UCP_FEATURE_RDMO)) {
+        return UCS_OK;
+    }
+
+    if (!HAVE_UROM) {
+        return UCS_ERR_UNSUPPORTED;
+    }
+
+    status = ucp_worker_urom_service_connect(worker);
+    if (status != UCS_OK) {
+        return status;
+    }
+
+    status = ucp_worker_urom_spawn_workers(worker);
+    if (status != UCS_OK) {
+        goto err_service_disconnect;
+    }
+
+    return UCS_OK;
+
+err_service_disconnect:
+    ucp_worker_urom_service_disconnect(worker);
+    return status;
+}
+
+static void ucp_worker_destroy_rdmo(ucp_worker_h worker)
+{
+#if HAVE_UROM
+    urom_status_t urom_status;
+    int i;
+
+    for (i = 0; i < worker->num_uroms; ++i) {
+        urom_status = urom_service_disconnect(worker->uroms[i].service);
+        if (urom_status != UROM_OK) {
+            ucs_warn("worker %p: urom service [%d] disconnected with error %s",
+                     worker, i, urom_status_string(urom_status));
+        }
+    }
+
+    ucs_free(worker->uroms);
+    worker->num_uroms = 0;
+#endif
+}
+
 static ucs_status_t
 ucp_worker_iface_handle_uct_ep_failure(ucp_ep_h ucp_ep, ucp_lane_index_t lane,
                                        uct_ep_h uct_ep, ucs_status_t status)
@@ -2562,6 +2859,13 @@ ucs_status_t ucp_worker_create(ucp_context_h context,
     /* Select atomic resources */
     ucp_worker_init_atomic_tls(worker);
 
+    /* Init RDMO resources last since urom client should be able to connect to
+     * this worker */
+    status = ucp_worker_rdmo_check_init(worker);
+    if (status != UCS_OK) {
+        goto err_destroy_rdmo;
+    }
+
     /* At this point all UCT memory domains and interfaces are already created
      * so print used environment variables and warn about unused ones.
      */
@@ -2590,6 +2894,8 @@ err_close_ifaces:
 err_conn_match_cleanup:
     ucs_conn_match_cleanup(&worker->conn_match_ctx);
     ucp_worker_wakeup_cleanup(worker);
+err_destroy_rdmo:
+    ucp_worker_destroy_rdmo(worker);
 err_destroy_uct_worker:
     uct_worker_destroy(worker->uct);
 err_destroy_async:
@@ -2840,6 +3146,7 @@ void ucp_worker_destroy(ucp_worker_h worker)
     ucp_tag_match_cleanup(&worker->tm);
     ucp_worker_destroy_mpools(worker);
     ucp_worker_close_cms(worker);
+    ucp_worker_destroy_rdmo(worker);
     ucp_worker_close_ifaces(worker);
     ucs_conn_match_cleanup(&worker->conn_match_ctx);
     ucp_worker_wakeup_cleanup(worker);
@@ -2855,38 +3162,6 @@ void ucp_worker_destroy(ucp_worker_h worker)
     kh_destroy_inplace(ucp_worker_rkey_config, &worker->rkey_config_hash);
     ucp_worker_destroy_configs(worker);
     ucs_free(worker);
-}
-
-static ucs_status_t ucp_worker_address_pack(ucp_worker_h worker,
-                                            uint32_t address_flags,
-                                            size_t *address_length_p,
-                                            void **address_p)
-{
-    ucp_context_h context = worker->context;
-    unsigned flags        = ucp_worker_default_address_pack_flags(worker);
-    ucp_tl_bitmap_t tl_bitmap;
-    ucp_rsc_index_t tl_id;
-
-    /* Make sure that UUID is packed to the address intended for the user,
-     * because ucp_worker_address_query routine assumes that uuid is always
-     * packed.
-     */
-    ucs_assert(flags & UCP_ADDRESS_PACK_FLAG_WORKER_UUID);
-
-    if (address_flags & UCP_WORKER_ADDRESS_FLAG_NET_ONLY) {
-        UCS_BITMAP_CLEAR(&tl_bitmap);
-        UCS_BITMAP_FOR_EACH_BIT(worker->context->tl_bitmap, tl_id) {
-            if (context->tl_rscs[tl_id].tl_rsc.dev_type == UCT_DEVICE_TYPE_NET) {
-                UCS_BITMAP_SET(tl_bitmap, tl_id);
-            }
-        }
-    } else {
-        UCS_BITMAP_SET_ALL(tl_bitmap);
-    }
-
-    return ucp_address_pack(worker, NULL, &tl_bitmap, flags,
-                            context->config.ext.worker_addr_version, NULL,
-                            UINT_MAX, address_length_p, (void**)address_p);
 }
 
 ucs_status_t ucp_worker_query(ucp_worker_h worker,
