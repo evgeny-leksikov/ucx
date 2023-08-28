@@ -675,6 +675,19 @@ typedef enum {
 
 /**
  * @ingroup UCP_COMM
+ * @brief Remote Direct Memory Operation requested for @ref ucp_rdmo_nbx
+ *
+ * This enumeration defines which Remote Direct Memory Operation should be
+ * performed by the @ref ucp_rdmo_nbx routine.
+ */
+typedef enum {
+    UCP_RDMO_OP_APPEND,   /**< Remote Direct Memory Append */
+    UCP_RDMO_OP_LAST
+} ucp_rdmo_op_t;
+
+
+/**
+ * @ingroup UCP_COMM
  * @brief Flags to define behavior of @ref ucp_stream_recv_nb function
  *
  * This enumeration defines behavior of @ref ucp_stream_recv_nb function.
@@ -3386,6 +3399,10 @@ ucs_status_ptr_t ucp_tag_send_sync_nbx(ucp_ep_h ep, const void *buffer,
                                        const ucp_request_param_t *param);
 
 
+ucs_status_ptr_t ucp_rdmo_nbx(ucp_ep_h ep, ucp_rdmo_op_t op, const void *buffer,
+                              size_t count, uint64_t remote_addr,
+                              ucp_rkey_h rkey, const ucp_request_param_t *param);
+
 /**
  * @ingroup UCP_COMM
  * @brief Non-blocking stream receive operation of structured data into a
@@ -3757,6 +3774,16 @@ ucs_status_ptr_t ucp_get_nbx(ucp_ep_h ep, void *buffer, size_t count,
  */
 ucs_status_ptr_t
 ucp_atomic_op_nbx(ucp_ep_h ep, ucp_atomic_op_t opcode, const void *buffer,
+                  size_t count, uint64_t remote_addr, ucp_rkey_h rkey,
+                  const ucp_request_param_t *param);
+
+
+/**
+ * @ingroup UCP_COMM
+ * @brief TODO: ... .
+ */
+ucs_status_ptr_t
+ucp_rdmo_op_nbx(ucp_ep_h ep, ucp_rdmo_op_t opcode, const void *buffer,
                   size_t count, uint64_t remote_addr, ucp_rkey_h rkey,
                   const ucp_request_param_t *param);
 

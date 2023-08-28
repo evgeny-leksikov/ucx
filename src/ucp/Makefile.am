@@ -80,7 +80,8 @@ noinst_HEADERS = \
 	wireup/wireup_ep.h \
 	wireup/wireup.h \
 	wireup/wireup_cm.h \
-	stream/stream.h
+	stream/stream.h \
+	rdmo/rdmo.h
 
 devel_headers = \
 	core/ucp_resource.h
@@ -127,6 +128,8 @@ libucp_la_SOURCES = \
 	proto/proto_select.c \
 	proto/proto_single.c \
 	proto/proto.c \
+	rdmo/rdmo.c \
+	rdmo/rdmo_append.c \
 	rma/amo_basic.c \
 	rma/amo_offload.c \
 	rma/amo_send.c \
