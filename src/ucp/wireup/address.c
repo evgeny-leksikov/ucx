@@ -1288,7 +1288,7 @@ ucp_address_do_pack(ucp_worker_h worker, ucp_ep_h ep, void *buffer, size_t size,
 #else
     *(uint8_t*)ptr = 0;
 #endif
-    ucs_warn("packed uroms %d by offset %lu", *(uint8_t*)ptr,
+    ucs_debug("packed uroms %d by offset %lu", *(uint8_t*)ptr,
              UCS_PTR_BYTE_DIFF(buffer, ptr));
     ptr = UCS_PTR_TYPE_OFFSET(ptr, uint8_t);
 
@@ -1750,7 +1750,7 @@ ucs_status_t ucp_address_unpack(ucp_worker_t *worker, const void *buffer,
     }
 
     num_uroms = *(uint8_t*)ptr;
-    ucs_warn("unpack num uroms %d by offset %lu", num_uroms,
+    ucs_debug("unpack num uroms %d by offset %lu", num_uroms,
              UCS_PTR_BYTE_DIFF(buffer, ptr));
     ptr       = UCS_PTR_TYPE_OFFSET(ptr, uint8_t);
 
@@ -1923,12 +1923,11 @@ ucs_status_t ucp_address_unpack(ucp_worker_t *worker, const void *buffer,
     for (urom_index = 0; urom_index < num_uroms; ++urom_index) {
         urom_packed = ptr;
 
-        ucs_warn("try unpack address[%d] length %d", urom_index,
+        ucs_debug("try unpack address[%d] length %d", urom_index,
                  (int)urom_packed->urom_worker_addr_len);
         status = ucp_address_unpack(worker, urom_packed->urom_worker_addr,
-                                    UCP_WORKER_ADDRESS_FLAG_NET_ONLY,
-//                                    UCP_ADDRESS_PACK_FLAGS_ALL,
-//                                    ucp_worker_default_address_pack_flags(worker),
+//                                    UCP_WORKER_ADDRESS_FLAG_NET_ONLY,
+                                    ucp_worker_default_address_pack_flags(worker),
                                     &unpacked_address->urom_worker_list[urom_index]);
         ucs_assert_always(status == UCS_OK); /* TODO: handle error */
         ptr = UCS_PTR_TYPE_OFFSET(ptr, urom_packed->urom_worker_addr_len);

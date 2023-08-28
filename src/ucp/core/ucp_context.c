@@ -1789,6 +1789,12 @@ static void ucp_apply_params(ucp_context_h context, const ucp_params_t *params,
         ucs_warn("empty features set passed to ucp context create");
     }
 
+    if (context->config.features & UCP_FEATURE_RDMO) {
+        /* To align EP configuration with UROM side */
+        context->config.features |= (UCP_FEATURE_AM | UCP_FEATURE_RMA |
+                                     UCP_FEATURE_AMO64);
+    }
+
     context->config.tag_sender_mask = UCP_PARAM_FIELD_VALUE(params,
                                                             tag_sender_mask,
                                                             TAG_SENDER_MASK, 0);

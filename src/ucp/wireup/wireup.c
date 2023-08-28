@@ -1671,7 +1671,7 @@ ucs_status_t ucp_wireup_send_request(ucp_ep_h ep)
         UCS_BITMAP_SET(tl_bitmap, rsc_index);
     }
 
-    ucs_warn("ep %p: send wireup request (flags=0x%x) uuid=0x%"PRIx64, ep,
+    ucs_debug("ep %p: send wireup request (flags=0x%x) uuid=0x%"PRIx64, ep,
              ep->flags, ep->worker->uuid);
     status = ucp_wireup_msg_send(ep, UCP_WIREUP_MSG_REQUEST, &tl_bitmap, NULL);
 
@@ -1687,7 +1687,7 @@ ucs_status_t ucp_wireup_send_pre_request(ucp_ep_h ep)
     ucs_assert(ucp_ep_has_cm_lane(ep));
     ucs_assert(!(ep->flags & UCP_EP_FLAG_CONNECT_PRE_REQ_QUEUED));
 
-    ucs_warn("ep %p: send wireup pre-request (flags=0x%x) uuid=0x%"PRIx64, ep,
+    ucs_debug("ep %p: send wireup pre-request (flags=0x%x) uuid=0x%"PRIx64, ep,
              ep->flags, ep->worker->uuid);
     status = ucp_wireup_msg_send(ep, UCP_WIREUP_MSG_PRE_REQUEST,
                                  &ucp_tl_bitmap_max, NULL);

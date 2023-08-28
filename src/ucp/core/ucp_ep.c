@@ -226,6 +226,8 @@ static ucp_ep_h ucp_ep_allocate(ucp_worker_h worker, const char *peer_name)
 #endif
     ep->ext->peer_mem                     = NULL;
     ep->ext->uct_eps                      = NULL;
+    ep->ext->rdmo_eps                     = NULL;
+    ep->ext->num_rdmo_eps                 = 0;
 
     UCS_STATIC_ASSERT(sizeof(ep->ext->ep_match) >=
                       sizeof(ep->ext->flush_state));
@@ -1031,32 +1033,21 @@ ucp_ep_create_api_conn_request(ucp_worker_h worker,
 }
 
 static ucs_status_t
-ucp_ep_create_api_to_worker_addr(ucp_worker_h worker,
-                                 const ucp_ep_params_t *params, ucp_ep_h *ep_p)
+ucp_ep_create_to_worker_unpacked_addr(ucp_worker_h worker,
+                                      const ucp_unpacked_address_t *remote_address,
+                                      const ucp_ep_params_t *params,
+                                      ucp_ep_h *ep_p)
 {
     ucp_context_h context  = worker->context;
     unsigned ep_init_flags = ucp_ep_init_flags(worker, params);
-    unsigned addr_indices[UCP_MAX_LANES];
-    ucp_unpacked_address_t remote_address;
-    ucp_ep_match_conn_sn_t conn_sn;
-    ucs_status_t status;
-    unsigned flags;
     ucp_ep_h ep;
-
-    if (!(params->field_mask & UCP_EP_PARAM_FIELD_REMOTE_ADDRESS)) {
-        status = UCS_ERR_INVALID_PARAM;
-        ucs_error("remote worker address is missing");
-        goto out;
-    }
-
-    UCP_CHECK_PARAM_NON_NULL(params->address, status, goto out);
-
-    status = ucp_address_unpack(worker, params->address,
-                                ucp_worker_default_address_pack_flags(worker),
-                                &remote_address);
-    if (status != UCS_OK) {
-        goto out;
-    }
+    unsigned addr_indices[UCP_MAX_LANES];
+    ucp_ep_match_conn_sn_t conn_sn;
+    unsigned flags;
+    ucs_status_t status;
+#if HAVE_UROM
+    uint8_t urom_index;
+#endif
 
     /* Check if there is already an unconnected internal endpoint to the same
      * destination address.
@@ -1069,10 +1060,10 @@ ucp_ep_create_api_to_worker_addr(ucp_worker_h worker,
      * dst_ep != 0. So, ucp_wireup_request() will not create an unexpected ep
      * in ep_match.
      */
-    conn_sn = ucp_ep_match_get_sn(worker, remote_address.uuid);
-    ep      = ucp_ep_match_retrieve(worker, remote_address.uuid,
+    conn_sn = ucp_ep_match_get_sn(worker, remote_address->uuid);
+    ep      = ucp_ep_match_retrieve(worker, remote_address->uuid,
                                     conn_sn ^
-                                    (remote_address.uuid == worker->uuid),
+                                    (remote_address->uuid == worker->uuid),
                                     UCS_CONN_MATCH_QUEUE_UNEXP);
     if (ep != NULL) {
         status = ucp_ep_adjust_params(ep, params);
@@ -1085,10 +1076,10 @@ ucp_ep_create_api_to_worker_addr(ucp_worker_h worker,
     }
 
     status = ucp_ep_create_to_worker_addr(worker, &ucp_tl_bitmap_max,
-                                          &remote_address, ep_init_flags,
+                                          remote_address, ep_init_flags,
                                           "from api call", addr_indices, &ep);
     if (status != UCS_OK) {
-        goto out_free_address;
+        goto out;
     }
 
     status = ucp_ep_adjust_params(ep, params);
@@ -1105,10 +1096,10 @@ ucp_ep_create_api_to_worker_addr(ucp_worker_h worker,
      * waiting for connection request from the peer endpoint
      */
     flags = UCP_PARAM_VALUE(EP, params, flags, FLAGS, 0);
-    if ((remote_address.uuid == worker->uuid) &&
+    if ((remote_address->uuid == worker->uuid) &&
         !(flags & UCP_EP_PARAMS_FLAGS_NO_LOOPBACK)) {
         ucp_ep_update_remote_id(ep, ucp_ep_local_id(ep));
-    } else if (!ucp_ep_match_insert(worker, ep, remote_address.uuid, conn_sn,
+    } else if (!ucp_ep_match_insert(worker, ep, remote_address->uuid, conn_sn,
                                     UCS_CONN_MATCH_QUEUE_EXP)) {
         if (context->config.features & UCP_FEATURE_STREAM) {
             status = UCS_ERR_EXCEEDS_LIMIT;
@@ -1123,7 +1114,7 @@ ucp_ep_create_api_to_worker_addr(ucp_worker_h worker,
         ucs_assert(!(ep->flags & UCP_EP_FLAG_CONNECT_REQ_QUEUED));
         status = ucp_wireup_send_request(ep);
         if (status != UCS_OK) {
-            goto out_free_address;
+            goto err_destroy_ep;
         }
     }
 
@@ -1140,11 +1131,34 @@ out_resolve_remote_id:
          * won't be changed during runtime */
         status = ucp_ep_resolve_remote_id(ep, ep->am_lane);
         if (ucs_unlikely(status != UCS_OK)) {
-            goto out_free_address;
+            goto err_destroy_ep;
         }
     }
-out_free_address:
-    ucs_free(remote_address.address_list);
+
+#if HAVE_UROM /* UROM part should not connect to UROM */
+    if (worker->num_uroms == 0) {
+        goto out;
+    }
+
+    if (remote_address->urom_worker_count > 0) {
+        ucs_assert(ep->ext->rdmo_eps == NULL);
+        ep->ext->num_rdmo_eps = remote_address->urom_worker_count;
+        ep->ext->rdmo_eps     = ucs_calloc(ep->ext->num_rdmo_eps,
+                                           sizeof(ep->ext->rdmo_eps[0]),
+                                           "ucp_ep_ext_rdmo_eps");
+        ucs_assertv_always(ep->ext->rdmo_eps != NULL, "TODO: error handling");
+    }
+
+    for (urom_index = 0; urom_index < remote_address->urom_worker_count;
+         ++urom_index) {
+        ucs_assert(remote_address->urom_worker_list[urom_index].urom_worker_count == 0);
+        status = ucp_ep_create_to_worker_unpacked_addr(
+                ep->worker, &remote_address->urom_worker_list[urom_index],
+                params, &ep->ext->rdmo_eps[urom_index]);
+        ucs_assertv_always(status == UCS_OK, "TODO: error handling");
+    }
+#endif
+
 out:
     if (status == UCS_OK) {
         *ep_p = ep;
@@ -1153,7 +1167,41 @@ out:
 
 err_destroy_ep:
     ucp_ep_destroy_internal(ep);
-    goto out_free_address;
+    goto out;
+}
+
+static ucs_status_t
+ucp_ep_create_api_to_worker_addr(ucp_worker_h worker,
+                                 const ucp_ep_params_t *params, ucp_ep_h *ep_p)
+{
+    ucp_unpacked_address_t remote_address;
+    ucs_status_t status;
+    unsigned urom_idx;
+
+    if (!(params->field_mask & UCP_EP_PARAM_FIELD_REMOTE_ADDRESS)) {
+        ucs_error("remote worker address is missing");
+        return UCS_ERR_INVALID_PARAM;
+    }
+
+    UCP_CHECK_PARAM_NON_NULL(params->address, status, return status);
+
+    status = ucp_address_unpack(worker, params->address,
+                                ucp_worker_default_address_pack_flags(worker),
+                                &remote_address);
+    if (status != UCS_OK) {
+        return status;
+    }
+
+    status = ucp_ep_create_to_worker_unpacked_addr(worker, &remote_address,
+                                                   params, ep_p);
+
+    for (urom_idx = 0; urom_idx <  remote_address.urom_worker_count; ++urom_idx) {
+        ucs_free(remote_address.urom_worker_list[urom_idx].address_list);
+    }
+
+    ucs_free(remote_address.urom_worker_list);
+    ucs_free(remote_address.address_list);
+    return status;
 }
 
 static void ucp_ep_params_check_err_handling(ucp_ep_h ep,
@@ -1697,9 +1745,14 @@ ucs_status_ptr_t ucp_ep_close_nb(ucp_ep_h ep, unsigned mode)
 
 ucs_status_ptr_t ucp_ep_close_nbx(ucp_ep_h ep, const ucp_request_param_t *param)
 {
-    ucp_worker_h  worker = ep->worker;
-    void          *request = NULL;
+    ucp_worker_h  worker                     = ep->worker;
+    void *request                            = NULL;
+    const ucp_request_param_t rdmo_eps_param = {
+        .op_attr_mask                        = UCP_OP_ATTR_FIELD_FLAGS,
+        .flags                               = ucp_request_param_flags(param)
+    };
     ucp_request_t *close_req;
+    unsigned rdmo_ep_idx;
 
     if ((ucp_request_param_flags(param) & UCP_EP_CLOSE_FLAG_FORCE) &&
         (ucp_ep_config(ep)->key.err_mode != UCP_ERR_HANDLING_MODE_PEER)) {
@@ -1716,6 +1769,18 @@ ucs_status_ptr_t ucp_ep_close_nbx(ucp_ep_h ep, const ucp_request_param_t *param)
         request = UCS_STATUS_PTR(UCS_ERR_NOT_CONNECTED);
         goto out;
     }
+
+    for (rdmo_ep_idx = 0; rdmo_ep_idx < ep->ext->num_rdmo_eps; ++rdmo_ep_idx) {
+        request = ucp_ep_close_nbx(ep->ext->rdmo_eps[rdmo_ep_idx],
+                                   &rdmo_eps_param);
+        if (UCS_PTR_IS_PTR(request)) {
+            ucp_request_free(request);
+        }
+    };
+
+    ucs_free(ep->ext->rdmo_eps);
+    ep->ext->num_rdmo_eps = 0;
+    request               = NULL;
 
     ucp_ep_update_flags(ep, UCP_EP_FLAG_CLOSED, 0);
 

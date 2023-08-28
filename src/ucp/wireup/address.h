@@ -168,7 +168,7 @@ struct ucp_unpacked_address {
     ucp_object_version_t        addr_version;   /* Peer address version */
     unsigned                    dst_version;    /* Peer release version */
     unsigned                    urom_worker_count;
-    ucp_unpacked_address_t      *urom_worker_list;
+    ucp_unpacked_address_t      *urom_worker_list; /* FIXME: allocate in contig buffer */
 };
 
 

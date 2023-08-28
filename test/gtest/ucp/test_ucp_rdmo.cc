@@ -30,4 +30,4 @@ UCS_TEST_P(test_ucp_rdmo, init)
 {
 }
 
-UCP_INSTANTIATE_TEST_CASE(test_ucp_rdmo);
+UCP_INSTANTIATE_TEST_CASE_TLS(test_ucp_rdmo, all, "all")
