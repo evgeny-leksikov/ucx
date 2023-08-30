@@ -28,14 +28,14 @@ UCS_PROFILE_FUNC(ucs_status_ptr_t, ucp_rdmo_nbx,
     }
 
     if (ENABLE_PARAMS_CHECK &&
-        ucs_unlikely(!(opcode != UCP_RDMO_OP_APPEND))) {
+        ucs_unlikely(opcode != UCP_RDMO_OP_APPEND)) {
         ucs_error("invalid rdmo operation");
         return UCS_STATUS_PTR(UCS_ERR_INVALID_PARAM);
     }
 
     if (ENABLE_PARAMS_CHECK &&
-        ucs_unlikely(param->op_attr_mask & UCP_OP_ATTR_FIELD_MEMH)) {
-        ucs_error("user's memory handle is not supported");
+        ucs_unlikely(!(param->op_attr_mask & UCP_OP_ATTR_FIELD_MEMH))) {
+        ucs_error("user's memory handle is not set");
         return UCS_STATUS_PTR(UCS_ERR_INVALID_PARAM);
     }
 
