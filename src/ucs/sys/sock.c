@@ -523,10 +523,10 @@ static int ucs_socket_get_snd_sio_pending(int fd, int io_queue)
 static void ucs_socket_get_info_str(int fd, ucs_string_buffer_t *str)
 {
     struct tcp_info info = {0};
-    int err;
+    ucs_status_t status;
 
-    err = ioctl(fd, TCP_INFO, &info);
-    if (err < 0) {
+    status = ucs_socket_getopt(fd,IPPROTO_TCP, TCP_INFO, &info, sizeof(info));
+    if (status != UCS_OK) {
         ucs_string_buffer_reset(str);
         return;
     }
