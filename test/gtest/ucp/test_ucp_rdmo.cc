@@ -73,23 +73,17 @@ UCS_TEST_P(test_ucp_rdmo, basic)
     mem_buffer src_buf(4 * UCS_KBYTE, UCS_MEMORY_TYPE_HOST, seed);
     mem_buffer dst_buf(4 * UCS_KBYTE, UCS_MEMORY_TYPE_HOST);
     mem_buffer ptr_buf(sizeof(void*), UCS_MEMORY_TYPE_HOST);
-    ucp_mem_h src_memh = get_memh(sender(),   src_buf);
+    memcpy(ptr_buf.ptr(), dst_buf.ptr_p(), ptr_buf.size());
+
+//    ucp_mem_h src_memh = get_memh(sender(),   src_buf);
+    ucp_mem_h ptr_memh = get_memh(receiver(), ptr_buf);
     ucp_mem_h dst_memh = get_memh(receiver(), dst_buf);
 
-    ucp_request_param_t param;
-    param.op_attr_mask = UCP_OP_ATTR_FIELD_DATATYPE |
-                      /* UCP_OP_ATTR_FIELD_CALLBACK | */
-                         UCP_OP_ATTR_FIELD_REPLY_BUFFER |
-                         UCP_OP_ATTR_FIELD_MEMH;
-    param.datatype     = DATATYPE;
-    param.reply_buffer = ptr_buf.ptr();
-    param.memh         = src_memh;
-
     /* post the operation */
-    ucs_status_ptr_t r = ucp_rdmo_nbx(
-            sender().ep(), UCP_RDMO_OP_APPEND, src_buf.ptr(), src_buf.size(),
-            uintptr_t(dst_buf.ptr()),
-            get_rkey(sender().ep(), receiver(), dst_memh), &param);
+    ucs_status_ptr_t r = ucp_rdmo_append_nbx(
+            sender().ep(), src_buf.ptr(), src_buf.size(),
+            (uint64_t)ptr_buf.ptr(), get_rkey(sender().ep(), receiver(), ptr_memh),
+            get_rkey(sender().ep(), receiver(), dst_memh));
 
     /* wait for local completion */
     ucs_status_t status = request_wait(r);

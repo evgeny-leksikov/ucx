@@ -100,6 +100,8 @@ public:
 
     void *ptr() const;
 
+    void * const * ptr_p() const;
+
     size_t size() const;
 
     void pattern_fill(uint64_t seed, size_t length = size_max);

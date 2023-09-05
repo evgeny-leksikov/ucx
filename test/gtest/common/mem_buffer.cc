@@ -511,6 +511,10 @@ void *mem_buffer::ptr() const {
     return m_ptr;
 }
 
+void * const * mem_buffer::ptr_p() const {
+    return &m_ptr;
+}
+
 size_t mem_buffer::size() const {
     return m_size;
 }

@@ -703,7 +703,56 @@ ucs_status_t ucp_rkey_pack(ucp_context_h context, ucp_mem_h memh,
                            void **rkey_buffer_p, size_t *size_p)
 {
     ucp_memh_pack_params_t params = {0};
-    return ucp_memh_pack_internal(memh, &params, 1, rkey_buffer_p, size_p);
+    ucs_status_t status           =
+            ucp_memh_pack_internal(memh, &params, 1, rkey_buffer_p, size_p);
+
+#if HAVE_UROM
+    void *packed_memh;
+    size_t packed_memh_len;
+    urom_worker_cmd_t cmd;
+    urom_worker_notify_t *notif;
+    urom_status_t urom_status;
+
+    if ((status != UCS_OK) || !(context->config.features & UCP_FEATURE_RDMO)) {
+        goto out;
+    }
+
+    params.field_mask |= UCP_MEMH_PACK_PARAM_FIELD_FLAGS;
+    params.flags       = UCP_MEMH_PACK_FLAG_EXPORT;
+
+    status = ucp_memh_pack(memh, &params, &packed_memh, &packed_memh_len);
+    if (status != UCS_OK) {
+        goto out;
+    }
+
+    cmd.rdmo.mr_reg.packed_memh     = packed_memh;
+    cmd.rdmo.mr_reg.packed_memh_len = packed_memh_len;
+    cmd.rdmo.mr_reg.va              = memh->super.super.start;
+    cmd.rdmo.mr_reg.len             = memh->super.super.end -
+                                      memh->super.super.start;
+    urom_status = urom_worker_push_cmdq(/* FIXME: urom_worker */ NULL, 0, &cmd);
+    ucs_assert(urom_status == UROM_OK);
+
+    while (UROM_ERR_QUEUE_EMPTY ==
+           (urom_status = urom_worker_pop_notifyq(/* FIXME: urom_worker */ NULL,
+                                                  0, &notif))) {
+        sched_yield();
+    }
+
+    ucs_assert(urom_status == UROM_OK);
+    ucs_assert(notif->notify_type == UROM_WORKER_NOTIFY_RDMO);
+    ucs_assert(notif->rdmo.type == UROM_WORKER_NOTIFY_RDMO_MR_REG);
+
+    ucs_assertv_always(0, "FIXME: pack nitif rkey=%lu", notif->rdmo.mr_reg.rkey);
+
+out_release_memh:
+    ucp_memh_buffer_release(packed_memh, NULL);
+out_free_notif:
+    urom_worker_free_notif(/* FIXME: urom_worker */ NULL, notif);
+
+out:
+#endif
+    return status;
 }
 
 void ucp_rkey_buffer_release(void *rkey_buffer)

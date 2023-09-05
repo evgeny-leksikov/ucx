@@ -720,6 +720,7 @@ typedef enum {
     UCP_OP_ATTR_FIELD_MEMORY_TYPE   = UCS_BIT(6),  /**< memory type field */
     UCP_OP_ATTR_FIELD_RECV_INFO     = UCS_BIT(7),  /**< recv_info field */
     UCP_OP_ATTR_FIELD_MEMH          = UCS_BIT(8),  /**< memory handle field */
+    UCP_OP_ATTR_FIELD_REPLY_MEMH    = UCS_BIT(9),  /**< reply memory handle field */
 
     UCP_OP_ATTR_FLAG_NO_IMM_CMPL    = UCS_BIT(16), /**< Deny immediate completion,
                                                         i.e NULL cannot be returned.
@@ -3399,9 +3400,10 @@ ucs_status_ptr_t ucp_tag_send_sync_nbx(ucp_ep_h ep, const void *buffer,
                                        const ucp_request_param_t *param);
 
 
-ucs_status_ptr_t ucp_rdmo_nbx(ucp_ep_h ep, ucp_rdmo_op_t op, const void *buffer,
-                              size_t count, uint64_t remote_addr,
-                              ucp_rkey_h rkey, const ucp_request_param_t *param);
+ucs_status_ptr_t ucp_rdmo_append_nbx(ucp_ep_h ep,
+                                     const void *buffer, size_t count,
+                                     uint64_t target, ucp_rkey_h target_rkey,
+                                     ucp_rkey_h append_rkey);
 
 /**
  * @ingroup UCP_COMM
