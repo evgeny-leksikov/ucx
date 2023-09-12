@@ -497,6 +497,7 @@ typedef struct ucp_ep_ext {
     ucp_rsc_index_t               cm_idx;        /* CM index */
     ucs_ptr_map_key_t             local_ep_id;   /* Local EP ID */
     ucs_ptr_map_key_t             remote_ep_id;  /* Remote EP ID */
+    uint64_t                      remote_worker_id;
     ucp_err_handler_cb_t          err_cb;        /* Error handler */
     ucp_request_t                 *close_req;    /* Close protocol request */
     khash_t(ucp_ep_peer_mem_hash) *peer_mem;     /* Hash of remote memory segments

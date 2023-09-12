@@ -2134,6 +2134,128 @@ ucp_version_check(unsigned api_major_version, unsigned api_minor_version)
     }
 }
 
+#if HAVE_UROM
+
+static void ucp_context_urom_service_disconnect(ucp_context_h context)
+{
+    urom_status_t status;
+    int i;
+
+    for (i = 0; i < context->num_uroms; ++i) {
+         status = urom_service_disconnect(context->uroms[i].service);
+         ucs_warn("context %p: urom_service_disconnect(%p) failed with status %s",
+                  context, context->uroms[i].service,
+                  urom_status_string(status));
+    }
+
+    ucs_free(context->uroms);
+    context->uroms     = NULL;
+    context->num_uroms = 0;
+}
+
+static ucs_status_t ucp_context_urom_service_connect(ucp_context_h context)
+{
+    ucs_status_t status = UCS_OK;
+    urom_service_params_t service_params;
+    urom_status_t urom_status;
+    struct urom_device *device, *device_list;
+    int num_devices;
+
+    context->uroms       = NULL;
+    context->num_uroms   = 0;
+
+    urom_status = urom_get_device_list(&device_list, &num_devices);
+    if (urom_status != UROM_OK) {
+        ucs_error("urom_get_device_list() returned error: %s\n",
+                  urom_status_string(urom_status));
+        status = UCS_ERR_NO_DEVICE;
+        goto out;
+    };
+
+    context->uroms = ucs_calloc(num_devices, sizeof(*context->uroms), "uroms");
+    if (context->uroms == NULL) {
+        ucs_error("context %p: cannot allocate uroms", context);
+        status = UCS_ERR_NO_MEMORY;
+        goto free_devices;
+    }
+
+    memset(&service_params, 0, sizeof(service_params));
+    for (device = device_list; device != NULL; device = device->next) {
+        service_params.flags  = UROM_SERVICE_PARAM_DEVICE;
+        service_params.device = device;
+
+        urom_status =
+                urom_service_connect(&service_params,
+                                     &context->uroms[context->num_uroms].service);
+        if (urom_status != UROM_OK) {
+            ucs_diag("context %p: cannot connect to urom device %s status %s",
+                     context, device->name, urom_status_string(urom_status));
+            continue;
+        }
+
+        context->num_uroms++;
+    }
+
+    if (context->num_uroms == 0) {
+        status = UCS_ERR_NO_DEVICE;
+    }
+
+free_devices:
+    urom_status = urom_free_device_list(device_list);
+    if (urom_status != UROM_OK) {
+        ucs_error("urom_free_device_list() returned error: %s\n",
+                       urom_status_string(urom_status));
+        if (status == UCS_OK) {
+            status = UCS_ERR_IO_ERROR;
+        }
+    };
+
+out:
+    if (status != UCS_OK) {
+        ucp_context_urom_service_disconnect(context);
+    }
+
+    return status;
+
+}
+
+#endif /* HAVE_UROM */
+
+static ucs_status_t ucp_context_rdmo_check_init(ucp_context_h context)
+{
+    if (!(context->config.features & UCP_FEATURE_RDMO)) {
+        return UCS_OK;
+    }
+
+#if HAVE_UROM
+    context->num_uroms = 0;
+    context->uroms     = NULL;
+    return ucp_context_urom_service_connect(context);
+#else
+    return UCS_ERR_UNSUPPORTED;
+#endif
+}
+
+static void ucp_context_destroy_rdmo(ucp_context_h context)
+{
+#if HAVE_UROM
+    urom_status_t urom_status;
+    int i;
+
+    for (i = 0; i < context->num_uroms; ++i) {
+        ucs_assert(context->uroms[i].worker == NULL);
+        urom_status = urom_service_disconnect(context->uroms[i].service);
+        if (urom_status != UROM_OK) {
+            ucs_warn("context %p: urom service [%d] disconnected with error %s",
+                     context, i, urom_status_string(urom_status));
+        }
+    }
+
+    ucs_free(context->uroms);
+    context->num_uroms = 0;
+#endif
+}
+
 ucs_status_t ucp_init_version(unsigned api_major_version, unsigned api_minor_version,
                               const ucp_params_t *params, const ucp_config_t *config,
                               ucp_context_h *context_p)
@@ -2200,6 +2322,11 @@ ucs_status_t ucp_init_version(unsigned api_major_version, unsigned api_minor_ver
         ucp_config_release(dfl_config);
     }
 
+    status = ucp_context_rdmo_check_init(context);
+    if (status != UCS_OK)  {
+        goto err_destroy_rcache;
+    }
+
     ucp_context_create_vfs(context);
 
     ucs_debug("created ucp context %s %p [%d mds %d tls] features 0x%" PRIx64
@@ -2210,6 +2337,8 @@ ucs_status_t ucp_init_version(unsigned api_major_version, unsigned api_minor_ver
     *context_p = context;
     return UCS_OK;
 
+err_destroy_rcache:
+    ucp_mem_rcache_cleanup(context);
 err_free_res:
     ucp_free_resources(context);
 err_thread_lock_finalize:
@@ -2227,6 +2356,7 @@ err:
 
 void ucp_cleanup(ucp_context_h context)
 {
+    ucp_context_destroy_rdmo(context);
     ucs_vfs_obj_remove(context);
     ucp_mem_rcache_cleanup(context);
     ucp_free_resources(context);

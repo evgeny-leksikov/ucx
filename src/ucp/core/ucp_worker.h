@@ -24,10 +24,6 @@
 #include <ucs/datastruct/ptr_map.h>
 #include <ucs/arch/bitops.h>
 
-#if HAVE_UROM
-#include <urom/api/urom.h>
-#endif
-
 
 /* The size of the private buffer in UCT descriptor headroom, which UCP may
  * use for its own needs. This size does not include ucp_recv_desc_t length,
@@ -267,15 +263,6 @@ UCS_PTR_MAP_TYPE(ep, 1);
 UCS_PTR_MAP_TYPE(request, 0);
 
 
-#if HAVE_UROM
-typedef struct ucp_worker_urom_data {
-    urom_service_h                   service;            /* urom services array for RDMO ops */
-    urom_worker_h                    worker;             /* urom workers array for RDMO ops */
-    void                             *addr;
-    size_t                           addr_length;
-} ucp_worker_urom_data_t;
-#endif
-
 /**
  * UCP worker (thread context).
  */
@@ -350,11 +337,6 @@ typedef struct ucp_worker {
 
     unsigned                         rkey_config_count;   /* Current number of rkey configurations */
     ucp_rkey_config_t                rkey_config[UCP_WORKER_MAX_RKEY_CONFIG];
-
-#if HAVE_UROM
-    ucp_worker_urom_data_t           *uroms;
-    uint8_t                          num_uroms;           /* number of urom services */
-#endif
 
     struct {
         int                          timerfd;             /* Timer needed to signal to user's fd when

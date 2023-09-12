@@ -28,6 +28,10 @@
 #include <ucs/sys/string.h>
 #include <ucs/type/param.h>
 
+#if HAVE_UROM
+#include <urom/api/urom.h>
+#endif
+
 
 /* Hash map of rcaches which contain imported memory handles got from peers */
 KHASH_TYPE(ucp_context_imported_mem_hash, uint64_t, ucs_rcache_t*);
@@ -266,6 +270,18 @@ typedef struct ucp_tl_md {
 } ucp_tl_md_t;
 
 
+#if HAVE_UROM
+typedef struct ucp_context_urom_data {
+    urom_service_h                   service;            /* urom services array for RDMO ops */
+    urom_worker_h                    worker;             /* urom workers array for RDMO ops.
+                                                          * TODO: rkeys resolve protocol to 
+                                                                  avoid mapping host to dpu workers */
+    void                             *addr;
+    size_t                           addr_length;
+} ucp_context_urom_data_t;
+#endif
+
+
 /**
  * UCP context
  */
@@ -383,6 +399,13 @@ typedef struct ucp_context {
 
     /* Save cached uct configurations */
     ucs_list_link_t               cached_key_list;
+
+#if HAVE_UROM
+    ucp_context_urom_data_t       *uroms;
+    /* number of urom services */
+    uint8_t                       num_uroms;
+#endif
+
 } ucp_context_t;
 
 

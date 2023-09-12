@@ -77,6 +77,11 @@ size_t ucp_rkey_packed_size(ucp_context_h context, ucp_md_map_t md_map,
         size += ucs_popcount(sys_dev_map) * sizeof(ucp_rkey_packed_distance_t);
     }
 
+#if HAVE_UROM
+    size += ucs_field_sizeof(urom_worker_notify_t, rdmo.mr_reg.rkey) *
+            context->num_uroms;
+#endif /* HAVE_UROM */
+
     return size;
 }
 
@@ -666,8 +671,10 @@ ucp_memh_pack_internal(ucp_mem_h memh, const ucp_memh_pack_params_t *params,
         goto err_destroy;
     }
 
+#if !HAVE_UROM /* FIXME: refactor pack/unpack and del this condition */
     ucs_assertv(packed_size == size, "packed_size=%zd size=%zu", packed_size,
                 size);
+#endif
 
     *buffer_p      = memh_buffer;
     *buffer_size_p = size;
@@ -707,9 +714,10 @@ ucs_status_t ucp_rkey_pack(ucp_context_h context, ucp_mem_h memh,
             ucp_memh_pack_internal(memh, &params, 1, rkey_buffer_p, size_p);
 
 #if HAVE_UROM
+    urom_worker_cmd_t cmd  = {0};
     void *packed_memh;
     size_t packed_memh_len;
-    urom_worker_cmd_t cmd;
+    void *rdmo_key_ptr;
     urom_worker_notify_t *notif;
     urom_status_t urom_status;
 
@@ -725,17 +733,26 @@ ucs_status_t ucp_rkey_pack(ucp_context_h context, ucp_mem_h memh,
         goto out;
     }
 
+    cmd.cmd_type                    = UROM_WORKER_CMD_RDMO;
+    cmd.rdmo.type                   = UROM_WORKER_CMD_RDMO_MR_REG;
+    cmd.rdmo.mr_reg.packed_rkey     = *rkey_buffer_p;
+    ucs_assert(context->num_uroms == 1);
+    cmd.rdmo.mr_reg.packed_rkey_len = *size_p -
+                                      (ucs_field_sizeof(urom_worker_notify_t,
+                                       rdmo.mr_reg.rkey) * context->num_uroms);
     cmd.rdmo.mr_reg.packed_memh     = packed_memh;
     cmd.rdmo.mr_reg.packed_memh_len = packed_memh_len;
     cmd.rdmo.mr_reg.va              = memh->super.super.start;
     cmd.rdmo.mr_reg.len             = memh->super.super.end -
                                       memh->super.super.start;
-    urom_status = urom_worker_push_cmdq(/* FIXME: urom_worker */ NULL, 0, &cmd);
+    urom_status = urom_worker_push_cmdq(
+            /* FIXME: correct urom_worker */ context->uroms[0].worker, 0, &cmd);
     ucs_assert(urom_status == UROM_OK);
 
     while (UROM_ERR_QUEUE_EMPTY ==
-           (urom_status = urom_worker_pop_notifyq(/* FIXME: urom_worker */ NULL,
-                                                  0, &notif))) {
+           (urom_status = urom_worker_pop_notifyq(
+                /* FIXME: correct urom_worker */ context->uroms[0].worker,
+                0, &notif))) {
         sched_yield();
     }
 
@@ -743,7 +760,13 @@ ucs_status_t ucp_rkey_pack(ucp_context_h context, ucp_mem_h memh,
     ucs_assert(notif->notify_type == UROM_WORKER_NOTIFY_RDMO);
     ucs_assert(notif->rdmo.type == UROM_WORKER_NOTIFY_RDMO_MR_REG);
 
-    ucs_assertv_always(0, "FIXME: pack nitif rkey=%lu", notif->rdmo.mr_reg.rkey);
+    rdmo_key_ptr = UCS_PTR_BYTE_OFFSET(*rkey_buffer_p,
+                                       cmd.rdmo.mr_reg.packed_rkey_len);
+    memcpy(rdmo_key_ptr, &notif->rdmo.mr_reg.rkey,
+           sizeof(notif->rdmo.mr_reg.rkey));
+    ucs_debug("packed offset=%"PRIu64" value=%"PRIu64" src=%"PRIu64,
+              cmd.rdmo.mr_reg.packed_rkey_len, *(uint64_t*)rdmo_key_ptr,
+              notif->rdmo.mr_reg.rkey);
 
 out_release_memh:
     ucp_memh_buffer_release(packed_memh, NULL);
@@ -958,6 +981,13 @@ UCS_PROFILE_FUNC(ucs_status_t, ucp_ep_rkey_unpack_internal,
         if (status != UCS_OK) {
             goto err_destroy;
         }
+
+#if HAVE_UROM
+        rkey->cache.rdmo_rkey = *ucs_serialize_next(&p, uint64_t);
+        ucs_info("rdmo_rkey: %"PRIu64, rkey->cache.rdmo_rkey);
+#else
+        rkey->cache.rdmo_rkey = UINT64_MAX;
+#endif /* HAVE_UROM */
     } else {
         ucp_rkey_resolve_inner(rkey, ep);
     }

@@ -105,6 +105,7 @@ typedef struct ucp_rkey {
             ucp_rkey_proto_index_t    rma_proto_index; /* Protocol for RMAs */
             uct_rkey_t                rma_rkey;        /* Key to use for RMAs */
             uct_rkey_t                amo_rkey;        /* Key to use for AMOs */
+            uint64_t                  rdmo_rkey;
         } cache;
         struct {
             uint8_t                   flags;           /* Rkey flags */

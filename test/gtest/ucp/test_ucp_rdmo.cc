@@ -75,15 +75,16 @@ UCS_TEST_P(test_ucp_rdmo, basic)
     mem_buffer ptr_buf(sizeof(void*), UCS_MEMORY_TYPE_HOST);
     memcpy(ptr_buf.ptr(), dst_buf.ptr_p(), ptr_buf.size());
 
-//    ucp_mem_h src_memh = get_memh(sender(),   src_buf);
-    ucp_mem_h ptr_memh = get_memh(receiver(), ptr_buf);
-    ucp_mem_h dst_memh = get_memh(receiver(), dst_buf);
+    ucp_mem_h ptr_memh  = get_memh(receiver(), ptr_buf);
+    ucp_rkey_h ptr_rkey = get_rkey(sender().ep(), receiver(), ptr_memh);
+
+    ucp_mem_h dst_memh  = get_memh(receiver(), dst_buf);
+    ucp_rkey_h dst_rkey = get_rkey(sender().ep(), receiver(), dst_memh);
 
     /* post the operation */
     ucs_status_ptr_t r = ucp_rdmo_append_nbx(
             sender().ep(), src_buf.ptr(), src_buf.size(),
-            (uint64_t)ptr_buf.ptr(), get_rkey(sender().ep(), receiver(), ptr_memh),
-            get_rkey(sender().ep(), receiver(), dst_memh));
+            (uint64_t)ptr_buf.ptr(), ptr_rkey, dst_rkey);
 
     /* wait for local completion */
     ucs_status_t status = request_wait(r);

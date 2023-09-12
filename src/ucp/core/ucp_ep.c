@@ -219,6 +219,7 @@ static ucp_ep_h ucp_ep_allocate(ucp_worker_h worker, const char *peer_name)
     ep->ext->cm_idx                       = UCP_NULL_RESOURCE;
     ep->ext->local_ep_id                  = UCS_PTR_MAP_KEY_INVALID;
     ep->ext->remote_ep_id                 = UCS_PTR_MAP_KEY_INVALID;
+    ep->ext->remote_worker_id             = 0;
     ep->ext->err_cb                       = NULL;
     ep->ext->close_req                    = NULL;
 #if UCS_ENABLE_ASSERT
@@ -1136,7 +1137,7 @@ out_resolve_remote_id:
     }
 
 #if HAVE_UROM /* UROM part should not connect to UROM */
-    if (worker->num_uroms == 0) {
+    if (context->num_uroms == 0) {
         goto out;
     }
 
@@ -1195,6 +1196,7 @@ ucp_ep_create_api_to_worker_addr(ucp_worker_h worker,
     status = ucp_ep_create_to_worker_unpacked_addr(worker, &remote_address,
                                                    params, ep_p);
 
+    (*ep_p)->ext->remote_worker_id = remote_address.uuid;
     for (urom_idx = 0; urom_idx <  remote_address.urom_worker_count; ++urom_idx) {
         ucs_free(remote_address.urom_worker_list[urom_idx].address_list);
     }
