@@ -465,13 +465,13 @@ static size_t ucp_address_urom_packed_size(ucp_worker_h worker)
     int i;
 
     for (i = 0; i < context->num_uroms; ++i) {
-        if (context->uroms[i].addr == NULL) {
-            ucs_assert(context->uroms[i].addr_length == 0);
+        if (worker->uroms[i].addr == NULL) {
+            ucs_assert(worker->uroms[i].addr_length == 0);
             continue;
         }
 
         size += ucs_offsetof(ucp_address_urom_worker_packed_t, urom_worker_addr);
-        size += context->uroms[i].addr_length;
+        size += worker->uroms[i].addr_length;
     }
 #endif
 
@@ -1284,7 +1284,7 @@ ucp_address_do_pack(ucp_worker_h worker, ucp_ep_h ep, void *buffer, size_t size,
     }
 
 #if HAVE_UROM
-    *(uint8_t*)ptr = ((context->num_uroms > 0) && (context->uroms[0].addr)) ?
+    *(uint8_t*)ptr = ((context->num_uroms > 0) && (worker->uroms[0].addr)) ?
                      context->num_uroms : 0;
 #else
     *(uint8_t*)ptr = 0;
@@ -1541,15 +1541,15 @@ urom_pack:
     for (addr_index = 0; addr_index < context->num_uroms; ++addr_index) {
         ucp_address_urom_worker_packed_t *urom = ptr;
 
-        if (context->uroms[addr_index].addr == NULL) {
-            ucs_assert(context->uroms[addr_index].addr_length == 0);
+        if (worker->uroms[addr_index].addr == NULL) {
+            ucs_assert(worker->uroms[addr_index].addr_length == 0);
             continue;
         }
 
-        ucs_assert(context->uroms[addr_index].addr_length != 0);
-        urom->urom_worker_addr_len = context->uroms[addr_index].addr_length;
-        memcpy(urom->urom_worker_addr, context->uroms[addr_index].addr,
-               context->uroms[addr_index].addr_length);
+        ucs_assert(worker->uroms[addr_index].addr_length != 0);
+        urom->urom_worker_addr_len = worker->uroms[addr_index].addr_length;
+        memcpy(urom->urom_worker_addr, worker->uroms[addr_index].addr,
+               worker->uroms[addr_index].addr_length);
         ptr = UCS_PTR_TYPE_OFFSET(ptr, urom->urom_worker_addr_len);
         ptr = UCS_PTR_BYTE_OFFSET(ptr, urom->urom_worker_addr_len);
     }

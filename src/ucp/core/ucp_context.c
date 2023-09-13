@@ -2219,22 +2219,127 @@ out:
 
 }
 
+static ucs_status_t ucp_context_urom_spawn_workers(ucp_context_h context)
+{
+    urom_service_cmd_t service_cmd = {
+        .type                      = UROM_SERVICE_CMD_SPAWN_WORKER,
+        .spawn_worker.worker_type  = UROM_WORKER_TYPE_RDMO,
+        .spawn_worker.worker_id    = 0
+    };
+    ucs_status_t status            = UCS_OK;
+    urom_service_notify_t service_notif;
+    urom_worker_params_t worker_params;
+    urom_status_t urom_status;
+    int i;
+
+    for (i = 0; i < context->num_uroms; ++i) {
+        urom_status = urom_service_push_cmdq(context->uroms[i].service,
+                                             &service_cmd);
+        if (urom_status != UROM_OK) {
+            ucs_error("context %p: urom_service_push_cmdq(%p) returned error: %s",
+                      context, context->uroms[i].service,
+                      urom_status_string(urom_status));
+            return UCS_ERR_IO_ERROR;
+        }
+    }
+
+    for (--i; i >= 0; --i) {
+        for (urom_status = urom_service_pop_notifyq(context->uroms[i].service,
+                                                    &service_notif);
+             urom_status == UROM_ERR_QUEUE_EMPTY;
+             urom_status = urom_service_pop_notifyq(context->uroms[i].service,
+                                                    &service_notif)) {
+            sched_yield();
+        }
+
+        if (urom_status != UROM_OK) {
+            ucs_error("context %p: urom_worker_spawn(%p) returned error: %s\n",
+                      context, context->uroms[i].service,
+                      urom_status_string(urom_status));
+            return UCS_ERR_IO_ERROR;
+        }
+
+        if ((service_notif.type   != UROM_SERVICE_NOTIFY_SPAWN_WORKER) ||
+            (service_notif.status != UROM_OK)) {
+            ucs_error("context %p: urom_worker_spawn(%p) bad notify type %"PRIu64
+                      ", status %s", context, context->uroms[i].service,
+                      service_notif.type,
+                      urom_status_string(service_notif.status));
+            return UCS_ERR_IO_ERROR;
+        }
+
+        worker_params.serviceh        = context->uroms[i].service;
+        worker_params.num_cmd_notifyq = 1;
+        worker_params.addr            = &service_notif.spawn_worker.worker_addr;
+        worker_params.addr_len        =
+                service_notif.spawn_worker.worker_addr_len;
+        urom_status = urom_worker_connect(&worker_params,
+                                          &context->uroms[i].worker);
+        if (urom_status != UROM_OK) {
+            ucs_error("context %p: urom_worker_connect(%p) returned error: %s",
+                      context, context->uroms[i].service,
+                      urom_status_string(urom_status));
+            return UCS_ERR_IO_ERROR;
+        }
+    }
+
+    /* TODO: create RDMO_RQ (check if needed?)  */
+    ucs_assert(status == UCS_OK);
+
+    /* TODO: error handling */
+    return status;
+}
+
 #endif /* HAVE_UROM */
 
 static ucs_status_t ucp_context_rdmo_check_init(ucp_context_h context)
 {
+    ucs_status_t status = UCS_ERR_UNSUPPORTED;
+
     if (!(context->config.features & UCP_FEATURE_RDMO)) {
-        return UCS_OK;
+        status = UCS_OK;
+        goto out;
     }
 
 #if HAVE_UROM
     context->num_uroms = 0;
     context->uroms     = NULL;
-    return ucp_context_urom_service_connect(context);
-#else
-    return UCS_ERR_UNSUPPORTED;
+
+    status = ucp_context_urom_service_connect(context);
+    if (status != UCS_OK) {
+        goto out;
+    }
+
+    status = ucp_context_urom_spawn_workers(context);
 #endif
+out:
+    return status;
 }
+
+#if HAVE_UROM
+static void ucp_context_urom_close_workers(ucp_context_h context)
+{
+    urom_status_t urom_status;
+    urom_worker_h urom_worker;
+    int i;
+
+    for (i = 0; i < context->num_uroms; ++i) {
+        urom_worker = context->uroms[i].worker;
+        if (urom_worker == NULL) {
+            continue;
+        }
+
+        urom_status = urom_worker_disconnect(urom_worker);
+        if (urom_status != UROM_OK) {
+            ucs_warn("context %p: urom_worker_disconnect(%d) returned  error: %s",
+                     context, i, urom_status_string(urom_status));
+        }
+
+        context->uroms[i].worker      = NULL;
+    }
+}
+#endif /* HAVE_UROM */
+
 
 static void ucp_context_destroy_rdmo(ucp_context_h context)
 {
@@ -2242,6 +2347,7 @@ static void ucp_context_destroy_rdmo(ucp_context_h context)
     urom_status_t urom_status;
     int i;
 
+    ucp_context_urom_close_workers(context);
     for (i = 0; i < context->num_uroms; ++i) {
         ucs_assert(context->uroms[i].worker == NULL);
         urom_status = urom_service_disconnect(context->uroms[i].service);

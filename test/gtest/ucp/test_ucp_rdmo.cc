@@ -98,6 +98,13 @@ UCS_TEST_P(test_ucp_rdmo, basic)
 
     /* validate */
     dst_buf.pattern_check(seed);
+
+    /* free */
+    ucp_rkey_destroy(dst_rkey);
+    ucp_mem_unmap(receiver().ucph(), dst_memh);
+
+    ucp_rkey_destroy(ptr_rkey);
+    ucp_mem_unmap(receiver().ucph(), ptr_memh);
 }
 
 UCP_INSTANTIATE_TEST_CASE_TLS(test_ucp_rdmo, all, "all")

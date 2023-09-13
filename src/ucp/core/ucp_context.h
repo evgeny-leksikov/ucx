@@ -276,8 +276,6 @@ typedef struct ucp_context_urom_data {
     urom_worker_h                    worker;             /* urom workers array for RDMO ops.
                                                           * TODO: rkeys resolve protocol to 
                                                                   avoid mapping host to dpu workers */
-    void                             *addr;
-    size_t                           addr_length;
 } ucp_context_urom_data_t;
 #endif
 

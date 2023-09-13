@@ -2409,42 +2409,20 @@ static void ucp_worker_set_max_am_header(ucp_worker_h worker)
 }
 
 #if HAVE_UROM
-static void ucp_worker_urom_close_workers(ucp_worker_h worker)
+static void ucp_worker_urom_free_client(ucp_worker_h worker)
 {
-    ucp_context_h context = worker->context;
-    urom_status_t urom_status;
-    urom_worker_h urom_worker;
     int i;
 
-    for (i = 0; i < context->num_uroms; ++i) {
-        urom_worker = context->uroms[i].worker;
-        if (urom_worker == NULL) {
-            continue;
-        }
-
-        ucs_free(context->uroms[i].addr);
-        urom_status = urom_worker_disconnect(urom_worker);
-        if (urom_status != UROM_OK) {
-            ucs_warn("context %p: urom_worker_disconnect(%d) returned  error: %s",
-                     context, i, urom_status_string(urom_status));
-        }
-
-        context->uroms[i].addr        = NULL;
-        context->uroms[i].worker      = NULL;
-        context->uroms[i].addr_length = 0;
+    for (i = 0; i < worker->context->num_uroms; ++i) {
+        ucs_free(worker->uroms[i].addr);
     }
+
+    ucs_free(worker->uroms);
 }
 
-static ucs_status_t ucp_worker_urom_spawn_workers(ucp_worker_h worker)
+static ucs_status_t ucp_worker_urom_init_client(ucp_worker_h worker)
 {
-    ucp_context_h context          = worker->context;
-    urom_service_cmd_t service_cmd = {
-        .type                      = UROM_SERVICE_CMD_SPAWN_WORKER,
-        .spawn_worker.worker_type  = UROM_WORKER_TYPE_RDMO,
-        .spawn_worker.worker_id    = 0
-    };
-    urom_service_notify_t service_notif;
-    urom_worker_params_t worker_params;
+    ucp_context_h context = worker->context;
     urom_worker_cmd_t worker_cmd;
     urom_worker_notify_t *worker_notif;
     void *self_addr;
@@ -2453,55 +2431,15 @@ static ucs_status_t ucp_worker_urom_spawn_workers(ucp_worker_h worker)
     ucs_status_t status;
     int i;
 
-    for (i = 0; i < context->num_uroms; ++i) {
-        urom_status = urom_service_push_cmdq(context->uroms[i].service,
-                                             &service_cmd);
-        if (urom_status != UROM_OK) {
-            ucs_error("context %p: urom_service_push_cmdq(%p) returned error: %s",
-                      context, context->uroms[i].service,
-                      urom_status_string(urom_status));
-            return UCS_ERR_IO_ERROR;
-        }
+    if (context->num_uroms == 0) {
+        return UCS_OK;
     }
 
-    for (--i; i >= 0; --i) {
-        for (urom_status = urom_service_pop_notifyq(context->uroms[i].service,
-                                                    &service_notif);
-             urom_status == UROM_ERR_QUEUE_EMPTY;
-             urom_status = urom_service_pop_notifyq(context->uroms[i].service,
-                                                    &service_notif)) {
-            sched_yield();
-        }
-
-        if (urom_status != UROM_OK) {
-            ucs_error("context %p: urom_worker_spawn(%p) returned error: %s\n",
-                      context, context->uroms[i].service,
-                      urom_status_string(urom_status));
-            return UCS_ERR_IO_ERROR;
-        }
-
-        if ((service_notif.type   != UROM_SERVICE_NOTIFY_SPAWN_WORKER) ||
-            (service_notif.status != UROM_OK)) {
-            ucs_error("context %p: urom_worker_spawn(%p) bad notify type %"PRIu64
-                      ", status %s", context, context->uroms[i].service,
-                      service_notif.type,
-                      urom_status_string(service_notif.status));
-            return UCS_ERR_IO_ERROR;
-        }
-
-        worker_params.serviceh        = context->uroms[i].service;
-        worker_params.num_cmd_notifyq = 1;
-        worker_params.addr            = &service_notif.spawn_worker.worker_addr;
-        worker_params.addr_len        =
-                service_notif.spawn_worker.worker_addr_len;
-        urom_status = urom_worker_connect(&worker_params,
-                                          &context->uroms[i].worker);
-        if (urom_status != UROM_OK) {
-            ucs_error("context %p: urom_worker_connect(%p) returned error: %s",
-                      context, context->uroms[i].service,
-                      urom_status_string(urom_status));
-            return UCS_ERR_IO_ERROR;
-        }
+    worker->uroms = ucs_calloc(context->num_uroms,
+                               ucs_field_sizeof(ucp_worker_t, uroms[0]),
+                               "worker_uroms");
+    if (worker->uroms == NULL) {
+        return UCS_ERR_NO_MEMORY;
     }
 
     status = ucp_worker_address_pack(worker, UCP_WORKER_ADDRESS_FLAG_NET_ONLY,
@@ -2555,16 +2493,16 @@ static ucs_status_t ucp_worker_urom_spawn_workers(ucp_worker_h worker)
         }
 
         ucs_assert(worker_notif->rdmo.client_init.addr_len != 0);
-        context->uroms[i].addr_length = worker_notif->rdmo.client_init.addr_len;
-        context->uroms[i].addr        = ucs_malloc(context->uroms[i].addr_length,
-                                                   "urom_worker_addr");
-        if (context->uroms[i].addr == NULL) {
+        worker->uroms[i].addr_length = worker_notif->rdmo.client_init.addr_len;
+        worker->uroms[i].addr        = ucs_malloc(worker->uroms[i].addr_length,
+                                                  "urom_worker_addr");
+        if (worker->uroms[i].addr == NULL) {
             status = UCS_ERR_NO_MEMORY;
-            goto err_close;
+            goto out;
         }
 
-        memcpy(context->uroms[i].addr, worker_notif->rdmo.client_init.addr,
-               context->uroms[i].addr_length);
+        memcpy(worker->uroms[i].addr, worker_notif->rdmo.client_init.addr,
+               worker->uroms[i].addr_length);
 
         urom_worker_free_notif(context->uroms[i].worker, worker_notif);
     }
@@ -2573,8 +2511,6 @@ static ucs_status_t ucp_worker_urom_spawn_workers(ucp_worker_h worker)
     ucs_assert(status == UCS_OK);
     goto out;
 
-err_close:
-    ucp_worker_urom_close_workers(worker);
 out:
     ucs_free(self_addr);
     return status;
@@ -2770,7 +2706,7 @@ ucs_status_t ucp_worker_create(ucp_context_h context,
 #if HAVE_UROM
     /* Init RDMO resources last since urom client should be able to connect to
      * this worker */
-    status = ucp_worker_urom_spawn_workers(worker);
+    status = ucp_worker_urom_init_client(worker);
     if (status != UCS_OK) {
         goto err_am_clenup;
     }
@@ -3021,6 +2957,7 @@ void ucp_worker_destroy(ucp_worker_h worker)
     ucs_debug("destroy worker %p", worker);
 
     UCS_ASYNC_BLOCK(&worker->async);
+    ucp_worker_urom_free_client(worker);
     uct_worker_progress_unregister_safe(worker->uct, &worker->keepalive.cb_id);
     ucp_worker_discard_uct_ep_cleanup(worker);
     ucp_worker_destroy_eps(worker, &worker->all_eps, "all");
@@ -3056,9 +2993,6 @@ void ucp_worker_destroy(ucp_worker_h worker)
     ucp_tag_match_cleanup(&worker->tm);
     ucp_worker_destroy_mpools(worker);
     ucp_worker_close_cms(worker);
-#if HAVE_UROM
-    ucp_worker_urom_close_workers(worker);
-#endif /* HAVE_UROM */
     ucp_worker_close_ifaces(worker);
     ucs_conn_match_cleanup(&worker->conn_match_ctx);
     ucp_worker_wakeup_cleanup(worker);

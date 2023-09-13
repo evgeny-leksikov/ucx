@@ -360,6 +360,11 @@ typedef struct ucp_worker {
         /* Number of failed endpoints */
         uint64_t                     ep_failures;
     } counters;
+
+    struct {
+        void                             *addr;              /* TODO: move to worker */
+        size_t                           addr_length;
+    } *uroms;
 } ucp_worker_t;
 
 
