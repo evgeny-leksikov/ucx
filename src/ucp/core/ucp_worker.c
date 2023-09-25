@@ -21,6 +21,7 @@
 #include <ucp/tag/eager.h>
 #include <ucp/tag/offload.h>
 #include <ucp/stream/stream.h>
+#include <ucp/rdmo/rdmo.h>
 #include <ucs/config/parser.h>
 #include <ucs/debug/debug_int.h>
 #include <ucs/datastruct/mpool.inl>
@@ -2049,6 +2050,10 @@ static void ucp_worker_destroy_mpools(ucp_worker_h worker)
     }
     ucs_mpool_cleanup(&worker->req_mp,
                       !(worker->flags & UCP_WORKER_FLAG_IGNORE_REQUEST_LEAK));
+
+    if (worker->context->config.features & UCP_FEATURE_RDMO_PROXY) {
+        ucs_mpool_cleanup(&worker->rdmo_mp, 1);
+    }
 }
 
 static void
@@ -2517,6 +2522,47 @@ out:
 }
 #endif /* HAVE_UROM */
 
+static ucs_mpool_ops_t ucp_woorker_rdmo_mpool_ops = {
+    .chunk_alloc   = ucs_mpool_chunk_malloc,
+    .chunk_release = ucs_mpool_chunk_free,
+    .obj_init      = NULL,
+    .obj_cleanup   = NULL,
+    .obj_str       = NULL
+};
+
+static ucs_status_t ucp_worker_urom_setup_proxy(ucp_worker_h worker)
+{
+    ucs_mpool_params_t mp_param;
+    ucp_am_handler_param_t cb_param;
+    ucs_status_t status;
+
+    if (!(worker->context->config.features & UCP_FEATURE_RDMO_PROXY)) {
+        return UCS_OK;
+    }
+
+    ucs_mpool_params_reset(&mp_param);
+    mp_param.elem_size       = sizeof(ucp_rdmo_append_user_data_t);
+    mp_param.elems_per_chunk = 128;
+    mp_param.ops             = &ucp_woorker_rdmo_mpool_ops;
+    mp_param.name            = "rdmo_data";
+
+    status = ucs_mpool_init(&mp_param, &worker->rdmo_mp);
+    if (status != UCS_OK) {
+        return status;
+    }
+
+    cb_param.field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID    |
+                          UCP_AM_HANDLER_PARAM_FIELD_FLAGS |
+                          UCP_AM_HANDLER_PARAM_FIELD_CB    |
+                          UCP_AM_HANDLER_PARAM_FIELD_ARG;
+    cb_param.id         = UCP_AM_ID_RDMO_APPEND;
+    cb_param.flags      = UCP_AM_FLAG_PERSISTENT_DATA;
+    cb_param.cb         = ucp_rdmo_append_handler;
+    cb_param.arg        = worker;
+
+    return ucp_worker_set_am_recv_handler(worker, &cb_param);
+}
+
 ucs_status_t ucp_worker_create(ucp_context_h context,
                                const ucp_worker_params_t *params,
                                ucp_worker_h *worker_p)
@@ -2711,6 +2757,11 @@ ucs_status_t ucp_worker_create(ucp_context_h context,
         goto err_am_clenup;
     }
 #endif /*HAVE_UROM*/
+
+    status = ucp_worker_urom_setup_proxy(worker);
+    if (status != UCS_OK) {
+        goto err_am_clenup;
+    }
 
     /* At this point all UCT memory domains and interfaces are already created
      * so print used environment variables and warn about unused ones.
@@ -2957,7 +3008,9 @@ void ucp_worker_destroy(ucp_worker_h worker)
     ucs_debug("destroy worker %p", worker);
 
     UCS_ASYNC_BLOCK(&worker->async);
+#if HAVE_UROM
     ucp_worker_urom_free_client(worker);
+#endif
     uct_worker_progress_unregister_safe(worker->uct, &worker->keepalive.cb_id);
     ucp_worker_discard_uct_ep_cleanup(worker);
     ucp_worker_destroy_eps(worker, &worker->all_eps, "all");

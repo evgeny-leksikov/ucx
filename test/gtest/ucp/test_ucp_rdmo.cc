@@ -94,7 +94,7 @@ UCS_TEST_P(test_ucp_rdmo, basic)
     uintptr_t *ptr_val = (uintptr_t *)ptr_buf.ptr();
     uintptr_t expected = (uintptr_t)UCS_PTR_BYTE_OFFSET(dst_buf.ptr(),
                                                         dst_buf.size());
-    wait_for_value(ptr_val, expected);
+    wait_for_value(ptr_val, expected, 1000);
 
     /* validate */
     dst_buf.pattern_check(seed);

@@ -1789,7 +1789,8 @@ static void ucp_apply_params(ucp_context_h context, const ucp_params_t *params,
         ucs_warn("empty features set passed to ucp context create");
     }
 
-    if (context->config.features & UCP_FEATURE_RDMO) {
+    if (context->config.features & (UCP_FEATURE_RDMO |
+                                    UCP_FEATURE_RDMO_PROXY)) {
         /* To align EP configuration with UROM side */
         context->config.features |= (UCP_FEATURE_AM | UCP_FEATURE_RMA |
                                      UCP_FEATURE_AMO64);

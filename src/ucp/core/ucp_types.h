@@ -152,6 +152,7 @@ typedef enum {
     UCP_OP_ID_RNDV_RECV_DROP,
     UCP_OP_ID_RNDV_LAST,
 
+    UCP_OP_ID_RDMO_APPEND_PROXY,
     UCP_OP_ID_LAST = UCP_OP_ID_RNDV_LAST
 } ucp_operation_id_t;
 
@@ -198,6 +199,8 @@ typedef enum {
     UCP_AM_ID_LAST
 } ucp_am_id_t;
 
+
+#define UCP_AM_ID_RDMO_APPEND   7
 
 /**
  * Atomic operations mode.

@@ -167,7 +167,10 @@ enum ucp_feature {
     UCP_FEATURE_EXPORTED_MEMH = UCS_BIT(7),
 
     /** Request RDMO support */
-    UCP_FEATURE_RDMO          = UCS_BIT(8)
+    UCP_FEATURE_RDMO          = UCS_BIT(8),
+
+    /** Request proxy support for RDMO */
+    UCP_FEATURE_RDMO_PROXY    = UCS_BIT(9)
 };
 
 

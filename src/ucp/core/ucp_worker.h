@@ -362,9 +362,11 @@ typedef struct ucp_worker {
     } counters;
 
     struct {
-        void                             *addr;              /* TODO: move to worker */
-        size_t                           addr_length;
+        void                         *addr;
+        size_t                       addr_length;
     } *uroms;
+
+    ucs_mpool_t                      rdmo_mp;
 } ucp_worker_t;
 
 

@@ -69,7 +69,8 @@
     _macro(ucp_stream_multi_zcopy_proto) \
     UCP_PROTO_AMO_FOR_EACH(_macro, post) \
     UCP_PROTO_AMO_FOR_EACH(_macro, fetch) \
-    UCP_PROTO_AMO_FOR_EACH(_macro, cswap)
+    UCP_PROTO_AMO_FOR_EACH(_macro, cswap) \
+    _macro(ucp_rdmo_append_proxy_proto)
 
 #define UCP_PROTO_DECL(_proto) extern ucp_proto_t _proto;
 
