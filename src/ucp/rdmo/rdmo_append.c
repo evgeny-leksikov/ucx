@@ -13,6 +13,7 @@
 #include <proto/proto_init.h>
 
 #include <proto/proto_common.inl>
+#include <rma/rma.inl>
 
 ucs_status_ptr_t ucp_rdmo_append_nbx(ucp_ep_h ep,
                                      const void *buffer, size_t count,
@@ -71,7 +72,13 @@ ucp_ep_h ucp_rdmo_dst_ep(ucp_worker_h worker, uint64_t id)
 static void ucp_rdmo_append_put_callback(void *request, ucs_status_t status,
                                          void *user_data)
 {
+    ucp_request_t *req            = (ucp_request_t*)request - 1;
+    ucp_rdmo_cb_user_data_t *data = user_data;
+
+    req->send.ep->worker->rdmo_outstanding--;
+
     ucs_assert(status == UCS_OK);
+    ucp_am_data_release(req->send.ep->worker, data->append.data);
     ucs_mpool_put_inline(user_data);
     ucp_request_free(request);
 }
@@ -79,21 +86,21 @@ static void ucp_rdmo_append_put_callback(void *request, ucs_status_t status,
 static void ucp_rdmo_append_fadd_callback(void *request, ucs_status_t status,
                                          void *user_data)
 {
-    ucp_rdmo_append_user_data_t *append_data = user_data;
-    ucp_request_param_t req_param            = {
-        .op_attr_mask                        = UCP_OP_ATTR_FIELD_CALLBACK |
-                                               UCP_OP_ATTR_FIELD_USER_DATA,
-        .cb.send                             = ucp_rdmo_append_put_callback,
-        .user_data                           = user_data
+    ucp_rdmo_cb_user_data_t *data = user_data;
+    ucp_request_param_t req_param = {
+        .op_attr_mask             = UCP_OP_ATTR_FIELD_CALLBACK |
+                                    UCP_OP_ATTR_FIELD_USER_DATA,
+        .cb.send                  = ucp_rdmo_append_put_callback,
+        .user_data                = user_data
     };
     ucs_status_ptr_t ret_put;
 
     ucs_assert(status == UCS_OK);
 
     ucp_request_free(request);
-    ret_put = ucp_put_nbx(append_data->ep, append_data->data,
-                          append_data->data_length, append_data->data_buffer,
-                          append_data->data_rkey, &req_param);
+    ret_put = ucp_put_nbx(data->append.ep, data->append.data,
+                          data->append.data_length, data->append.data_buffer,
+                          data->append.data_rkey, &req_param);
     ucs_assert(UCS_PTR_STATUS(ret_put) == UCS_INPROGRESS);
 }
 
@@ -118,28 +125,30 @@ ucp_rdmo_append_handler(void *arg, const void *header, size_t header_length,
         .datatype                           = ucp_dt_make_contig(sizeof(uint64_t)),
         .memory_type                        = UCS_MEMORY_TYPE_HOST
     };
-    ucp_rdmo_append_user_data_t *user_data;
+    ucp_rdmo_cb_user_data_t *cb_data;
     ucp_ep_h ep;
     ucs_status_ptr_t ret_add;
 
     ucs_assert(worker->context->config.ext.proto_enable);
 
+    worker->rdmo_outstanding++;
+
     ep = ucp_rdmo_dst_ep(worker, append_hdr->client_id);
     ucs_assert_always(ep != NULL);
 
-    user_data = ucs_mpool_get_inline(&worker->rdmo_mp);
-    ucs_assert(user_data != NULL);
+    cb_data = ucs_mpool_get_inline(&worker->rdmo_mp);
+    ucs_assert(cb_data != NULL);
 
-    user_data->ep          = ep;
-    user_data->data_rkey   = (ucp_rkey_h)append_hdr->data_rkey;
-    user_data->data        = data;
-    user_data->data_buffer = 0;
-    user_data->data_length = length;
+    cb_data->append.ep          = ep;
+    cb_data->append.data_rkey   = (ucp_rkey_h)append_hdr->data_rkey;
+    cb_data->append.data        = data;
+    cb_data->append.data_buffer = 0;
+    cb_data->append.data_length = length;
 
     req_param.op_attr_mask |= UCP_OP_ATTR_FIELD_REPLY_BUFFER |
                               UCP_OP_ATTR_FIELD_USER_DATA;
-    req_param.reply_buffer  = &user_data->data_buffer;
-    req_param.user_data     = user_data;
+    req_param.reply_buffer  = &cb_data->append.data_buffer;
+    req_param.user_data     = cb_data;
 
     ret_add = ucp_atomic_op_nbx(ep, UCP_ATOMIC_OP_ADD, &length, 1,
                                 append_hdr->ptr_addr, ptr_rkey, &req_param);
@@ -147,6 +156,92 @@ ucp_rdmo_append_handler(void *arg, const void *header, size_t header_length,
 
     return UCS_PTR_IS_PTR(ret_add) ? UCS_INPROGRESS : UCS_OK;
 #endif
+}
+
+static void
+ucp_rdmo_flush_send_ack(ucp_ep_h ep,
+                        const ucp_rdmo_flush_ack_hdr_t *ack)
+{
+    ucp_request_param_t param = {
+        .op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS,
+        .flags        = UCP_AM_SEND_FLAG_COPY_HEADER
+    };
+
+    void *request = ucp_am_send_nbx(ep, UCP_AM_ID_RDMO_FLUSH_ACK, ack,
+                                    sizeof(*ack), NULL, 0, &param);
+
+    if (UCS_PTR_IS_PTR(request)) {
+        ucp_request_free(request);
+    } else {
+        ucs_assert(!UCS_PTR_IS_ERR(request));
+    }
+}
+
+static void ucp_rdmo_worker_flush_completion(void *request, ucs_status_t status,
+                                             void *user_data)
+{
+    ucp_rdmo_cb_user_data_t *cb_data = user_data;
+
+    ucs_assert(cb_data->flush.ep->worker->rdmo_outstanding == 0);
+    ucs_assert(status                    == UCS_OK);
+    ucs_assert(cb_data->flush.ack.status == UCS_OK);
+
+    ucp_rdmo_flush_send_ack(cb_data->flush.ep, &cb_data->flush.ack);
+    ucs_mpool_put_inline(cb_data);
+    ucp_request_free(request);
+}
+
+ucs_status_t
+ucp_rdmo_flush_handler(void *arg, const void *header, size_t header_length,
+                       void *data, size_t length,
+                       const ucp_am_recv_param_t *recv_param)
+{
+    ucp_worker_h worker                      = arg;
+    const ucp_rdmo_flush_hdr_t *flush_hdr    = header;
+    ucp_rdmo_flush_ack_hdr_t flush_ack_hdr;
+    ucp_rdmo_cb_user_data_t *user_data;
+    ucp_request_param_t param;
+    void *request;
+
+    if (worker->rdmo_outstanding == 0) {
+        flush_ack_hdr.flush  = *flush_hdr;
+        flush_ack_hdr.status = UCS_OK;
+        ucp_rdmo_flush_send_ack(recv_param->reply_ep, &flush_ack_hdr);
+        return UCS_OK;
+    }
+
+    user_data = ucs_mpool_get_inline(&worker->rdmo_mp);
+    ucs_assert(user_data != NULL);
+    user_data->flush.ep         = recv_param->reply_ep;
+    user_data->flush.ack.flush  = *flush_hdr;
+    user_data->flush.ack.status = UCS_OK;
+
+    param.op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK |
+                         UCP_OP_ATTR_FIELD_USER_DATA;
+    param.cb.send      = ucp_rdmo_worker_flush_completion;
+    param.user_data    = user_data;
+    request = ucp_worker_flush_nbx(worker, &param);
+    if (!UCS_PTR_IS_PTR(request)) {
+        ucs_mpool_put_inline(user_data);
+        ucs_assert(request == NULL);
+    }
+
+    return UCS_OK;
+}
+
+ucs_status_t
+ucp_rdmo_flush_ack_handler(void *arg, const void *header, size_t header_length,
+                           void *data, size_t length,
+                           const ucp_am_recv_param_t *param)
+{
+    const ucp_rdmo_flush_ack_hdr_t *hdr = header;
+    ucp_ep_h ep                         = (ucp_ep_h)hdr->flush.ep;
+
+    ucs_assert(hdr->status == UCS_OK);
+
+    ucp_ep_rma_remote_request_completed(ep);
+
+    return UCS_OK;
 }
 
 static ucs_status_t

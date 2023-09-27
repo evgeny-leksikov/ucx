@@ -82,19 +82,19 @@ UCS_TEST_P(test_ucp_rdmo, basic)
     ucp_rkey_h dst_rkey = get_rkey(sender().ep(), receiver(), dst_memh);
 
     /* post the operation */
-    ucs_status_ptr_t r = ucp_rdmo_append_nbx(
+    ucs_status_ptr_t append_r = ucp_rdmo_append_nbx(
             sender().ep(), src_buf.ptr(), src_buf.size(),
             (uint64_t)ptr_buf.ptr(), ptr_rkey, dst_rkey);
 
-    /* wait for local completion */
-    ucs_status_t status = request_wait(r);
+    void *flush_r = sender().flush_ep_nb();
+    ucs_status_t status = request_wait(flush_r);
     ASSERT_UCS_OK(status);
-
-    /* wait for remote completion */
+    ASSERT_UCS_OK(ucp_request_check_status(append_r));
+    ucp_request_free(append_r);
     uintptr_t *ptr_val = (uintptr_t *)ptr_buf.ptr();
     uintptr_t expected = (uintptr_t)UCS_PTR_BYTE_OFFSET(dst_buf.ptr(),
                                                         dst_buf.size());
-    wait_for_value(ptr_val, expected, 1000);
+    ASSERT_EQ(expected, *ptr_val);
 
     /* validate */
     dst_buf.pattern_check(seed);

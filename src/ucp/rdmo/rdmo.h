@@ -29,13 +29,35 @@ typedef struct ucp_rdmo_append_hdr {
     uint64_t    data_rkey;
 } UCS_S_PACKED ucp_rdmo_append_hdr_t;
 
-typedef struct ucp_rdmo_append_user_data {
-    ucp_ep_h    ep;
-    void        *data;
-    uint64_t    data_buffer;
-    ucp_rkey_h  data_rkey;
-    size_t      data_length;
-} ucp_rdmo_append_user_data_t;
+
+typedef struct ucp_rdmo_flush_hdr {
+    uint64_t    ep;
+} UCS_S_PACKED ucp_rdmo_flush_hdr_t;
+
+
+typedef struct ucp_rdmo_flush_ack_hdr {
+    ucp_rdmo_flush_hdr_t    flush;
+    uint8_t                 status;
+} UCS_S_PACKED ucp_rdmo_flush_ack_hdr_t;
+
+
+typedef struct ucp_rdmo_cb_user_data {
+    union {
+        struct {
+            ucp_ep_h    ep;
+            void        *data;
+            uint64_t    data_buffer;
+            ucp_rkey_h  data_rkey;
+            size_t      data_length;
+        } append;
+
+        struct  {
+            ucp_ep_h                 ep;
+            ucp_rdmo_flush_ack_hdr_t ack;
+        } flush;
+    };
+} ucp_rdmo_cb_user_data_t;
+
 #endif
 
 
@@ -43,5 +65,15 @@ ucs_status_t
 ucp_rdmo_append_handler(void *arg, const void *header, size_t header_length,
                         void *data, size_t length,
                         const ucp_am_recv_param_t *param);
+
+ucs_status_t
+ucp_rdmo_flush_handler(void *arg, const void *header, size_t header_length,
+                       void *data, size_t length,
+                       const ucp_am_recv_param_t *param);
+
+ucs_status_t
+ucp_rdmo_flush_ack_handler(void *arg, const void *header, size_t header_length,
+                           void *data, size_t length,
+                           const ucp_am_recv_param_t *param);
 
 #endif /* UCP_RDMO_H_ */

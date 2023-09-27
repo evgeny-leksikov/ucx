@@ -13,6 +13,7 @@
 #include <ucp/core/ucp_request.inl>
 
 #include "rma.inl"
+#include "rdmo/rdmo.h"
 
 static unsigned ucp_ep_flush_resume_slow_path_callback(void *arg);
 
@@ -61,6 +62,35 @@ static void ucp_ep_flush_error(ucp_request_t *req, ucp_lane_index_t lane,
 static int ucp_ep_flush_is_completed(ucp_request_t *req)
 {
     return (req->send.state.uct_comp.count == 0) && req->send.flush.sw_done;
+}
+
+static void ucp_ep_rdmo_flush_start(ucp_ep_h ep)
+{
+    unsigned i;
+    void *request;
+    ucp_rdmo_flush_hdr_t hdr;
+    ucp_request_param_t param;
+
+    if (!(ep->worker->context->config.features & UCP_FEATURE_RDMO)) {
+        return;
+    }
+
+    param.op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS;
+    param.flags   = UCP_AM_SEND_FLAG_COPY_HEADER |
+                    UCP_AM_SEND_FLAG_REPLY;
+    hdr.ep        = (uintptr_t)ep;
+    for (i = 0; i < ep->ext->num_rdmo_eps; ++i) {
+        request = ucp_am_send_nbx(ep->ext->rdmo_eps[i], UCP_AM_ID_RDMO_FLUSH,
+                                  &hdr, sizeof(hdr), NULL, 0, &param);
+        if (!UCS_PTR_IS_ERR(request)) {
+            if (request != NULL) {
+                ucp_request_free(request);
+            }
+
+            ++ucp_ep_flush_state(ep)->send_sn;
+            ucp_worker_flush_ops_count_add(ep->worker, +1);
+        }
+    }
 }
 
 static void ucp_ep_flush_progress(ucp_request_t *req)
@@ -166,6 +196,7 @@ static void ucp_ep_flush_progress(ucp_request_t *req)
                           "flush ep %p not waiting for remote completions", ep);
             req->send.flush.sw_done = 1;
         } else {
+            ucp_ep_rdmo_flush_start(ep);
             /* All pending requests were sent, so 'send_sn' value is up-to-date */
             flush_state = ucp_ep_flush_state(ep);
             if (flush_state->send_sn == flush_state->cmpl_sn) {

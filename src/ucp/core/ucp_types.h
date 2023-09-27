@@ -200,7 +200,9 @@ typedef enum {
 } ucp_am_id_t;
 
 
-#define UCP_AM_ID_RDMO_APPEND   7
+#define UCP_AM_ID_RDMO_APPEND       7
+#define UCP_AM_ID_RDMO_FLUSH        8
+#define UCP_AM_ID_RDMO_FLUSH_ACK    9
 
 /**
  * Atomic operations mode.

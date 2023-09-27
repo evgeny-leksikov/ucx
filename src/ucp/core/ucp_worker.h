@@ -367,6 +367,7 @@ typedef struct ucp_worker {
     } *uroms;
 
     ucs_mpool_t                      rdmo_mp;
+    size_t                           rdmo_outstanding;
 } ucp_worker_t;
 
 

@@ -2052,6 +2052,7 @@ static void ucp_worker_destroy_mpools(ucp_worker_h worker)
                       !(worker->flags & UCP_WORKER_FLAG_IGNORE_REQUEST_LEAK));
 
     if (worker->context->config.features & UCP_FEATURE_RDMO_PROXY) {
+        ucs_assert(worker->rdmo_outstanding == 0);
         ucs_mpool_cleanup(&worker->rdmo_mp, 1);
     }
 }
@@ -2428,6 +2429,7 @@ static void ucp_worker_urom_free_client(ucp_worker_h worker)
 static ucs_status_t ucp_worker_urom_init_client(ucp_worker_h worker)
 {
     ucp_context_h context = worker->context;
+    ucp_am_handler_param_t cb_param;
     urom_worker_cmd_t worker_cmd;
     urom_worker_notify_t *worker_notif;
     void *self_addr;
@@ -2446,6 +2448,15 @@ static ucs_status_t ucp_worker_urom_init_client(ucp_worker_h worker)
     if (worker->uroms == NULL) {
         return UCS_ERR_NO_MEMORY;
     }
+
+    cb_param.field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID    |
+                          UCP_AM_HANDLER_PARAM_FIELD_CB    |
+                          UCP_AM_HANDLER_PARAM_FIELD_ARG;
+    cb_param.id         = UCP_AM_ID_RDMO_FLUSH_ACK;
+    cb_param.cb         = ucp_rdmo_flush_ack_handler;
+    cb_param.arg        = worker;
+    status = ucp_worker_set_am_recv_handler(worker, &cb_param);
+    ucs_assert(status == UCS_OK);
 
     status = ucp_worker_address_pack(worker, UCP_WORKER_ADDRESS_FLAG_NET_ONLY,
                                      &self_addr_len, &self_addr);
@@ -2541,7 +2552,7 @@ static ucs_status_t ucp_worker_urom_setup_proxy(ucp_worker_h worker)
     }
 
     ucs_mpool_params_reset(&mp_param);
-    mp_param.elem_size       = sizeof(ucp_rdmo_append_user_data_t);
+    mp_param.elem_size       = sizeof(ucp_rdmo_cb_user_data_t);
     mp_param.elems_per_chunk = 128;
     mp_param.ops             = &ucp_woorker_rdmo_mpool_ops;
     mp_param.name            = "rdmo_data";
@@ -2551,6 +2562,8 @@ static ucs_status_t ucp_worker_urom_setup_proxy(ucp_worker_h worker)
         return status;
     }
 
+    worker->rdmo_outstanding = 0;
+
     cb_param.field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID    |
                           UCP_AM_HANDLER_PARAM_FIELD_FLAGS |
                           UCP_AM_HANDLER_PARAM_FIELD_CB    |
@@ -2559,7 +2572,17 @@ static ucs_status_t ucp_worker_urom_setup_proxy(ucp_worker_h worker)
     cb_param.flags      = UCP_AM_FLAG_PERSISTENT_DATA;
     cb_param.cb         = ucp_rdmo_append_handler;
     cb_param.arg        = worker;
+    status              = ucp_worker_set_am_recv_handler(worker, &cb_param);
+    if (status != UCS_OK) {
+        return status;
+    }
 
+    cb_param.field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID    |
+                          UCP_AM_HANDLER_PARAM_FIELD_CB    |
+                          UCP_AM_HANDLER_PARAM_FIELD_ARG;
+    cb_param.id         = UCP_AM_ID_RDMO_FLUSH;
+    cb_param.cb         = ucp_rdmo_flush_handler;
+    cb_param.arg        = worker;
     return ucp_worker_set_am_recv_handler(worker, &cb_param);
 }
 
