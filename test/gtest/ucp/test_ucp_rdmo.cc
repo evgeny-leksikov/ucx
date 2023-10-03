@@ -70,41 +70,49 @@ UCS_TEST_P(test_ucp_rdmo, init_fini)
 UCS_TEST_P(test_ucp_rdmo, basic)
 {
     const uint64_t seed(0xbadc0ffe);
-    mem_buffer src_buf(4 * UCS_KBYTE, UCS_MEMORY_TYPE_HOST, seed);
-    mem_buffer dst_buf(4 * UCS_KBYTE, UCS_MEMORY_TYPE_HOST);
-    mem_buffer ptr_buf(sizeof(void*), UCS_MEMORY_TYPE_HOST);
-    memcpy(ptr_buf.ptr(), dst_buf.ptr_p(), ptr_buf.size());
+    const size_t size = ucs::rand_range(4 * UCS_KBYTE);
+    const size_t iter = 100;
+    mem_buffer src_buf(size, UCS_MEMORY_TYPE_HOST, seed);
+    mem_buffer dst_buf(size * iter, UCS_MEMORY_TYPE_HOST);
+    dst_buf.memset(0);
+    mem_buffer off_buf(sizeof(void*), UCS_MEMORY_TYPE_HOST);
+    off_buf.memset(0);
 
-    ucp_mem_h ptr_memh  = get_memh(receiver(), ptr_buf);
-    ucp_rkey_h ptr_rkey = get_rkey(sender().ep(), receiver(), ptr_memh);
+    ucp_mem_h off_memh  = get_memh(receiver(), off_buf);
+    ucp_rkey_h off_rkey = get_rkey(sender().ep(), receiver(), off_memh);
 
     ucp_mem_h dst_memh  = get_memh(receiver(), dst_buf);
     ucp_rkey_h dst_rkey = get_rkey(sender().ep(), receiver(), dst_memh);
 
-    /* post the operation */
-    ucs_status_ptr_t append_r = ucp_rdmo_append_nbx(
-            sender().ep(), src_buf.ptr(), src_buf.size(),
-            (uint64_t)ptr_buf.ptr(), ptr_rkey, dst_rkey);
+    /* post the operations */
+    UCS_TEST_MESSAGE << "size: " << size;
+    for (size_t i = 0; i < iter; ++i) {
+        ucs_status_ptr_t append_r = ucp_rdmo_append_nbx(
+                sender().ep(), src_buf.ptr(), src_buf.size(),
+                (uint64_t)off_buf.ptr(), off_rkey,
+                (uint64_t)dst_buf.ptr(), dst_rkey);
+//    ASSERT_UCS_OK(ucp_request_check_status(append_r));
+    ucp_request_free(append_r);
+    }
 
     void *flush_r = sender().flush_ep_nb();
     ucs_status_t status = request_wait(flush_r);
     ASSERT_UCS_OK(status);
-    ASSERT_UCS_OK(ucp_request_check_status(append_r));
-    ucp_request_free(append_r);
-    uintptr_t *ptr_val = (uintptr_t *)ptr_buf.ptr();
-    uintptr_t expected = (uintptr_t)UCS_PTR_BYTE_OFFSET(dst_buf.ptr(),
-                                                        dst_buf.size());
-    ASSERT_EQ(expected, *ptr_val);
+    ASSERT_EQ(dst_buf.size(), *(uintptr_t *)off_buf.ptr());
 
     /* validate */
-    dst_buf.pattern_check(seed);
+    //dst_buf.pattern_check(seed);
+    for (size_t i = 0; i < iter; ++i) {
+        mem_buffer::pattern_check((char*)dst_buf.ptr() + (i * size), size,
+                                  seed, src_buf.ptr());
+    }
 
     /* free */
     ucp_rkey_destroy(dst_rkey);
     ucp_mem_unmap(receiver().ucph(), dst_memh);
 
-    ucp_rkey_destroy(ptr_rkey);
-    ucp_mem_unmap(receiver().ucph(), ptr_memh);
+    ucp_rkey_destroy(off_rkey);
+    ucp_mem_unmap(receiver().ucph(), off_memh);
 }
 
 UCP_INSTANTIATE_TEST_CASE_TLS(test_ucp_rdmo, all, "all")

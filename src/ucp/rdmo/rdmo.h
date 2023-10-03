@@ -24,8 +24,9 @@ typedef struct ucp_rdmo_append_hdr {
 #else
 typedef struct ucp_rdmo_append_hdr {
     uint64_t    client_id;
-    uint64_t    ptr_addr;
-    uint64_t    ptr_rkey;
+    uint64_t    target_addr;
+    uint64_t    target_rkey;
+    uint64_t    data_addr;
     uint64_t    data_rkey;
 } UCS_S_PACKED ucp_rdmo_append_hdr_t;
 
@@ -46,9 +47,10 @@ typedef struct ucp_rdmo_cb_user_data {
         struct {
             ucp_ep_h    ep;
             void        *data;
-            uint64_t    data_buffer;
-            ucp_rkey_h  data_rkey;
             size_t      data_length;
+            uint64_t    append_buffer;
+            uint64_t    append_offset;
+            ucp_rkey_h  append_rkey;
         } append;
 
         struct  {
