@@ -58,6 +58,10 @@ ucp_ep_h ucp_rdmo_dst_ep(ucp_worker_h worker, uint64_t id)
 {
     ucp_ep_ext_t *ep_ext;
 
+    khint_t i = kh_get(ucp_worker_eps_hash, &worker->eps_hash, id);
+    if (i != kh_end(&worker->eps_hash)) {
+        return kh_val(&worker->eps_hash, i);
+    }
 
     /* TODO: optimize, try to reuse ptr_map ep_map */
     /* assume only 1 EP to the host */

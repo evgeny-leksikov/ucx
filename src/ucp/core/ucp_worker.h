@@ -223,6 +223,9 @@ typedef struct ucp_worker_mpool_key {
 KHASH_TYPE(ucp_worker_mpool_hash, ucp_worker_mpool_key_t, ucs_mpool_t);
 typedef khash_t(ucp_worker_mpool_hash) ucp_worker_mpool_hash_t;
 
+/* Hash map to find ep by remote worker uuid */
+KHASH_MAP_INIT_INT64(ucp_worker_eps_hash, ucp_ep_h);
+
 /* EP configurations storage */
 UCS_ARRAY_DECLARE_TYPE(ep_config_arr, unsigned, ucp_ep_config_t);
 
@@ -366,6 +369,7 @@ typedef struct ucp_worker {
         size_t                       addr_length;
     } *uroms;
 
+    khash_t(ucp_worker_eps_hash)     eps_hash;
     ucs_mpool_t                      rdmo_mp;
     size_t                           rdmo_outstanding;
 } ucp_worker_t;

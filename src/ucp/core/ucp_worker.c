@@ -2786,6 +2786,8 @@ ucs_status_t ucp_worker_create(ucp_context_h context,
         goto err_am_clenup;
     }
 
+    kh_init_inplace(ucp_worker_eps_hash, &worker->eps_hash);
+
     /* At this point all UCT memory domains and interfaces are already created
      * so print used environment variables and warn about unused ones.
      */
@@ -3034,6 +3036,8 @@ void ucp_worker_destroy(ucp_worker_h worker)
 #if HAVE_UROM
     ucp_worker_urom_free_client(worker);
 #endif
+    kh_destroy_inplace(ucp_worker_eps_hash, &worker->eps_hash);
+
     uct_worker_progress_unregister_safe(worker->uct, &worker->keepalive.cb_id);
     ucp_worker_discard_uct_ep_cleanup(worker);
     ucp_worker_destroy_eps(worker, &worker->all_eps, "all");

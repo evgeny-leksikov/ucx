@@ -1201,6 +1201,15 @@ ucp_ep_create_api_to_worker_addr(ucp_worker_h worker,
         ucs_free(remote_address.urom_worker_list[urom_idx].address_list);
     }
 
+    if (kh_get(ucp_worker_eps_hash, &worker->eps_hash, remote_address.uuid) ==
+        kh_end(&worker->eps_hash)) {
+        int r;
+        khint_t i = kh_put(ucp_worker_eps_hash, &worker->eps_hash,
+                           remote_address.uuid, &r);
+        kh_val(&worker->eps_hash, i) = *ep_p;
+    }
+
+
     ucs_free(remote_address.urom_worker_list);
     ucs_free(remote_address.address_list);
     return status;
