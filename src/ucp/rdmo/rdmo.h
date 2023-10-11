@@ -8,6 +8,7 @@
 #define UCP_RDMO_H_
 
 #include <ucp/core/ucp_types.h>
+#include <ucp/core/ucp_worker.h>
 #include <ucs/type/status.h>
 
 #if 0
@@ -41,24 +42,20 @@ typedef struct ucp_rdmo_flush_ack_hdr {
     uint8_t                 status;
 } UCS_S_PACKED ucp_rdmo_flush_ack_hdr_t;
 
-
-typedef struct ucp_rdmo_cb_user_data {
+typedef struct ucp_rdmo_op_data {
     union {
         struct {
-            ucp_ep_h    ep;
-            void        *data;
-            size_t      data_length;
-            uint64_t    append_buffer;
-            uint64_t    append_offset;
-            ucp_rkey_h  append_rkey;
+            void                                *data;
+            size_t                              data_length;
+            ucp_worker_rdmo_amo_cache_entry_t   *cache_entry;
         } append;
 
         struct  {
-            ucp_ep_h                 ep;
-            ucp_rdmo_flush_ack_hdr_t ack;
+            ucp_ep_h             ack_ep;
+            ucp_rdmo_flush_hdr_t hdr;
         } flush;
     };
-} ucp_rdmo_cb_user_data_t;
+} ucp_rdmo_cb_data_t;
 
 #endif
 

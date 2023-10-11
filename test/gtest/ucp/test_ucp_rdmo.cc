@@ -85,14 +85,17 @@ UCS_TEST_P(test_ucp_rdmo, basic)
     ucp_rkey_h dst_rkey = get_rkey(sender().ep(), receiver(), dst_memh);
 
     /* post the operations */
-    UCS_TEST_MESSAGE << "size: " << size;
+    UCS_TEST_MESSAGE << "size: " << size << " dst_buf: " << dst_buf.ptr();
     for (size_t i = 0; i < iter; ++i) {
         ucs_status_ptr_t append_r = ucp_rdmo_append_nbx(
                 sender().ep(), src_buf.ptr(), src_buf.size(),
                 (uint64_t)off_buf.ptr(), off_rkey,
                 (uint64_t)dst_buf.ptr(), dst_rkey);
-//    ASSERT_UCS_OK(ucp_request_check_status(append_r));
-    ucp_request_free(append_r);
+        if (UCS_PTR_IS_PTR(append_r)) {
+            ucp_request_free(append_r);
+        } else {
+            ASSERT_EQ(NULL, append_r);
+        }
     }
 
     void *flush_r = sender().flush_ep_nb();

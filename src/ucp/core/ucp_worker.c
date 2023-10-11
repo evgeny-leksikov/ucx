@@ -2054,6 +2054,7 @@ static void ucp_worker_destroy_mpools(ucp_worker_h worker)
     if (worker->context->config.features & UCP_FEATURE_RDMO_PROXY) {
         ucs_assert(worker->rdmo_outstanding == 0);
         ucs_mpool_cleanup(&worker->rdmo_mp, 1);
+        kh_destroy_inplace(ucp_worker_rdmo_amo_cache, &worker->rdmo_amo_cache);
     }
 }
 
@@ -2551,8 +2552,9 @@ static ucs_status_t ucp_worker_urom_setup_proxy(ucp_worker_h worker)
         return UCS_OK;
     }
 
+    kh_init_inplace(ucp_worker_rdmo_amo_cache, &worker->rdmo_amo_cache);
     ucs_mpool_params_reset(&mp_param);
-    mp_param.elem_size       = sizeof(ucp_rdmo_cb_user_data_t);
+    mp_param.elem_size       = sizeof(ucp_rdmo_cb_data_t);
     mp_param.elems_per_chunk = 128;
     mp_param.ops             = &ucp_woorker_rdmo_mpool_ops;
     mp_param.name            = "rdmo_data";

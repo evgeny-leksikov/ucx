@@ -80,6 +80,9 @@ static void ucp_ep_rdmo_flush_start(ucp_ep_h ep)
                     UCP_AM_SEND_FLAG_REPLY;
     hdr.ep        = (uintptr_t)ep;
     for (i = 0; i < ep->ext->num_rdmo_eps; ++i) {
+        ++ucp_ep_flush_state(ep)->send_sn;
+        ucp_worker_flush_ops_count_add(ep->worker, +1);
+        ucs_debug("ep %p: rdmo send flush req %d", ep, i);
         request = ucp_am_send_nbx(ep->ext->rdmo_eps[i], UCP_AM_ID_RDMO_FLUSH,
                                   &hdr, sizeof(hdr), NULL, 0, &param);
         if (!UCS_PTR_IS_ERR(request)) {
@@ -87,8 +90,6 @@ static void ucp_ep_rdmo_flush_start(ucp_ep_h ep)
                 ucp_request_free(request);
             }
 
-            ++ucp_ep_flush_state(ep)->send_sn;
-            ucp_worker_flush_ops_count_add(ep->worker, +1);
         }
     }
 }

@@ -226,6 +226,25 @@ typedef khash_t(ucp_worker_mpool_hash) ucp_worker_mpool_hash_t;
 /* Hash map to find ep by remote worker uuid */
 KHASH_MAP_INIT_INT64(ucp_worker_eps_hash, ucp_ep_h);
 
+/* RDMO AMO cache */
+typedef struct ucp_worker_rdmo_amo_cache_key {
+    uint64_t id;
+    uint64_t target;
+} ucp_worker_rdmo_amo_cache_key_t;
+
+typedef struct ucp_worker_rdmo_amo_cache_entry {
+    ucp_ep_h    ep;
+    uint64_t    append_buffer;
+    uint64_t    append_offset;
+    ucp_rkey_h  append_rkey;
+    uint64_t    target_buffer;
+    ucp_rkey_h  target_rkey;
+} ucp_worker_rdmo_amo_cache_entry_t;
+
+KHASH_TYPE(ucp_worker_rdmo_amo_cache, ucp_worker_rdmo_amo_cache_key_t,
+           ucp_worker_rdmo_amo_cache_entry_t);
+typedef khash_t(ucp_worker_rdmo_amo_cache) ucp_worker_rdmo_amo_cache_t;
+
 /* EP configurations storage */
 UCS_ARRAY_DECLARE_TYPE(ep_config_arr, unsigned, ucp_ep_config_t);
 
@@ -370,6 +389,7 @@ typedef struct ucp_worker {
     } *uroms;
 
     khash_t(ucp_worker_eps_hash)     eps_hash;
+    ucp_worker_rdmo_amo_cache_t      rdmo_amo_cache;
     ucs_mpool_t                      rdmo_mp;
     size_t                           rdmo_outstanding;
 } ucp_worker_t;
