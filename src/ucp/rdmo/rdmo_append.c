@@ -15,16 +15,18 @@
 #include <proto/proto_common.inl>
 #include <rma/rma.inl>
 
-ucs_status_ptr_t ucp_rdmo_append_nbx(ucp_ep_h ep,
-                                     const void *buffer, size_t count,
-                                     uint64_t target, ucp_rkey_h target_rkey,
-                                     uint64_t append, ucp_rkey_h append_rkey)
+ucs_status_ptr_t
+ucp_rdmo_append_nbx(ucp_ep_h ep,
+                    const void *buffer, size_t count, ucp_mem_h memh,
+                    uint64_t target, ucp_rkey_h target_rkey,
+                    uint64_t append, ucp_rkey_h append_rkey)
 {
 #if HAVE_UROM
     ucp_request_param_t am_param = {
-        .op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS,
+        .op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS /*| UCP_OP_ATTR_FIELD_MEMH*/,
         .flags        = UCP_AM_SEND_FLAG_REPLY | UCP_AM_SEND_FLAG_COPY_HEADER |
-                        UCP_AM_SEND_FLAG_EAGER
+                        UCP_AM_SEND_FLAG_EAGER,
+        .memh         = memh
     };
     ucp_rdmo_append_hdr_t hdr;
 
@@ -160,6 +162,7 @@ ucp_rdmo_append_handler(void *arg, const void *header, size_t header_length,
 
     ucs_assert(worker->context->config.ext.proto_enable);
 
+    ucs_trace("worker %p: client %"PRIx64, worker, append_hdr->client_id);
     worker->rdmo_outstanding++;
 
     cache_key.id     = append_hdr->client_id;
@@ -211,16 +214,13 @@ static void
 ucp_rdmo_cache_entry_flush_completion(void *request, ucs_status_t status,
                                        void *user_data)
 {
-    ucp_rdmo_cb_data_t *data     = user_data;
-    ucp_rdmo_flush_ack_hdr_t hdr = {
-        .flush  = data->flush.hdr,
-        .status = status
-    };
+    ucp_rdmo_cb_data_t *data   = user_data;
+    data->flush_ack.hdr.status = status;
 
     ucs_assert(status == UCS_OK);
 
-    ucs_debug("req %p flush completion, send ack", request);
-    ucp_rdmo_flush_send_ack(data->flush.ack_ep, &hdr);
+    ucs_trace("flush completion, send ack to 0x%"PRIx64, data->flush_ack.hdr.ep);
+    ucp_rdmo_flush_send_ack(data->flush_ack.ack_ep, &data->flush_ack.hdr);
     if (UCS_PTR_IS_PTR(request)) {
         ucp_request_free(request);
     }
@@ -229,22 +229,46 @@ ucp_rdmo_cache_entry_flush_completion(void *request, ucs_status_t status,
 }
 
 static UCS_F_ALWAYS_INLINE void
-ucp_rdmo_cache_flush_entry(const ucp_worker_rdmo_amo_cache_entry_t *entry)
+ucp_rdmo_cache_flush_entry(const ucp_worker_rdmo_amo_cache_entry_t *entry,
+                           ucp_ep_h reply_ep, uint64_t hdr_ep)
 {
-    static const ucp_request_param_t param   = {
+    static const ucp_request_param_t dummy = {
         .op_attr_mask = 0
     };
-
-    void *put_req;
+    void *req;
 
     ucs_debug("flush tgt %"PRIx64" val %"PRIu64,
               entry->target_buffer, entry->append_offset);
 
-    put_req = ucp_put_nbx(entry->ep, &entry->append_offset,
+    req = ucp_put_nbx(entry->ep, &entry->append_offset,
                           sizeof(entry->append_offset), entry->target_buffer,
-                          entry->target_rkey, &param);
-    if (UCS_PTR_IS_PTR(put_req)) {
-        ucp_request_free(put_req);
+                          entry->target_rkey, &dummy);
+    if (UCS_PTR_IS_PTR(req)) {
+        ucp_request_free(req);
+    }
+}
+
+static void
+ucp_rdmo_flush_target(ucp_ep_h ep, ucp_ep_h reply_ep, uint64_t hdr_ep)
+{
+    ucp_rdmo_cb_data_t *user_data = ucs_mpool_get_inline(&ep->worker->rdmo_mp);
+    ucp_request_param_t param     = {
+        .op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK |
+                        UCP_OP_ATTR_FIELD_USER_DATA,
+        .cb.send      = ucp_rdmo_cache_entry_flush_completion,
+        .user_data    = user_data
+    };
+    void *req;
+
+    user_data->flush_ack.ack_ep     = reply_ep;
+    user_data->flush_ack.hdr.ep     = hdr_ep;
+    user_data->flush_ack.hdr.status = UCS_OK;
+
+    req = ucp_ep_flush_nbx(ep, &param);
+    ucs_debug("flushing for 0x%"PRIx64" returned %p", hdr_ep, req);
+    if (!UCS_PTR_IS_PTR(req)) {
+        ucp_rdmo_cache_entry_flush_completion(NULL, UCS_PTR_STATUS(req),
+                                              user_data);
     }
 }
 
@@ -255,27 +279,35 @@ ucp_rdmo_flush_handler(void *arg, const void *header, size_t header_length,
 {
     ucp_worker_h worker                      = arg;
     const ucp_rdmo_flush_hdr_t *flush_hdr    = header;
-    ucp_rdmo_cb_data_t *user_data = ucs_mpool_get_inline(&worker->rdmo_mp);
-    ucp_request_param_t param     = {
-        .op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK |
-                        UCP_OP_ATTR_FIELD_USER_DATA,
-        .cb.send      = ucp_rdmo_cache_entry_flush_completion,
-        .user_data    = user_data
-    };
+    ucp_ep_h e_ep                            = NULL;
     ucp_worker_rdmo_amo_cache_entry_t cache_entry;
-    void *request;
-    ucs_assert(user_data != NULL);
+    ucp_worker_rdmo_amo_cache_key_t cache_key;
 
-    user_data->flush.ack_ep = recv_param->reply_ep;
-    user_data->flush.hdr    = *flush_hdr;
+    ucs_debug("got flush req from 0x%"PRIx64, flush_hdr->ep);
+    kh_foreach(&worker->rdmo_amo_cache, cache_key, cache_entry, {
+        if (cache_key.id == flush_hdr->client_id) {
+            if (e_ep == NULL) {
+                e_ep = cache_entry.ep;
+            } else {
+                ucs_assert(e_ep == cache_entry.ep);
+            }
 
-    kh_foreach_value(&worker->rdmo_amo_cache, cache_entry,
-                     ucp_rdmo_cache_flush_entry(&cache_entry));
-    kh_clear(ucp_worker_rdmo_amo_cache, &worker->rdmo_amo_cache);
+            ucp_rdmo_cache_flush_entry(&cache_entry, recv_param->reply_ep,
+                                       flush_hdr->ep);
+            kh_del(ucp_worker_rdmo_amo_cache, &worker->rdmo_amo_cache,
+                   kh_get(ucp_worker_rdmo_amo_cache,
+                          &worker->rdmo_amo_cache, cache_key));
+        }
+    });
 
-    request = ucp_worker_flush_nbx(worker, &param);
-    if (request == NULL) {
-        ucp_rdmo_cache_entry_flush_completion(NULL, UCS_OK, user_data);
+    if (e_ep == NULL) {
+        ucp_rdmo_flush_ack_hdr_t ack = {
+            .ep     = flush_hdr->ep,
+            .status = UCS_OK
+        };
+        ucp_rdmo_flush_send_ack(recv_param->reply_ep, &ack);
+    } else {
+        ucp_rdmo_flush_target(e_ep, recv_param->reply_ep, flush_hdr->ep);
     }
 
     return UCS_OK;
@@ -287,7 +319,7 @@ ucp_rdmo_flush_ack_handler(void *arg, const void *header, size_t header_length,
                            const ucp_am_recv_param_t *param)
 {
     const ucp_rdmo_flush_ack_hdr_t *hdr = header;
-    ucp_ep_h ep                         = (ucp_ep_h)hdr->flush.ep;
+    ucp_ep_h ep                         = (ucp_ep_h)hdr->ep;
 
     ucs_assert(hdr->status == UCS_OK);
 

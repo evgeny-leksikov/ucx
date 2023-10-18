@@ -2225,7 +2225,7 @@ static ucs_status_t ucp_context_urom_spawn_workers(ucp_context_h context)
     urom_service_cmd_t service_cmd = {
         .type                      = UROM_SERVICE_CMD_SPAWN_WORKER,
         .spawn_worker.worker_type  = UROM_WORKER_TYPE_RDMO,
-        .spawn_worker.worker_id    = 0
+        .spawn_worker.worker_id    = UROM_WORKER_ID_ANY
     };
     ucs_status_t status            = UCS_OK;
     urom_service_notify_t service_notif;
@@ -2233,7 +2233,10 @@ static ucs_status_t ucp_context_urom_spawn_workers(ucp_context_h context)
     urom_status_t urom_status;
     int i;
 
+
     for (i = 0; i < context->num_uroms; ++i) {
+        ucs_debug("context %p: spawn worker with id 0x%"PRIx64, context,
+                 service_cmd.spawn_worker.worker_id);
         urom_status = urom_service_push_cmdq(context->uroms[i].service,
                                              &service_cmd);
         if (urom_status != UROM_OK) {

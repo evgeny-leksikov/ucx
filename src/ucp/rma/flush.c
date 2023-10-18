@@ -79,6 +79,7 @@ static void ucp_ep_rdmo_flush_start(ucp_ep_h ep)
     param.flags   = UCP_AM_SEND_FLAG_COPY_HEADER |
                     UCP_AM_SEND_FLAG_REPLY;
     hdr.ep        = (uintptr_t)ep;
+    hdr.client_id = ep->ext->remote_worker_id;
     for (i = 0; i < ep->ext->num_rdmo_eps; ++i) {
         ++ucp_ep_flush_state(ep)->send_sn;
         ucp_worker_flush_ops_count_add(ep->worker, +1);
@@ -614,6 +615,7 @@ static unsigned ucp_worker_flush_progress(void *arg)
             goto out;
         }
 
+        ucs_debug("worker %p flushing ep %p", worker, ep);
         ep_flush_request = ucp_ep_flush_internal(ep, UCP_REQUEST_FLAG_RELEASED,
                                                  &ucp_request_null_param, req,
                                                  ucp_worker_flush_ep_flushed_cb,

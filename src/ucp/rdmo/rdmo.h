@@ -34,12 +34,13 @@ typedef struct ucp_rdmo_append_hdr {
 
 typedef struct ucp_rdmo_flush_hdr {
     uint64_t    ep;
+    uint64_t    client_id;
 } UCS_S_PACKED ucp_rdmo_flush_hdr_t;
 
 
 typedef struct ucp_rdmo_flush_ack_hdr {
-    ucp_rdmo_flush_hdr_t    flush;
-    uint8_t                 status;
+    uint64_t    ep;
+    uint8_t     status;
 } UCS_S_PACKED ucp_rdmo_flush_ack_hdr_t;
 
 typedef struct ucp_rdmo_op_data {
@@ -51,9 +52,9 @@ typedef struct ucp_rdmo_op_data {
         } append;
 
         struct  {
-            ucp_ep_h             ack_ep;
-            ucp_rdmo_flush_hdr_t hdr;
-        } flush;
+            ucp_ep_h                 ack_ep;
+            ucp_rdmo_flush_ack_hdr_t hdr;
+        } flush_ack;
     };
 } ucp_rdmo_cb_data_t;
 
