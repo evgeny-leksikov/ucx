@@ -17,7 +17,7 @@
 
 ucs_status_ptr_t
 ucp_rdmo_append_nbx(ucp_ep_h ep,
-                    const void *buffer, size_t count, ucp_mem_h memh,
+                    const void *buffer, size_t count,
                     uint64_t target, ucp_rkey_h target_rkey,
                     uint64_t append, ucp_rkey_h append_rkey)
 {
@@ -26,7 +26,7 @@ ucp_rdmo_append_nbx(ucp_ep_h ep,
         .op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS /*| UCP_OP_ATTR_FIELD_MEMH*/,
         .flags        = UCP_AM_SEND_FLAG_REPLY | UCP_AM_SEND_FLAG_COPY_HEADER |
                         UCP_AM_SEND_FLAG_EAGER,
-        .memh         = memh
+//        .memh         = memh
     };
     ucp_rdmo_append_hdr_t hdr;
 

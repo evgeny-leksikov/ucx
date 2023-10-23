@@ -3405,7 +3405,7 @@ ucs_status_ptr_t ucp_tag_send_sync_nbx(ucp_ep_h ep, const void *buffer,
 
 ucs_status_ptr_t
 ucp_rdmo_append_nbx(ucp_ep_h ep,
-                    const void *buffer, size_t count, ucp_mem_h memh,
+                    const void *buffer, size_t count,
                     uint64_t target, ucp_rkey_h target_rkey,
                     uint64_t append, ucp_rkey_h append_rkey);
 
