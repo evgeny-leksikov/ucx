@@ -2566,6 +2566,22 @@ static ucs_status_t ucp_worker_urom_setup_proxy(ucp_worker_h worker)
 
     worker->rdmo_outstanding = 0;
 
+#if UCP_RDMO_TEST_PERF_SINGLE_PROXY_BUF
+    {
+        ucp_mem_map_params_t params = {
+            .field_mask = UCP_MEM_MAP_PARAM_FIELD_ADDRESS |
+                          UCP_MEM_MAP_PARAM_FIELD_LENGTH,
+            .address    = worker->rdmo_proxy_buff,
+            .length     = 16 * UCS_KBYTE,
+            .prot       = UCP_MEM_MAP_PROT_LOCAL_READ
+        };
+
+        status = ucp_mem_map(worker->context, &params, &worker->rdmo_proxy_memh);
+        ucs_assert_always(status == UCS_OK);
+        memset(worker->rdmo_proxy_buff, 0, 16 * UCS_KBYTE);
+    }
+#endif /* UCP_RDMO_TEST_PERF_SINGLE_PROXY_BUF */
+
     cb_param.field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID    |
                           UCP_AM_HANDLER_PARAM_FIELD_FLAGS |
                           UCP_AM_HANDLER_PARAM_FIELD_CB    |

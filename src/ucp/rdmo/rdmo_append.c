@@ -23,10 +23,9 @@ ucp_rdmo_append_nbx(ucp_ep_h ep,
 {
 #if HAVE_UROM
     ucp_request_param_t am_param = {
-        .op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS /*| UCP_OP_ATTR_FIELD_MEMH*/,
+        .op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS,
         .flags        = UCP_AM_SEND_FLAG_REPLY | UCP_AM_SEND_FLAG_COPY_HEADER |
-                        UCP_AM_SEND_FLAG_EAGER,
-//        .memh         = memh
+                        UCP_AM_SEND_FLAG_EAGER
     };
     ucp_rdmo_append_hdr_t hdr;
 
@@ -61,7 +60,8 @@ ucp_rdmo_cache_put(ucp_worker_rdmo_amo_cache_t *cache,
                    const ucp_worker_rdmo_amo_cache_key_t *key,
                    const ucp_worker_rdmo_amo_cache_entry_t *entry)
 {
-    ucs_assert(kh_end(cache) == kh_get(ucp_worker_rdmo_amo_cache, cache, *key));
+    ucs_assert_always(kh_end(cache) ==
+                      kh_get(ucp_worker_rdmo_amo_cache, cache, *key));
 
     {
         int r;
@@ -116,7 +116,9 @@ static void ucp_rdmo_append_put_callback(void *request, ucs_status_t status,
     ucs_debug("complete put data %p", user_data);
 
     ucs_assert(status == UCS_OK);
+#if !UCP_RDMO_TEST_PERF_SINGLE_PROXY_BUF
     ucp_am_data_release(req->send.ep->worker, user_data);
+#endif
     ucp_request_free(request);
 }
 
@@ -124,17 +126,44 @@ static UCS_F_ALWAYS_INLINE ucs_status_t
 ucp_rdmo_append_put_data(ucp_worker_rdmo_amo_cache_entry_t *cache_entry,
                          void *data, size_t length)
 {
+#if UCP_RDMO_TEST_PERF_SINGLE_PROXY_BUF
+    uint64_t *proxy_buf = (uint64_t*)cache_entry->ep->worker->rdmo_proxy_buff;
+    ucp_mem_h memh      = cache_entry->ep->worker->rdmo_proxy_memh;
+#endif /* UCP_RDMO_TEST_PERF_SINGLE_PROXY_BUF */
+
     ucp_request_param_t req_param = {
         .op_attr_mask             = UCP_OP_ATTR_FIELD_CALLBACK |
-                                    UCP_OP_ATTR_FIELD_USER_DATA,
+                                    UCP_OP_ATTR_FIELD_USER_DATA
+#if UCP_RDMO_TEST_PERF_SINGLE_PROXY_BUF
+                                    | UCP_OP_ATTR_FIELD_MEMH
+#endif /* UCP_RDMO_TEST_PERF_SINGLE_PROXY_BUF */
+                                    ,
         .cb.send                  = ucp_rdmo_append_put_callback,
+#if UCP_RDMO_TEST_PERF_SINGLE_PROXY_BUF
+        .memh                     = memh,
+        .user_data                = NULL
+#else
         .user_data                = data
+#endif /* UCP_RDMO_TEST_PERF_SINGLE_PROXY_BUF */
     };
     ucs_status_ptr_t ret_put;
 
+#if UCP_RDMO_TEST_PERF_SINGLE_PROXY_BUF
+    /* touch the buffer  */
+    /* proxy_buf[0] = 0; */
+    /*        or         */
+    /* memcpy(proxy_buf, data, length); */
+#endif /* UCP_RDMO_TEST_PERF_SINGLE_PROXY_BUF */
+
     ucs_debug("put %"PRIx64" offset %"PRIu64" data %p",
               cache_entry->append_buffer, cache_entry->append_offset, data);
-    ret_put = ucp_put_nbx(cache_entry->ep, data, length,
+    ret_put = ucp_put_nbx(cache_entry->ep,
+#if UCP_RDMO_TEST_PERF_SINGLE_PROXY_BUF
+                          proxy_buf,
+#else
+                          data,
+#endif /* UCP_RDMO_TEST_PERF_SINGLE_PROXY_BUF */
+                          length,
                           cache_entry->append_buffer +
                           cache_entry->append_offset,
                           cache_entry->append_rkey, &req_param);
@@ -142,7 +171,11 @@ ucp_rdmo_append_put_data(ucp_worker_rdmo_amo_cache_entry_t *cache_entry,
                        (UCS_PTR_STATUS(ret_put) == UCS_INPROGRESS),
                        "status: %s", ucs_status_string(UCS_PTR_STATUS(ret_put)));
     cache_entry->append_offset += length;
+#if UCP_RDMO_TEST_PERF_SINGLE_PROXY_BUF
+    return UCS_OK;
+#else
     return UCS_INPROGRESS;
+#endif /* UCP_RDMO_TEST_PERF_SINGLE_PROXY_BUF */
 }
 
 ucs_status_t

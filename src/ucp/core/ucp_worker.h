@@ -25,6 +25,10 @@
 #include <ucs/arch/bitops.h>
 
 
+/* TODO: only for perf tests, should be removed */
+#define UCP_RDMO_TEST_PERF_SINGLE_PROXY_BUF 0
+
+
 /* The size of the private buffer in UCT descriptor headroom, which UCP may
  * use for its own needs. This size does not include ucp_recv_desc_t length,
  * because it is common for all cases and protocols (TAG, STREAM). */
@@ -392,6 +396,10 @@ typedef struct ucp_worker {
     ucp_worker_rdmo_amo_cache_t      rdmo_amo_cache;
     ucs_mpool_t                      rdmo_mp;
     size_t                           rdmo_outstanding;
+#if UCP_RDMO_TEST_PERF_SINGLE_PROXY_BUF
+    uint8_t                          rdmo_proxy_buff[16 * UCS_KBYTE];
+    ucp_mem_h                        rdmo_proxy_memh;
+#endif
 } ucp_worker_t;
 
 
