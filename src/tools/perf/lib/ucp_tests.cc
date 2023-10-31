@@ -280,6 +280,7 @@ public:
     {
         ucp_perf_test_runner *test = (ucp_perf_test_runner*)user_data;
         test->send_completed();
+//        printf("send_cb outstanding -> %d\n", test->m_sends_outstanding);
         ucp_request_free(request);
     }
 
@@ -288,6 +289,7 @@ public:
     {
         ucp_perf_test_runner *test = (ucp_perf_test_runner*)user_data;
         test->send_completed();
+//        printf("send_info_cb outstanding -> %d\n", test->m_sends_outstanding);
     }
 
     static void tag_recv_cb(void *request, ucs_status_t status,
@@ -398,7 +400,8 @@ public:
 
     ucs_status_t UCS_F_ALWAYS_INLINE
     send(ucp_ep_h ep, void *buffer, unsigned length, ucp_datatype_t datatype,
-         psn_t sn, uint64_t remote_addr, ucp_rkey_h rkey, bool get_info = false)
+         psn_t sn, uint64_t remote_addr, ucp_rkey_h rkey, bool get_info = false,
+         uint64_t target_addr = 0, ucp_rkey_h target_rkey = NULL)
     {
         ucp_request_param_t *param = get_info ? &m_send_get_info_params :
                                                 &m_send_params;
@@ -448,7 +451,13 @@ public:
             request = ucp_atomic_op_nbx(ep, m_atomic_op, &value, 1, remote_addr,
                                         rkey, param);
             break;
+        case UCX_PERF_CMD_APPEND:
+            request = ucp_rdmo_append_nbx(ep, buffer, length,
+                                          target_addr, target_rkey,
+                                          remote_addr, rkey, param);
+            break;
         default:
+            ucs_assert(0);
             return UCS_ERR_INVALID_PARAM;
         }
 
@@ -653,6 +662,7 @@ public:
                  m_perf.send_allocator);
         write_sn(m_perf.recv_buffer, m_perf.params.recv_mem_type, length, sn,
                  m_perf.recv_allocator);
+        *(uint64_t*)m_perf.append_offset_buffer = 0;
     }
 
     ucs_status_t run_pingpong()
@@ -726,8 +736,8 @@ public:
         ucp_ep_h ep;
         void *send_buffer, *recv_buffer;
         ucp_datatype_t send_datatype, recv_datatype;
-        uint64_t remote_addr;
-        ucp_rkey_h rkey;
+        uint64_t remote_addr, target_addr;
+        ucp_rkey_h rkey, target_rkey;
         size_t length, send_length, recv_length;
         psn_t sn;
 
@@ -737,6 +747,8 @@ public:
         ep          = m_perf.ucp.ep;
         remote_addr = m_perf.ucp.remote_addr;
         rkey        = m_perf.ucp.rkey;
+        target_addr = m_perf.ucp.append_offset_addr;
+        target_rkey = m_perf.ucp.append_offset_rkey;
         sn          = INITIAL_SN;
 
         ucp_perf_init_common_params(&length, &send_length, &send_datatype,
@@ -776,9 +788,15 @@ public:
         } else if (my_index == 1) {
             UCX_PERF_TEST_FOREACH(&m_perf) {
                 send(ep, send_buffer, send_length, send_datatype, sn,
-                     remote_addr, rkey, m_perf.current.iters == 0);
+                     remote_addr, rkey, m_perf.current.iters == 0,
+                     target_addr, target_rkey);
                 ucx_perf_update(&m_perf, 1, length);
                 ++sn;
+
+                if ((CMD == UCX_PERF_CMD_APPEND) &&
+                    ((sn % UCP_PERF_TEST_APPEND_FLUSH_MODULO) == 0)) {
+                    ucp_ep_flush(ep);
+                }
             }
 
             send_last_iter(ep, send_buffer, send_length, remote_addr, rkey);
@@ -934,6 +952,9 @@ private:
 #define TEST_CASE_ALL_AM(_perf, _case) \
     TEST_CASE(_perf, UCS_PP_TUPLE_0 _case, UCS_PP_TUPLE_1 _case, 0, 0)
 
+#define TEST_CASE_ALL_APPEND(_perf, _case) \
+    TEST_CASE(_perf, UCS_PP_TUPLE_0 _case, UCS_PP_TUPLE_1 _case, 0, 0)
+
 ucs_status_t ucp_perf_test_dispatch(ucx_perf_context_t *perf)
 {
     UCS_PP_FOREACH(TEST_CASE_ALL_OSD, perf,
@@ -962,6 +983,10 @@ ucs_status_t ucp_perf_test_dispatch(ucx_perf_context_t *perf)
     UCS_PP_FOREACH(TEST_CASE_ALL_AM, perf,
         (UCX_PERF_CMD_AM,       UCX_PERF_TEST_TYPE_PINGPONG),
         (UCX_PERF_CMD_AM,       UCX_PERF_TEST_TYPE_STREAM_UNI)
+        );
+
+    UCS_PP_FOREACH(TEST_CASE_ALL_APPEND, perf,
+        (UCX_PERF_CMD_APPEND, UCX_PERF_TEST_TYPE_STREAM_UNI)
         );
 
     ucs_error("Invalid test case: %d/%d/0x%x",

@@ -109,12 +109,22 @@ ucs_status_t ucp_perf_test_alloc_mem(ucx_perf_context_t *perf)
     }
 
     /* Allocate receive buffer memory */
+    if (params->command == UCX_PERF_CMD_APPEND) {
+        buffer_size *= UCP_PERF_TEST_APPEND_FLUSH_MODULO;
+    }
+
     status = ucp_perf_mem_alloc(perf, buffer_size * params->thread_count,
                                 params->recv_mem_type, &perf->recv_buffer,
                                 &perf->ucp.recv_memh);
     if (status != UCS_OK) {
         goto err_free_send_buffer;
     }
+
+    status = ucp_perf_mem_alloc(perf, sizeof(uint64_t),
+                                UCS_MEMORY_TYPE_HOST,
+                                &perf->append_offset_buffer,
+                                &perf->ucp.append_offset_memh);
+    ucs_assert(status == UCS_OK);
 
     /* Allocate AM header */
     if (params->ucp.am_hdr_size != 0) {
@@ -153,6 +163,7 @@ err_free_am_hdr:
     free(perf->ucp.am_hdr);
 err_free_buffers:
     ucp_perf_mem_free(perf, perf->ucp.recv_memh);
+    ucp_perf_mem_free(perf, perf->ucp.append_offset_memh);
 err_free_send_buffer:
     ucp_perf_mem_free(perf, perf->ucp.send_memh);
 err:
@@ -164,6 +175,7 @@ void ucp_perf_test_free_mem(ucx_perf_context_t *perf)
     free(perf->ucp.recv_iov);
     free(perf->ucp.send_iov);
     free(perf->ucp.am_hdr);
+    ucp_perf_mem_free(perf, perf->ucp.append_offset_memh);
     ucp_perf_mem_free(perf, perf->ucp.recv_memh);
     ucp_perf_mem_free(perf, perf->ucp.send_memh);
 }
@@ -236,6 +248,9 @@ ucs_status_t uct_perf_test_alloc_mem(ucx_perf_context_t *perf)
     case UCX_PERF_CMD_SWAP:
     case UCX_PERF_CMD_CSWAP:
         flags |= UCT_MD_MEM_ACCESS_REMOTE_ATOMIC;
+        break;
+    case UCX_PERF_CMD_APPEND:
+        flags |= UCT_MD_MEM_ACCESS_REMOTE_PUT | UCT_MD_MEM_ACCESS_REMOTE_ATOMIC;
         break;
     default:
         break;

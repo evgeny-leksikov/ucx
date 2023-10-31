@@ -105,6 +105,9 @@ test_type_t tests[] = {
     {"ucp_am_bw", UCX_PERF_API_UCP, UCX_PERF_CMD_AM, UCX_PERF_TEST_TYPE_STREAM_UNI,
      "am bandwidth / message rate", "overhead", 32},
 
+    {"ucp_rdmo_append_bw", UCX_PERF_API_UCP, UCX_PERF_CMD_APPEND, UCX_PERF_TEST_TYPE_STREAM_UNI,
+     "append bandwidth", "overhead", 128},
+
     {NULL}
 };
 

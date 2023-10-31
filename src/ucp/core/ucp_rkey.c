@@ -764,7 +764,7 @@ ucs_status_t ucp_rkey_pack(ucp_context_h context, ucp_mem_h memh,
                                        cmd.rdmo.mr_reg.packed_rkey_len);
     memcpy(rdmo_key_ptr, &notif->rdmo.mr_reg.rkey,
            sizeof(notif->rdmo.mr_reg.rkey));
-    ucs_debug("packed offset=%"PRIu64" value=%"PRIu64" src=%"PRIu64,
+    ucs_info("packed offset=%"PRIu64" value=%"PRIx64" src=%"PRIx64,
               cmd.rdmo.mr_reg.packed_rkey_len, *(uint64_t*)rdmo_key_ptr,
               notif->rdmo.mr_reg.rkey);
 
@@ -984,7 +984,7 @@ UCS_PROFILE_FUNC(ucs_status_t, ucp_ep_rkey_unpack_internal,
 
 #if HAVE_UROM
         rkey->cache.rdmo_rkey = *ucs_serialize_next(&p, uint64_t);
-        ucs_info("rdmo_rkey: %"PRIu64, rkey->cache.rdmo_rkey);
+        ucs_info("unpack rdmo_rkey: 0x%"PRIx64, rkey->cache.rdmo_rkey);
 #else
         rkey->cache.rdmo_rkey = UINT64_MAX;
 #endif /* HAVE_UROM */

@@ -38,6 +38,7 @@ typedef enum {
     UCX_PERF_CMD_TAG,
     UCX_PERF_CMD_TAG_SYNC,
     UCX_PERF_CMD_STREAM,
+    UCX_PERF_CMD_APPEND,
     UCX_PERF_CMD_LAST
 } ucx_perf_cmd_t;
 

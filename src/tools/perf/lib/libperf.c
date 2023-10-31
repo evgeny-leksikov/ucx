@@ -58,6 +58,7 @@ typedef struct {
     };
     size_t             rkey_size;
     unsigned long      recv_buffer;
+    unsigned long      target_buffer;
 } ucx_perf_ep_info_t;
 
 typedef struct {
@@ -886,6 +887,9 @@ static ucs_status_t ucp_perf_test_fill_params(ucx_perf_params_t *params,
     case UCX_PERF_CMD_AM:
         ucp_params->features |= UCP_FEATURE_AM;
         break;
+    case UCX_PERF_CMD_APPEND:
+        ucp_params->features |= UCP_FEATURE_RDMO;
+        break;
     default:
         if (params->flags & UCX_PERF_TEST_FLAG_VERBOSE) {
             ucs_error("Invalid test command");
@@ -979,15 +983,15 @@ static void ucp_perf_test_err_handler(void *arg, ucp_ep_h ep,
 }
 
 static ucs_status_t ucp_perf_test_rkey_pack(ucx_perf_context_t *perf,
-                                            uint64_t features,
+                                            uint64_t features, ucp_mem_h memh,
                                             void **rkey_buffer,
                                             size_t *rkey_size)
 {
     ucs_status_t status;
 
-    if (features & (UCP_FEATURE_RMA | UCP_FEATURE_AMO32 | UCP_FEATURE_AMO64)) {
-        status = ucp_rkey_pack(perf->ucp.context, perf->ucp.recv_memh,
-                               rkey_buffer, rkey_size);
+    if (features & (UCP_FEATURE_RMA | UCP_FEATURE_AMO32 | UCP_FEATURE_AMO64 |
+                    UCP_FEATURE_RDMO)) {
+        status = ucp_rkey_pack(perf->ucp.context, memh, rkey_buffer, rkey_size);
         if (status != UCS_OK) {
             if (perf->params.flags & UCX_PERF_TEST_FLAG_VERBOSE) {
                 ucs_error("ucp_rkey_pack() failed: %s",
@@ -997,22 +1001,22 @@ static ucs_status_t ucp_perf_test_rkey_pack(ucx_perf_context_t *perf,
             return status;
         }
     } else {
-        *rkey_size = 0;
+        *rkey_buffer = NULL;
+        *rkey_size   = 0;
     }
 
     return UCS_OK;
 }
 
 static ucs_status_t
-ucp_perf_test_rkey_unpack(ucx_perf_thread_context_t *thread,
-                          ucx_perf_params_t *params, void *rkey_buffer,
-                          size_t rkey_size)
+ucp_perf_test_rkey_unpack(ucp_ep_h ep, ucx_perf_params_t *params,
+                          void *rkey_buffer, size_t rkey_size,
+                          ucp_rkey_h *rkey_p)
 {
     ucs_status_t status;
 
     if (rkey_size > 0) {
-        status = ucp_ep_rkey_unpack(thread->perf.ucp.ep, rkey_buffer,
-                                    &thread->perf.ucp.rkey);
+        status = ucp_ep_rkey_unpack(ep, rkey_buffer, rkey_p);
         if (status != UCS_OK) {
             if (params->flags & UCX_PERF_TEST_FLAG_VERBOSE) {
                 ucs_fatal("ucp_rkey_unpack() failed: %s",
@@ -1022,7 +1026,7 @@ ucp_perf_test_rkey_unpack(ucx_perf_thread_context_t *thread,
             return status;
         }
     } else {
-        thread->perf.ucp.rkey = NULL;
+        *rkey_p = NULL;
     }
 
     return UCS_OK;
@@ -1031,9 +1035,10 @@ ucp_perf_test_rkey_unpack(ucx_perf_thread_context_t *thread,
 static ucs_status_t ucp_perf_test_receive_remote_data(ucx_perf_context_t *perf,
                                                       unsigned peer_index)
 {
-    unsigned thread_count = perf->params.thread_count;
-    void *rkey_buffer     = NULL;
-    void *req             = NULL;
+    unsigned thread_count    = perf->params.thread_count;
+    void *rkey_buffer        = NULL;
+    void *target_rkey_buffer = NULL;
+    void *req                = NULL;
     ucx_perf_ep_info_t *remote_info;
     ucp_ep_params_t ep_params;
     ucp_address_t *address;
@@ -1053,8 +1058,9 @@ static ucs_status_t ucp_perf_test_receive_remote_data(ucx_perf_context_t *perf,
 
     /* Initialize all endpoints and rkeys to NULL to handle error flow */
     for (i = 0; i < thread_count; i++) {
-        perf->ucp.tctx[i].perf.ucp.ep   = NULL;
-        perf->ucp.tctx[i].perf.ucp.rkey = NULL;
+        perf->ucp.tctx[i].perf.ucp.ep                 = NULL;
+        perf->ucp.tctx[i].perf.ucp.rkey               = NULL;
+        perf->ucp.tctx[i].perf.ucp.append_offset_rkey = NULL;
     }
 
     /* receive the data from the remote peer, extract the address from it
@@ -1063,10 +1069,15 @@ static ucs_status_t ucp_perf_test_receive_remote_data(ucx_perf_context_t *perf,
 
     remote_info = buffer;
     for (i = 0; i < thread_count; i++) {
-        address                                = (ucp_address_t*)(remote_info + 1);
-        rkey_buffer                            = UCS_PTR_BYTE_OFFSET(address,
-                                                                     remote_info->ucp.worker_addr_len);
-        perf->ucp.tctx[i].perf.ucp.remote_addr = remote_info->recv_buffer;
+        address            = (ucp_address_t*)(remote_info + 1);
+        rkey_buffer        = UCS_PTR_BYTE_OFFSET(address,
+                remote_info->ucp.worker_addr_len);
+        target_rkey_buffer = UCS_PTR_BYTE_OFFSET(rkey_buffer,
+                                                 remote_info->rkey_size);
+
+        perf->ucp.tctx[i].perf.ucp.remote_addr        = remote_info->recv_buffer;
+        perf->ucp.tctx[i].perf.ucp.append_offset_addr =
+                remote_info->target_buffer;
 
         ep_params.field_mask = UCP_EP_PARAM_FIELD_REMOTE_ADDRESS;
         ep_params.address    = address;
@@ -1088,8 +1099,18 @@ static ucs_status_t ucp_perf_test_receive_remote_data(ucx_perf_context_t *perf,
             goto err_free_eps_buffer;
         }
 
-        status = ucp_perf_test_rkey_unpack(&perf->ucp.tctx[i], &perf->params,
-                                           rkey_buffer, remote_info->rkey_size);
+        status = ucp_perf_test_rkey_unpack(perf->ucp.tctx[i].perf.ucp.ep,
+                                           &perf->params, rkey_buffer,
+                                           remote_info->rkey_size,
+                                           &perf->ucp.tctx[i].perf.ucp.rkey);
+        if (status != UCS_OK) {
+            goto err_free_eps_buffer;
+        }
+
+        status = ucp_perf_test_rkey_unpack(
+                perf->ucp.tctx[i].perf.ucp.ep, &perf->params,
+                target_rkey_buffer, remote_info->rkey_size,
+                &perf->ucp.tctx[i].perf.ucp.append_offset_rkey);
         if (status != UCS_OK) {
             goto err_free_eps_buffer;
         }
@@ -1111,24 +1132,35 @@ err:
 static ucs_status_t ucp_perf_test_send_local_data(ucx_perf_context_t *perf,
                                                   uint64_t features)
 {
-    unsigned i, j, thread_count = perf->params.thread_count;
-    size_t address_length       = 0;
-    void *rkey_buffer           = NULL;
-    void *req                   = NULL;
+    /* each thread has an iovec with 4 entries to send to the remote peer:
+     * ep_info, worker_address and 2 rkey buffers */
+    const size_t n_iov           = 4;
+    unsigned thread_count        = perf->params.thread_count;
+    size_t address_length        = 0;
+    void *rkey_buffer            = NULL;
+    void *req                    = NULL;
+    void *append_off_rkey_buffer = NULL;
+    size_t rkey_size, append_off_rkey_size;
     ucx_perf_ep_info_t *info;
     ucp_address_t *address;
     ucs_status_t status;
     struct iovec *vec;
-    size_t rkey_size;
+    unsigned i, j;
 
-    status = ucp_perf_test_rkey_pack(perf, features, &rkey_buffer, &rkey_size);
+    status = ucp_perf_test_rkey_pack(perf, features, perf->ucp.recv_memh,
+                                     &rkey_buffer, &rkey_size);
     if (status != UCS_OK) {
         goto err;
     }
 
-    /* each thread has an iovec with 3 entries to send to the remote peer:
-     * ep_info, worker_address and rkey buffer */
-    vec = calloc(3 * thread_count, sizeof(struct iovec));
+    status = ucp_perf_test_rkey_pack(perf, features,
+                                     perf->ucp.append_offset_memh,
+                                     &append_off_rkey_buffer,
+                                     &append_off_rkey_size);
+    ucs_assert_always(status == UCS_OK);
+    ucs_assert_always(rkey_size == append_off_rkey_size);
+
+    vec = calloc(n_iov * thread_count, sizeof(struct iovec));
     if (vec == NULL) {
         ucs_error("failed to allocate iovec");
         status = UCS_ERR_NO_MEMORY;
@@ -1148,41 +1180,49 @@ static ucs_status_t ucp_perf_test_send_local_data(ucx_perf_context_t *perf,
             goto err_free_workers_vec;
         }
 
-        vec[i * 3].iov_base = malloc(sizeof(*info));
-        if (vec[i * 3].iov_base == NULL) {
+        vec[(i * n_iov) + 0].iov_base = malloc(sizeof(*info));
+        if (vec[(i * n_iov) + 0].iov_base == NULL) {
             ucs_error("failed to allocate vec entry for info");
             status = UCS_ERR_NO_MEMORY;
             ucp_worker_destroy(perf->ucp.tctx[i].perf.ucp.worker);
             goto err_free_workers_vec;
         }
 
-        info                       = vec[i * 3].iov_base;
+        info                       = vec[(i * n_iov) + 0].iov_base;
         info->ucp.worker_addr_len  = address_length;
-        info->ucp.total_wireup_len = sizeof(*info) + address_length + rkey_size;
+        info->ucp.total_wireup_len = sizeof(*info) + address_length +
+                                     rkey_size * 2;
         info->rkey_size            = rkey_size;
-        info->recv_buffer          = (uintptr_t)perf->ucp.tctx[i].perf.recv_buffer;
+        info->recv_buffer          =
+                (uintptr_t)perf->ucp.tctx[i].perf.recv_buffer;
+        info->target_buffer        =
+                (uintptr_t)perf->ucp.tctx[i].perf.append_offset_buffer;
 
-        vec[(i * 3) + 0].iov_len  = sizeof(*info);
-        vec[(i * 3) + 1].iov_base = address;
-        vec[(i * 3) + 1].iov_len  = address_length;
-        vec[(i * 3) + 2].iov_base = rkey_buffer;
-        vec[(i * 3) + 2].iov_len  = info->rkey_size;
+        vec[(i * n_iov) + 0].iov_len  = sizeof(*info);
+        vec[(i * n_iov) + 1].iov_base = address;
+        vec[(i * n_iov) + 1].iov_len  = address_length;
+        vec[(i * n_iov) + 2].iov_base = rkey_buffer;
+        vec[(i * n_iov) + 2].iov_len  = rkey_size;
+        vec[(i * n_iov) + 3].iov_base = append_off_rkey_buffer;
+        vec[(i * n_iov) + 3].iov_len  = append_off_rkey_size;
 
         address_length = 0;
     }
 
     /* send to the remote peer */
-    rte_call(perf, post_vec, vec, 3 * thread_count, &req);
+    rte_call(perf, post_vec, vec, n_iov * thread_count, &req);
     rte_call(perf, exchange_vec, req);
 
-    if (features & (UCP_FEATURE_RMA|UCP_FEATURE_AMO32|UCP_FEATURE_AMO64)) {
+    if (features & (UCP_FEATURE_RMA | UCP_FEATURE_AMO32 | UCP_FEATURE_AMO64 |
+                    UCP_FEATURE_RDMO)) {
         ucp_rkey_buffer_release(rkey_buffer);
+        ucp_rkey_buffer_release(append_off_rkey_buffer);
     }
 
     for (i = 0; i < thread_count; i++) {
-        free(vec[i * 3].iov_base);
+        free(vec[i * n_iov].iov_base);
         ucp_worker_release_address(perf->ucp.tctx[i].perf.ucp.worker,
-                                   vec[(i * 3) + 1].iov_base);
+                                   vec[(i * n_iov) + 1].iov_base);
     }
 
     free(vec);
@@ -1284,6 +1324,8 @@ static ucs_status_t ucp_perf_test_setup_endpoints(ucx_perf_context_t *perf,
     if (status != UCS_OK) {
         goto err;
     }
+
+    sleep(1); // FIXME: need to debug rte magic regarding to corrupted rkey
 
     /* receive remote peer's endpoints' data and connect to them */
     status = ucp_perf_test_receive_remote_data(perf, peer_index);
@@ -1658,6 +1700,7 @@ static ucs_status_t ucp_perf_setup(ucx_perf_context_t *perf)
                         UCS_PTR_BYTE_OFFSET(perf->send_buffer, i * message_size);
         perf->ucp.tctx[i].perf.recv_buffer =
                         UCS_PTR_BYTE_OFFSET(perf->recv_buffer, i * message_size);
+        perf->ucp.tctx[i].perf.append_offset_buffer = perf->append_offset_buffer;
 
         status = ucp_worker_create(perf->ucp.context, &worker_params,
                                    &perf->ucp.tctx[i].perf.ucp.worker);
@@ -1798,6 +1841,11 @@ ucs_status_t ucx_perf_run(const ucx_perf_params_t *params,
             perf->ucp.ep          = perf->ucp.tctx[0].perf.ucp.ep;
             perf->ucp.remote_addr = perf->ucp.tctx[0].perf.ucp.remote_addr;
             perf->ucp.rkey        = perf->ucp.tctx[0].perf.ucp.rkey;
+
+            perf->ucp.append_offset_addr =
+                    perf->ucp.tctx[0].perf.ucp.append_offset_addr;
+            perf->ucp.append_offset_rkey =
+                    perf->ucp.tctx[0].perf.ucp.append_offset_rkey;
         }
 
         status = ucx_perf_do_warmup(perf, params);

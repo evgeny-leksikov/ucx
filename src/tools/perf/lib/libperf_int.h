@@ -30,6 +30,8 @@ BEGIN_C_DECLS
 #define ADDR_BUF_SIZE        4096
 #define EXTRA_INFO_SIZE      256
 
+#define UCP_PERF_TEST_APPEND_FLUSH_MODULO   512
+
 #define UCX_PERF_TEST_FOREACH(perf) \
     while (!ucx_perf_context_done(perf))
 
@@ -62,6 +64,7 @@ struct ucx_perf_context {
     /* Buffers */
     void                         *send_buffer;
     void                         *recv_buffer;
+    void                         *append_offset_buffer; /* uint64_t */
 
     /* Measurements */
     double                       start_time_acc;  /* accurate start time */
@@ -107,8 +110,11 @@ struct ucx_perf_context {
             ucp_ep_h                   ep;
             ucp_rkey_h                 rkey;
             unsigned long              remote_addr;
+            ucp_rkey_h                 append_offset_rkey;
+            unsigned long              append_offset_addr;
             ucp_mem_h                  send_memh;
             ucp_mem_h                  recv_memh;
+            ucp_mem_h                  append_offset_memh;
             ucp_dt_iov_t               *send_iov;
             ucp_dt_iov_t               *recv_iov;
             void                       *am_hdr;

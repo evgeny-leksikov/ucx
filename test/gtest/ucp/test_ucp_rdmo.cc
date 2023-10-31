@@ -69,6 +69,7 @@ UCS_TEST_P(test_ucp_rdmo, init_fini)
 
 UCS_TEST_P(test_ucp_rdmo, basic)
 {
+    const ucp_request_param_t param = { 0 };
     const uint64_t seed(0xbadc0ffe);
     const size_t size = ucs::rand_range(4 * UCS_KBYTE);
     const size_t iter = 100;
@@ -90,7 +91,7 @@ UCS_TEST_P(test_ucp_rdmo, basic)
         ucs_status_ptr_t append_r = ucp_rdmo_append_nbx(
                 sender().ep(), src_buf.ptr(), src_buf.size(),
                 (uint64_t)off_buf.ptr(), off_rkey,
-                (uint64_t)dst_buf.ptr(), dst_rkey);
+                (uint64_t)dst_buf.ptr(), dst_rkey, &param);
         if (UCS_PTR_IS_PTR(append_r)) {
             ucp_request_free(append_r);
         } else {

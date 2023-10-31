@@ -19,37 +19,32 @@ ucs_status_ptr_t
 ucp_rdmo_append_nbx(ucp_ep_h ep,
                     const void *buffer, size_t count,
                     uint64_t target, ucp_rkey_h target_rkey,
-                    uint64_t append, ucp_rkey_h append_rkey)
+                    uint64_t append, ucp_rkey_h append_rkey,
+                    const ucp_request_param_t *param)
 {
 #if HAVE_UROM
-    ucp_request_param_t am_param = {
-        .op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS,
-        .flags        = UCP_AM_SEND_FLAG_REPLY | UCP_AM_SEND_FLAG_COPY_HEADER |
-                        UCP_AM_SEND_FLAG_EAGER
-    };
+    ucp_request_param_t am_param = *param;
     ucp_rdmo_append_hdr_t hdr;
 
-#if 0
-    hdr.rdmo.id    = ep->ext->remote_worker_id;
-    hdr.rdmo.op_id = UROM_RDMO_OP_APPEND;
-    hdr.rdmo.flags = 0;
-    hdr.append.ptr_addr  = target;
-    hdr.append.ptr_rkey  = target_rkey->cache.rdmo_rkey;
-    hdr.append.data_rkey = append_rkey->cache.rdmo_rkey;  // should be available on DPU (imported)
+    if (!(am_param.op_attr_mask & UCP_OP_ATTR_FIELD_FLAGS)) {
+        am_param.op_attr_mask |= UCP_OP_ATTR_FIELD_FLAGS;
+        am_param.flags         = 0;
+    }
 
-    return ucp_am_send_nbx(ep->ext->rdmo_eps[0], 0, &hdr, sizeof(hdr), buffer,
-                           count, &am_param);
-#else
+    am_param.flags |= UCP_AM_SEND_FLAG_REPLY |
+                      UCP_AM_SEND_FLAG_COPY_HEADER |
+                      UCP_AM_SEND_FLAG_EAGER;
+
     hdr.client_id   = ep->ext->remote_worker_id;
     hdr.target_addr = target;
     hdr.target_rkey = target_rkey->cache.rdmo_rkey;
     hdr.data_addr   = append;
     hdr.data_rkey   = append_rkey->cache.rdmo_rkey;  // should be available on DPU (imported)
 
+    ucs_trace("target_addr %"PRIx64" target_key %"PRIx64,
+              hdr.target_addr, hdr.target_rkey);
     return ucp_am_send_nbx(ep->ext->rdmo_eps[0], UCP_AM_ID_RDMO_APPEND, &hdr,
                            sizeof(hdr), buffer, count, &am_param);
-#endif
-
 #else /* HAVE_UROM */
     return UCS_STATUS_PTR(UCS_ERR_UNSUPPORTED);
 #endif /* HAVE_UROM */
@@ -270,8 +265,8 @@ ucp_rdmo_cache_flush_entry(const ucp_worker_rdmo_amo_cache_entry_t *entry,
     };
     void *req;
 
-    ucs_debug("flush tgt %"PRIx64" val %"PRIu64,
-              entry->target_buffer, entry->append_offset);
+    ucs_debug("flush tgt %"PRIx64" val %"PRIu64" rkey %p",
+              entry->target_buffer, entry->append_offset, entry->target_rkey);
 
     req = ucp_put_nbx(entry->ep, &entry->append_offset,
                           sizeof(entry->append_offset), entry->target_buffer,

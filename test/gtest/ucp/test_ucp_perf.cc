@@ -319,6 +319,13 @@ const test_perf::test_spec test_ucp_perf::tests[] =
     UCX_PERF_WAIT_MODE_SLEEP,
     UCT_PERF_DATA_LAYOUT_LAST, 0, 1, { 2048 }, 1, 100000lu,
     ucs_offsetof(ucx_perf_result_t, bandwidth.total_average), MB, 100.0, 100000.0 },
+
+  { "append_bw", "MB/sec",
+    UCX_PERF_API_UCP, UCX_PERF_CMD_APPEND, UCX_PERF_TEST_TYPE_STREAM_UNI,
+    UCX_PERF_WAIT_MODE_POLL,
+    UCP_PERF_DATATYPE_CONTIG, 0, 1, { 2048 }, 1, 100000lu,
+    ucs_offsetof(ucx_perf_result_t, bandwidth.total_average), MB, 200.0, 100000.0,
+    0 },
 };
 
 const size_t test_ucp_perf::tests_num = ucs_static_array_size(test_ucp_perf::tests);
