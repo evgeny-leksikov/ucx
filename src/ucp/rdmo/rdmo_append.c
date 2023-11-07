@@ -15,6 +15,48 @@
 #include <proto/proto_common.inl>
 #include <rma/rma.inl>
 
+#define ENABLE_RDMO_STAT 0
+
+#if ENABLE_RDMO_STAT
+static size_t max_outstanding = 0;
+static size_t x               = 0;
+static size_t prev_y          = 0;
+static double sum_y           = 0;
+static double res             = 0;
+
+
+static inline void stat_reset()
+{
+    x      = 0;
+    sum_y  = 0;
+    res    = 0;
+}
+#endif /* ENABLE_RDMO_STAT */
+
+static inline void stat_update(ucp_worker_h worker)
+{
+#if ENABLE_RDMO_STAT
+    size_t y = worker->rdmo_outstanding;
+
+    if (y > max_outstanding) {
+        max_outstanding = y;
+        if (max_outstanding % 100 == 0) {
+            printf("worker %p: rdmo max outstanding %"PRIu64"\n", worker,
+                   max_outstanding);
+        }
+    }
+
+    sum_y += 0.5 * (prev_y + y);
+    prev_y = y;
+    if ((++x % 50000) == 0) {
+        res = sum_y / x;
+        printf("worker %p: rdmo outstanding stat %"PRIu64"\n",
+               worker, (size_t)res);
+        stat_reset();
+    }
+#endif /* ENABLE_RDMO_STAT */
+}
+
 ucs_status_ptr_t
 ucp_rdmo_append_nbx(ucp_ep_h ep,
                     const void *buffer, size_t count,
@@ -104,15 +146,20 @@ ucp_ep_h ucp_rdmo_dst_ep(ucp_worker_h worker, uint64_t id)
 static void ucp_rdmo_append_put_callback(void *request, ucs_status_t status,
                                          void *user_data)
 {
-    ucp_request_t *req = (ucp_request_t*)request - 1;
+    ucp_request_t *req  = (ucp_request_t*)request - 1;
+    ucp_worker_h worker = req->send.ep->worker;
 
-    req->send.ep->worker->rdmo_outstanding--;
+    worker->rdmo_outstanding--;
+    ucs_assert_always(worker->rdmo_outstanding >= 0);
+    stat_update(worker);
 
     ucs_debug("complete put data %p", user_data);
 
     ucs_assert(status == UCS_OK);
-#if !UCP_RDMO_TEST_PERF_SINGLE_PROXY_BUF
-    ucp_am_data_release(req->send.ep->worker, user_data);
+#if UCP_RDMO_TEST_PERF_MPOOL_PROXY_BUF
+    ucs_mpool_put_inline(user_data);
+#else
+    ucp_am_data_release(worker, user_data);
 #endif
     ucp_request_free(request);
 }
@@ -121,43 +168,39 @@ static UCS_F_ALWAYS_INLINE ucs_status_t
 ucp_rdmo_append_put_data(ucp_worker_rdmo_amo_cache_entry_t *cache_entry,
                          void *data, size_t length)
 {
-#if UCP_RDMO_TEST_PERF_SINGLE_PROXY_BUF
-    uint64_t *proxy_buf = (uint64_t*)cache_entry->ep->worker->rdmo_proxy_buff;
-    ucp_mem_h memh      = cache_entry->ep->worker->rdmo_proxy_memh;
-#endif /* UCP_RDMO_TEST_PERF_SINGLE_PROXY_BUF */
+#if UCP_RDMO_TEST_PERF_MPOOL_PROXY_BUF
+    uint64_t *proxy_buf = ucs_mpool_get_inline(&cache_entry->ep->worker->rdmo_proxy_mp);
+#endif /* UCP_RDMO_TEST_PERF_MPOOL_PROXY_BUF */
 
     ucp_request_param_t req_param = {
         .op_attr_mask             = UCP_OP_ATTR_FIELD_CALLBACK |
-                                    UCP_OP_ATTR_FIELD_USER_DATA
-#if UCP_RDMO_TEST_PERF_SINGLE_PROXY_BUF
-                                    | UCP_OP_ATTR_FIELD_MEMH
-#endif /* UCP_RDMO_TEST_PERF_SINGLE_PROXY_BUF */
-                                    ,
+                                    UCP_OP_ATTR_FIELD_USER_DATA,
         .cb.send                  = ucp_rdmo_append_put_callback,
-#if UCP_RDMO_TEST_PERF_SINGLE_PROXY_BUF
-        .memh                     = memh,
-        .user_data                = NULL
+#if UCP_RDMO_TEST_PERF_MPOOL_PROXY_BUF
+        .user_data                = proxy_buf
 #else
         .user_data                = data
-#endif /* UCP_RDMO_TEST_PERF_SINGLE_PROXY_BUF */
+#endif /* UCP_RDMO_TEST_PERF_MPOOL_PROXY_BUF */
     };
     ucs_status_ptr_t ret_put;
 
-#if UCP_RDMO_TEST_PERF_SINGLE_PROXY_BUF
+#if UCP_RDMO_TEST_PERF_MPOOL_PROXY_BUF
+    ucs_assert_always(proxy_buf != NULL);
+    ucs_assert_always(length <= UCP_RDMO_TEST_PERF_MPOOL_PROXY_BUF_LEN);
     /* touch the buffer  */
     /* proxy_buf[0] = 0; */
     /*        or         */
     /* memcpy(proxy_buf, data, length); */
-#endif /* UCP_RDMO_TEST_PERF_SINGLE_PROXY_BUF */
+#endif /* UCP_RDMO_TEST_PERF_MPOOL_PROXY_BUF */
 
     ucs_debug("put %"PRIx64" offset %"PRIu64" data %p",
               cache_entry->append_buffer, cache_entry->append_offset, data);
     ret_put = ucp_put_nbx(cache_entry->ep,
-#if UCP_RDMO_TEST_PERF_SINGLE_PROXY_BUF
+#if UCP_RDMO_TEST_PERF_MPOOL_PROXY_BUF
                           proxy_buf,
 #else
                           data,
-#endif /* UCP_RDMO_TEST_PERF_SINGLE_PROXY_BUF */
+#endif /* UCP_RDMO_TEST_PERF_MPOOL_PROXY_BUF */
                           length,
                           cache_entry->append_buffer +
                           cache_entry->append_offset,
@@ -166,11 +209,11 @@ ucp_rdmo_append_put_data(ucp_worker_rdmo_amo_cache_entry_t *cache_entry,
                        (UCS_PTR_STATUS(ret_put) == UCS_INPROGRESS),
                        "status: %s", ucs_status_string(UCS_PTR_STATUS(ret_put)));
     cache_entry->append_offset += length;
-#if UCP_RDMO_TEST_PERF_SINGLE_PROXY_BUF
+#if UCP_RDMO_TEST_PERF_MPOOL_PROXY_BUF
     return UCS_OK;
 #else
     return UCS_INPROGRESS;
-#endif /* UCP_RDMO_TEST_PERF_SINGLE_PROXY_BUF */
+#endif /* UCP_RDMO_TEST_PERF_MPOOL_PROXY_BUF */
 }
 
 ucs_status_t
@@ -192,6 +235,7 @@ ucp_rdmo_append_handler(void *arg, const void *header, size_t header_length,
 
     ucs_trace("worker %p: client %"PRIx64, worker, append_hdr->client_id);
     worker->rdmo_outstanding++;
+    stat_update(worker);
 
     cache_key.id     = append_hdr->client_id;
     cache_key.target = append_hdr->target_addr;

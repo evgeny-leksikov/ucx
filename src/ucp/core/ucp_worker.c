@@ -2054,6 +2054,9 @@ static void ucp_worker_destroy_mpools(ucp_worker_h worker)
     if (worker->context->config.features & UCP_FEATURE_RDMO_PROXY) {
         ucs_assert(worker->rdmo_outstanding == 0);
         ucs_mpool_cleanup(&worker->rdmo_mp, 1);
+#if UCP_RDMO_TEST_PERF_MPOOL_PROXY_BUF
+        ucs_mpool_cleanup(&worker->rdmo_proxy_mp, 1);
+#endif
         kh_destroy_inplace(ucp_worker_rdmo_amo_cache, &worker->rdmo_amo_cache);
     }
 }
@@ -2534,10 +2537,17 @@ out:
 }
 #endif /* HAVE_UROM */
 
+static void
+ucp_woorker_rdmo_mpool_obj_init(ucs_mpool_t *mp, void *obj, void *chunk)
+{
+    /* touch the buffer after allocation */
+    memset(obj, 0, mp->data->elem_size);
+}
+
 static ucs_mpool_ops_t ucp_woorker_rdmo_mpool_ops = {
     .chunk_alloc   = ucs_mpool_chunk_malloc,
     .chunk_release = ucs_mpool_chunk_free,
-    .obj_init      = NULL,
+    .obj_init      = ucp_woorker_rdmo_mpool_obj_init,
     .obj_cleanup   = NULL,
     .obj_str       = NULL
 };
@@ -2566,21 +2576,17 @@ static ucs_status_t ucp_worker_urom_setup_proxy(ucp_worker_h worker)
 
     worker->rdmo_outstanding = 0;
 
-#if UCP_RDMO_TEST_PERF_SINGLE_PROXY_BUF
-    {
-        ucp_mem_map_params_t params = {
-            .field_mask = UCP_MEM_MAP_PARAM_FIELD_ADDRESS |
-                          UCP_MEM_MAP_PARAM_FIELD_LENGTH,
-            .address    = worker->rdmo_proxy_buff,
-            .length     = 16 * UCS_KBYTE,
-            .prot       = UCP_MEM_MAP_PROT_LOCAL_READ
-        };
-
-        status = ucp_mem_map(worker->context, &params, &worker->rdmo_proxy_memh);
-        ucs_assert_always(status == UCS_OK);
-        memset(worker->rdmo_proxy_buff, 0, 16 * UCS_KBYTE);
+#if UCP_RDMO_TEST_PERF_MPOOL_PROXY_BUF
+    mp_param.elem_size       = UCP_RDMO_TEST_PERF_MPOOL_PROXY_BUF_LEN;
+    mp_param.elems_per_chunk = /* do not allow to grow */
+    mp_param.max_elems       = UCP_RDMO_TEST_PERF_MPOOL_PROXY_N_BUFS;
+    mp_param.ops             = &ucp_woorker_rdmo_mpool_ops;
+    mp_param.name            = "rdmo_proxy_data";
+    status = ucs_mpool_init(&mp_param, &worker->rdmo_proxy_mp);
+    if (status != UCS_OK) {
+        return status;
     }
-#endif /* UCP_RDMO_TEST_PERF_SINGLE_PROXY_BUF */
+#endif /* UCP_RDMO_TEST_PERF_MPOOL_PROXY_BUF */
 
     cb_param.field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID    |
                           UCP_AM_HANDLER_PARAM_FIELD_FLAGS |

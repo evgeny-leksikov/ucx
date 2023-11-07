@@ -26,7 +26,11 @@
 
 
 /* TODO: only for perf tests, should be removed */
-#define UCP_RDMO_TEST_PERF_SINGLE_PROXY_BUF 0
+#define UCP_RDMO_TEST_PERF_MPOOL_PROXY_BUF      0
+#define UCP_RDMO_TEST_PERF_MPOOL_PROXY_BUF_LEN  (4 * UCS_KBYTE)
+/* 1MB(L2) / 4KB (MSG) */
+#define UCP_RDMO_TEST_PERF_MPOOL_PROXY_N_BUFS \
+    ((unsigned)(1.9 * (double)UCS_MBYTE / UCP_RDMO_TEST_PERF_MPOOL_PROXY_BUF_LEN))
 
 
 /* The size of the private buffer in UCT descriptor headroom, which UCP may
@@ -396,9 +400,8 @@ typedef struct ucp_worker {
     ucp_worker_rdmo_amo_cache_t      rdmo_amo_cache;
     ucs_mpool_t                      rdmo_mp;
     size_t                           rdmo_outstanding;
-#if UCP_RDMO_TEST_PERF_SINGLE_PROXY_BUF
-    uint8_t                          rdmo_proxy_buff[16 * UCS_KBYTE];
-    ucp_mem_h                        rdmo_proxy_memh;
+#if UCP_RDMO_TEST_PERF_MPOOL_PROXY_BUF
+    ucs_mpool_t                      rdmo_proxy_mp;
 #endif
 } ucp_worker_t;
 
