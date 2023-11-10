@@ -66,24 +66,24 @@ KHASH_IMPL(ucp_worker_mpool_hash, ucp_worker_mpool_key_t, ucs_mpool_t,
            1, ucp_worker_mpool_hash_func, ucp_worker_mpool_key_is_equal);
 
 
-/* RDMO AMO cache */
-static UCS_F_ALWAYS_INLINE khint_t
-ucp_worker_rdmo_amo_cache_hash_func(ucp_worker_rdmo_amo_cache_key_t key)
-{
-    return key.id ^ key.target;
-}
-
-static UCS_F_ALWAYS_INLINE int
-ucp_worker_rdmo_amo_cache_hash_key_is_equal(ucp_worker_rdmo_amo_cache_key_t key1,
-                                            ucp_worker_rdmo_amo_cache_key_t key2)
-{
-    return (key1.target == key2.target) && (key1.id == key2.id);
-}
-
-KHASH_IMPL(ucp_worker_rdmo_amo_cache, ucp_worker_rdmo_amo_cache_key_t,
-           ucp_worker_rdmo_amo_cache_entry_t, 1,
-           ucp_worker_rdmo_amo_cache_hash_func,
-           ucp_worker_rdmo_amo_cache_hash_key_is_equal);
+///* RDMO AMO cache */
+//static UCS_F_ALWAYS_INLINE khint_t
+//ucp_worker_rdmo_amo_cache_hash_func(ucp_worker_rdmo_amo_cache_key_t key)
+//{
+//    return key.client_id ^ key.target;
+//}
+//
+//static UCS_F_ALWAYS_INLINE int
+//ucp_worker_rdmo_amo_cache_hash_key_is_equal(ucp_worker_rdmo_amo_cache_key_t key1,
+//                                            ucp_worker_rdmo_amo_cache_key_t key2)
+//{
+//    return (key1.target == key2.target) && (key1.client_id == key2.client_id);
+//}
+//
+//KHASH_IMPL(ucp_worker_rdmo_amo_cache, ucp_worker_rdmo_amo_cache_key_t,
+//           ucp_worker_rdmo_amo_cache_entry_t, 1,
+//           ucp_worker_rdmo_amo_cache_hash_func,
+//           ucp_worker_rdmo_amo_cache_hash_key_is_equal);
 
 /**
  * @return Worker name

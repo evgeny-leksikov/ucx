@@ -43,13 +43,23 @@ typedef struct ucp_rdmo_flush_ack_hdr {
     uint8_t     status;
 } UCS_S_PACKED ucp_rdmo_flush_ack_hdr_t;
 
+typedef struct ucp_rdmo_queued_put_data {
+    void             *data;
+    size_t           length;
+    ucs_queue_elem_t q_elem;
+} ucp_rdmo_queued_put_data_t;
+
 typedef struct ucp_rdmo_op_data {
     union {
         struct {
-            void                                *data;
-            size_t                              data_length;
-            ucp_worker_rdmo_amo_cache_entry_t   *cache_entry;
-        } append;
+            ucs_queue_head_t                put_queue;
+            size_t                          put_queue_len;
+            ucp_worker_rdmo_amo_cache_key_t cache_key;
+            ucp_ep_h                        put_ep;
+            uint64_t                        offset;
+        } fetch_offset;
+
+        ucp_rdmo_queued_put_data_t queued_put;
 
         struct  {
             ucp_ep_h                 ack_ep;
