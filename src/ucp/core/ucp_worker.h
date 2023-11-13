@@ -248,11 +248,6 @@ typedef struct ucp_worker_rdmo_amo_cache_entry {
     ucp_rkey_h target_rkey;
     void       *fetch_cb_data; /* non-NULL if fetch is in progress,
                                 * ucp_rdmo_cb_data_t */
-    struct {
-        int      is_requested; /* need flush after fetch and put */
-        ucp_ep_h reply_ep;     /* valid only if is_requested */
-        uint64_t hdr_ep;
-    } flush;
 } ucp_worker_rdmo_amo_cache_entry_t;
 
 /* target -> ucp_worker_rdmo_amo_cache_entry_t */
@@ -260,8 +255,10 @@ KHASH_MAP_INIT_INT64(ucp_rdmo_client_cache, ucp_worker_rdmo_amo_cache_entry_t);
 typedef khash_t(ucp_rdmo_client_cache) ucp_rdmo_client_cache_t;
 
 typedef struct ucp_rdmo_client_cache_entry {
-    ucp_ep_h                ep;
     ucp_rdmo_client_cache_t targets;
+    ucp_ep_h                ep;
+    unsigned                lock;
+    ucs_queue_head_t        *flush_ack_queue; /* acks on flush completion */
 } ucp_rdmo_client_cache_entry_t;
 
 /* client_id -> target */

@@ -49,6 +49,13 @@ typedef struct ucp_rdmo_queued_put_data {
     ucs_queue_elem_t q_elem;
 } ucp_rdmo_queued_put_data_t;
 
+typedef struct ucp_rdmo_ack_elem {
+    ucs_queue_elem_t                elem;
+    uint64_t                        client_id;
+    ucp_ep_h                        reply_ep;
+    uint64_t                        hdr_ep;
+} ucp_rdmo_ack_elem_t;
+
 typedef struct ucp_rdmo_op_data {
     union {
         struct {
@@ -59,12 +66,15 @@ typedef struct ucp_rdmo_op_data {
             uint64_t                        offset;
         } fetch_offset;
 
-        ucp_rdmo_queued_put_data_t queued_put;
-
-        struct  {
-            ucp_ep_h                 ack_ep;
+        struct {
+            ucp_ep_h                 reply_ep;
             ucp_rdmo_flush_ack_hdr_t hdr;
-        } flush_ack;
+        } flush;
+
+        ucp_rdmo_queued_put_data_t queued_put;
+        ucp_rdmo_ack_elem_t        queued_ack;
+        ucs_queue_head_t           pending_flush_acks;
+        uint64_t                   put_offset;
     };
 } ucp_rdmo_cb_data_t;
 
@@ -85,5 +95,7 @@ ucs_status_t
 ucp_rdmo_flush_ack_handler(void *arg, const void *header, size_t header_length,
                            void *data, size_t length,
                            const ucp_am_recv_param_t *param);
+
+void ucp_rdmo_cache_free(ucp_worker_rdmo_clients_cache_t *cache);
 
 #endif /* UCP_RDMO_H_ */

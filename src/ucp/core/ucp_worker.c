@@ -2057,6 +2057,7 @@ static void ucp_worker_destroy_mpools(ucp_worker_h worker)
 #if UCP_RDMO_TEST_PERF_MPOOL_PROXY_BUF
         ucs_mpool_cleanup(&worker->rdmo_proxy_mp, 1);
 #endif
+        ucp_rdmo_cache_free(&worker->rdmo_clients_cache);
         kh_destroy_inplace(ucp_worker_rdmo_clients_cache,
                            &worker->rdmo_clients_cache);
     }
@@ -2542,7 +2543,7 @@ static void
 ucp_woorker_rdmo_mpool_obj_init(ucs_mpool_t *mp, void *obj, void *chunk)
 {
     /* touch the buffer after allocation */
-    memset(obj, 0, mp->data->elem_size);
+//    memset(obj, 0, mp->data->elem_size);
 }
 
 static ucs_mpool_ops_t ucp_woorker_rdmo_mpool_ops = {
@@ -2566,7 +2567,7 @@ static ucs_status_t ucp_worker_urom_setup_proxy(ucp_worker_h worker)
     kh_init_inplace(ucp_worker_rdmo_clients_cache, &worker->rdmo_clients_cache);
     ucs_mpool_params_reset(&mp_param);
     mp_param.elem_size       = sizeof(ucp_rdmo_cb_data_t);
-    mp_param.elems_per_chunk = 10000;
+    mp_param.elems_per_chunk = 1024;
     mp_param.ops             = &ucp_woorker_rdmo_mpool_ops;
     mp_param.name            = "rdmo_data";
 
