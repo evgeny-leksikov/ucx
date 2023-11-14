@@ -121,10 +121,12 @@ ucp_rdmo_cache_put(ucp_worker_h worker,
                    const ucp_worker_rdmo_amo_cache_entry_t *entry)
 {
     ucp_worker_rdmo_clients_cache_t *cache = &worker->rdmo_clients_cache;
-    khint_t i = kh_get(ucp_worker_rdmo_clients_cache, cache, key->client_id);
+    ucp_rdmo_client_cache_entry_t *client;
     ucp_rdmo_client_cache_t *targets;
+    khint_t i;
     int r;
 
+    i = kh_get(ucp_worker_rdmo_clients_cache, cache, key->client_id);
     if (i == kh_end(cache)) {
         ucs_queue_head_t *q = ucs_calloc(1, sizeof(ucs_queue_head_t),
                                          "rdmo_flush_ack_queue");
@@ -133,13 +135,16 @@ ucp_rdmo_cache_put(ucp_worker_h worker,
         i = kh_put(ucp_worker_rdmo_clients_cache, cache, key->client_id, &r);
         ucs_assert(r >= 0);
         kh_init_inplace(ucp_rdmo_client_cache, &kh_val(cache, i).targets);
-        kh_val(cache, i).ep   = ucp_rdmo_dst_ep(worker, key->client_id);
-        kh_val(cache, i).lock = 0;
-        kh_val(cache, i).flush_ack_queue = q;
+        client            = &kh_val(cache, i);
+        client->ep        = ucp_rdmo_dst_ep(worker, key->client_id);
+        client->lock      = 0;
+        client->pending_q = q;
+    } else {
+        client = &kh_val(cache, i);
     }
 
-    ucs_assert(kh_val(cache, i).ep != NULL);
-    targets = &kh_val(cache, i).targets;
+    ucs_assert(client->ep != NULL);
+    targets = &client->targets;
     ucs_assert(kh_end(targets) ==
                kh_get(ucp_rdmo_client_cache, targets, key->target));
 
@@ -165,18 +170,10 @@ ucp_rdmo_cache_get_client(const ucp_worker_rdmo_clients_cache_t *cache,
 }
 
 static UCS_F_ALWAYS_INLINE ucp_worker_rdmo_amo_cache_entry_t*
-ucp_rdmo_cache_get(const ucp_worker_rdmo_clients_cache_t *cache,
-                   const ucp_worker_rdmo_amo_cache_key_t *key)
+ucp_rdmo_client_get_cache_entry(ucp_rdmo_client_cache_entry_t *client,
+                                uint64_t target)
 {
-    ucp_rdmo_client_cache_entry_t *client =
-            ucp_rdmo_cache_get_client(cache, key->client_id);
-    khint_t i;
-
-    if (ucs_unlikely(client == NULL)) {
-        return NULL;
-    }
-
-    i = kh_get(ucp_rdmo_client_cache, &client->targets, key->target);
+    khint_t i = kh_get(ucp_rdmo_client_cache, &client->targets, target);
     if (ucs_unlikely(i == kh_end(&client->targets))) {
         return NULL;
     }
@@ -184,21 +181,39 @@ ucp_rdmo_cache_get(const ucp_worker_rdmo_clients_cache_t *cache,
     return &kh_val(&client->targets, i);
 }
 
+static UCS_F_ALWAYS_INLINE ucp_worker_rdmo_amo_cache_entry_t*
+ucp_rdmo_cache_get(const ucp_worker_rdmo_clients_cache_t *cache,
+                   const ucp_worker_rdmo_amo_cache_key_t *key)
+{
+    ucp_rdmo_client_cache_entry_t *client =
+            ucp_rdmo_cache_get_client(cache, key->client_id);
+
+    if (ucs_unlikely(client == NULL)) {
+        return NULL;
+    }
+
+    return ucp_rdmo_client_get_cache_entry(client, key->target);
+}
+
+static UCS_F_ALWAYS_INLINE void
+ucp_rdmo_client_del_cache_entry(ucp_rdmo_client_cache_entry_t *client,
+                                uint64_t target)
+{
+    khint_t i = kh_get(ucp_rdmo_client_cache, &client->targets, target);
+
+    ucs_assert(i != kh_end(&client->targets));
+    kh_del(ucp_rdmo_client_cache, &client->targets, i);
+}
+
 static UCS_F_ALWAYS_INLINE void
 ucp_rdmo_cache_del(ucp_worker_rdmo_clients_cache_t *cache,
                    const ucp_worker_rdmo_amo_cache_key_t *key)
 {
-    khint_t i = kh_get(ucp_worker_rdmo_clients_cache, cache, key->client_id);
-    ucp_rdmo_client_cache_t *targets;
+    ucp_rdmo_client_cache_entry_t *client =
+            ucp_rdmo_cache_get_client(cache, key->client_id);
 
-    ucs_assert(i != kh_end(cache));
-    targets = &kh_val(cache, i).targets;
-    i       = kh_get(ucp_rdmo_client_cache, targets, key->target);
-    ucs_assert(i != kh_end(targets));
-
-    kh_del(ucp_rdmo_client_cache, targets, i);
-    ucs_debug("client %"PRIx64": del cache entry target 0x%"PRIx64,
-              key->client_id, key->target);
+    ucs_assert(client != NULL);
+    ucp_rdmo_client_del_cache_entry(client, key->target);
 }
 
 void ucp_rdmo_cache_free(ucp_worker_rdmo_clients_cache_t *cache)
@@ -208,7 +223,7 @@ void ucp_rdmo_cache_free(ucp_worker_rdmo_clients_cache_t *cache)
         ucs_assert_always(kh_size(&client_cache.targets) == 0);
         kh_destroy_inplace(ucp_rdmo_client_cache, &client_cache.targets);
         ucs_assert_always(client_cache.lock == 0);
-        ucs_free(client_cache.flush_ack_queue);
+        ucs_free(client_cache.pending_q);
     });
     kh_clear(ucp_worker_rdmo_clients_cache, cache);
 }
@@ -289,47 +304,95 @@ ucp_rdmo_append_put_data(ucp_ep_h ep,
 }
 
 static ucs_status_t
-ucp_rdmo_enqueue_data(ucp_rdmo_cb_data_t *cb_data, void *data, size_t length)
+ucp_rdmo_enqueue_data(ucp_worker_h worker, ucs_queue_head_t *pending_q,
+                      const ucp_worker_rdmo_amo_cache_key_t *key,
+                      void *data, size_t length)
 {
-    ucp_worker_h worker       = cb_data->fetch_offset.put_ep->worker;
     ucp_rdmo_cb_data_t *q_put = ucs_mpool_get_inline(&worker->rdmo_mp);
 
     if(ucs_unlikely(q_put == NULL)) {
         return UCS_ERR_NO_MEMORY;
     }
 
-    q_put->queued_put.data   = data;
-    q_put->queued_put.length = length;
-    cb_data->fetch_offset.put_queue_len++;
-    ucs_queue_push(&cb_data->fetch_offset.put_queue, &q_put->queued_put.q_elem);
+    q_put->pending_elem.type            = UCP_RDMO_PENDING_ELEM_PUT_DATA;
+    q_put->pending_elem.put_data.key    = *key;
+    q_put->pending_elem.put_data.data   = data;
+    q_put->pending_elem.put_data.length = length;
+    ucs_queue_push(pending_q, &q_put->pending_elem.q_elem);
 
-    ucs_debug("client_id %"PRIx64" enqueue %"PRIu64" bytes total %"PRIu64
-              " data chunks",
-              cb_data->fetch_offset.cache_key.client_id, length, 
-              cb_data->fetch_offset.put_queue_len);
+    ucs_debug("client_id %"PRIx64" enqueue %"PRIu64" bytes",
+              key->client_id, length);
 
     return UCS_OK;
 }
 
-static inline void
-ucp_rdmo_entry_dequeue_and_put_data(ucp_ep_h ep,
-                                    ucp_worker_rdmo_amo_cache_entry_t *entry,
-                                    ucp_rdmo_cb_data_t *fetch_cb_data)
+static UCS_F_ALWAYS_INLINE void
+ucp_rdmo_flush_send_ack(ucp_ep_h ep,
+                        const ucp_rdmo_flush_ack_hdr_t *ack)
 {
-    ucs_queue_head_t *q = &fetch_cb_data->fetch_offset.put_queue;
-    ucp_rdmo_queued_put_data_t *e;
-    ucs_status_t status;
+    ucp_request_param_t param = {
+        .op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS,
+        .flags        = UCP_AM_SEND_FLAG_COPY_HEADER
+    };
+    void *request     = ucp_am_send_nbx(ep, UCP_AM_ID_RDMO_FLUSH_ACK, ack,
+                                        sizeof(*ack), NULL, 0, &param);
 
-    ucs_debug("client_id %"PRIx64" dequeue %"PRIu64" data chunks, entry %p",
-             fetch_cb_data->fetch_offset.cache_key.client_id,
-             fetch_cb_data->fetch_offset.put_queue_len, entry);
-
-    ucs_queue_for_each_extract(e, q, q_elem, 1) {
-        fetch_cb_data->fetch_offset.put_queue_len--;
-        status = ucp_rdmo_append_put_data(ep, entry, e->data, e->length);
-        ucs_assert_always(!UCS_PTR_IS_ERR(status));
-        ucs_mpool_put_inline(e);
+    if (UCS_PTR_IS_PTR(request)) {
+        ucp_request_free(request);
+    } else {
+        ucs_assert(!UCS_PTR_IS_ERR(request));
     }
+}
+
+static void
+ucp_rdmo_client_flush_completion(void *request, ucs_status_t status,
+                                 void *user_data)
+{
+    ucp_rdmo_cb_data_t *data     = user_data;
+    ucp_rdmo_flush_elem_t *flush = &data->flush;
+    ucp_rdmo_flush_ack_hdr_t hdr = {
+        .ep     = flush->hdr_ep,
+        .status = ucs_likely(flush->status == UCS_OK) ? status : flush->status
+    };
+
+    ucs_debug("flush completion, send ack to 0x%"PRIx64, flush->hdr_ep);
+    ucp_rdmo_flush_send_ack(flush->reply_ep, &hdr);
+    if (UCS_PTR_IS_PTR(request)) {
+        ucp_request_free(request);
+    }
+
+    ucs_mpool_put_inline(user_data);
+}
+
+static UCS_F_ALWAYS_INLINE ucs_status_t
+ucp_rdmo_client_flush_ack(ucp_ep_h ep, ucp_ep_h reply_ep, uint64_t hdr_ep,
+                          ucs_status_t status)
+{
+    ucp_rdmo_cb_data_t *user_data = ucs_mpool_get_inline(&ep->worker->rdmo_mp);
+    ucp_request_param_t param     = {
+        .op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK |
+                        UCP_OP_ATTR_FIELD_USER_DATA,
+        .cb.send      = ucp_rdmo_client_flush_completion,
+        .user_data    = user_data
+    };
+    void *req;
+
+    if (user_data == NULL) {
+        return UCS_ERR_NO_MEMORY;
+    }
+
+    user_data->flush.reply_ep = reply_ep;
+    user_data->flush.hdr_ep   = hdr_ep;
+    user_data->flush.status   = status;
+
+    req = ucp_ep_flush_nbx(ep, &param);
+    ucs_debug("flushing for 0x%"PRIx64" returned %p", hdr_ep, req);
+    if (!UCS_PTR_IS_PTR(req)) {
+        ucp_rdmo_client_flush_completion(NULL, UCS_PTR_STATUS(req), user_data);
+        return UCS_PTR_STATUS(req);
+    }
+
+    return UCS_OK;
 }
 
 static void
@@ -342,7 +405,7 @@ ucp_rdmo_cache_flush_offset_completion(void *request, ucs_status_t status,
     }
 }
 
-static UCS_F_ALWAYS_INLINE int
+static UCS_F_ALWAYS_INLINE ucs_status_t
 ucp_rdmo_cache_flush_offset(ucp_ep_h ep,
                             ucp_worker_rdmo_amo_cache_entry_t *entry)
 {
@@ -363,79 +426,74 @@ ucp_rdmo_cache_flush_offset(ucp_ep_h ep,
 
     req = ucp_put_nbx(ep, &user_data->put_offset, sizeof(user_data->put_offset),
                       entry->target_buffer, entry->target_rkey, &fast);
-    if (req == NULL) {
-        ucp_rdmo_cache_flush_offset_completion(NULL, UCS_OK, user_data);
+    if (UCS_PTR_IS_PTR(req)) {
+        return UCS_OK;
     }
 
-    return UCS_OK;
+    ucp_rdmo_cache_flush_offset_completion(NULL, UCS_PTR_STATUS(req), user_data);
+    return UCS_PTR_STATUS(req);
 }
 
-static void
-ucp_rdmo_flush_send_ack(ucp_ep_h ep,
-                        const ucp_rdmo_flush_ack_hdr_t *ack)
+static inline ucs_status_t
+ucp_rdmo_client_flush(ucp_rdmo_client_cache_entry_t *client, ucp_ep_h reply_ep,
+                      uint64_t hdr_ep, int del)
 {
-    ucp_request_param_t param = {
-        .op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS,
-        .flags        = UCP_AM_SEND_FLAG_COPY_HEADER
-    };
+    ucs_status_t status = UCS_OK;
+    ucs_status_t op_status;
+    ucp_worker_rdmo_amo_cache_entry_t *entry;
+    uint64_t target;
 
-    void *request = ucp_am_send_nbx(ep, UCP_AM_ID_RDMO_FLUSH_ACK, ack,
-                                    sizeof(*ack), NULL, 0, &param);
+    ucs_assert_always(client->lock == 0);
 
-    if (UCS_PTR_IS_PTR(request)) {
-        ucp_request_free(request);
-    } else {
-        ucs_assert(!UCS_PTR_IS_ERR(request));
-    }
+    kh_foreach_key(&client->targets, target, {
+        entry = ucp_rdmo_client_get_cache_entry(client, target);
+        ucs_assert(entry != NULL);
+        op_status = ucp_rdmo_cache_flush_offset(client->ep, entry);
+        if (op_status != UCS_OK) {
+            status = op_status;
+        }
+
+        if (del) {
+            ucp_rdmo_client_del_cache_entry(client, target);
+        }
+    });
+
+    /* all puts for targets are posted, flush client */
+    ucs_assert(kh_size(&client->targets) == 0);
+    op_status = ucp_rdmo_client_flush_ack(client->ep, reply_ep, hdr_ep, status);
+    return ucs_likely(status == UCS_OK) ? op_status : status;
 }
 
-static void
-ucp_rdmo_client_flush_single_completion(void *request, ucs_status_t status,
-                                 void *user_data)
+static inline void
+ucp_rdmo_client_do_pending(ucp_rdmo_client_cache_entry_t *client)
 {
-    ucp_rdmo_cb_data_t *data = user_data;
+    ucp_ep_h ep                            = client->ep;
+    ucp_worker_rdmo_clients_cache_t *cache = &ep->worker->rdmo_clients_cache;
+    ucp_rdmo_pending_elem_t *e;
+    ucp_worker_rdmo_amo_cache_entry_t *entry;
+    ucs_status_t status;
 
-    ucs_assert(status == UCS_OK);
-    data->flush.hdr.status = status;
+    ucs_queue_for_each_extract(e, client->pending_q, q_elem, 1) {
+        if (ucs_likely(e->type == UCP_RDMO_PENDING_ELEM_PUT_DATA)) {
+            entry  = ucp_rdmo_cache_get(cache, &e->put_data.key);
+            ucs_assert_always(entry != NULL);
+            status = ucp_rdmo_append_put_data(ep, entry, e->put_data.data,
+                                              e->put_data.length);
+        } else {
+            ucs_assert(e->type == UCP_RDMO_PENDING_ELEM_CLIENT_FLUSH);
+            ucp_rdmo_client_flush(client, e->flush.reply_ep, e->flush.hdr_ep, 0);
+        }
 
-    ucs_debug("flush completion, send ack to 0x%"PRIx64, data->flush.hdr.ep);
-    ucp_rdmo_flush_send_ack(data->flush.reply_ep, &data->flush.hdr);
-    if (UCS_PTR_IS_PTR(request)) {
-        ucp_request_free(request);
+        ucs_assert_always(!UCS_PTR_IS_ERR(status));
+        ucs_mpool_put_inline(e);
     }
 
-    ucs_mpool_put_inline(user_data);
-}
-
-static void
-ucp_rdmo_client_flush_single_ack(ucp_ep_h ep, ucp_ep_h reply_ep,
-                                 uint64_t hdr_ep)
-{
-    ucp_rdmo_cb_data_t *user_data = ucs_mpool_get_inline(&ep->worker->rdmo_mp);
-    ucp_request_param_t param     = {
-        .op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK |
-                        UCP_OP_ATTR_FIELD_USER_DATA,
-        .cb.send      = ucp_rdmo_client_flush_single_completion,
-        .user_data    = user_data
-    };
-    void *req;
-
-    user_data->flush.reply_ep   = reply_ep;
-    user_data->flush.hdr.ep     = hdr_ep;
-    user_data->flush.hdr.status = UCS_OK;
-
-    req = ucp_ep_flush_nbx(ep, &param);
-    ucs_debug("flushing for 0x%"PRIx64" returned %p", hdr_ep, req);
-    if (!UCS_PTR_IS_PTR(req)) {
-        ucp_rdmo_client_flush_single_completion(NULL, UCS_PTR_STATUS(req),
-                                                user_data);
-    }
+    kh_clear(ucp_rdmo_client_cache, &client->targets);
 }
 
 static UCS_F_ALWAYS_INLINE ucs_status_t
 ucp_rdmo_client_flush_handle_empty(const ucp_rdmo_client_cache_entry_t *client,
-                                   uint64_t client_id, ucp_ep_h reply_ep,
-                                   uint64_t hdr_ep)
+                                   ucp_ep_h reply_ep, uint64_t hdr_ep)
 {
     /* flush before any append */
     ucp_rdmo_flush_ack_hdr_t ack = {
@@ -447,18 +505,16 @@ ucp_rdmo_client_flush_handle_empty(const ucp_rdmo_client_cache_entry_t *client,
         return UCS_ERR_NO_PROGRESS;
     }
 
-    ucs_debug("client %"PRIx64": empty ack to ep 0x%"PRIx64, client_id, hdr_ep);
     ucp_rdmo_flush_send_ack(reply_ep, &ack);
     return UCS_OK;
 }
 
 static UCS_F_ALWAYS_INLINE ucs_status_t
 ucp_rdmo_client_flush_handle_locked(ucp_rdmo_client_cache_entry_t *client,
-                                    uint64_t client_id, ucp_ep_h reply_ep,
-                                    uint64_t hdr_ep)
+                                    ucp_ep_h reply_ep, uint64_t hdr_ep)
 {
     ucp_rdmo_cb_data_t *data;
-    ucp_rdmo_ack_elem_t *ack_elem;
+    ucp_rdmo_pending_elem_t *elem;
 
     if (client->lock == 0) {
         return UCS_ERR_NO_PROGRESS;
@@ -469,43 +525,14 @@ ucp_rdmo_client_flush_handle_locked(ucp_rdmo_client_cache_entry_t *client,
         return UCS_ERR_NO_MEMORY;
     }
 
-    ack_elem            = &data->queued_ack;
-    ack_elem->client_id = client_id;
-    ack_elem->reply_ep  = reply_ep;
-    ack_elem->hdr_ep    = hdr_ep;
-    ucs_queue_push(client->flush_ack_queue, &ack_elem->elem);
+    elem = &data->pending_elem;
+
+    ucs_queue_push(client->pending_q, &elem->q_elem);
+    elem->ep             = client->ep;
+    elem->type           = UCP_RDMO_PENDING_ELEM_CLIENT_FLUSH;
+    elem->flush.reply_ep = reply_ep;
+    elem->flush.hdr_ep   = hdr_ep;
     return UCS_OK;
-}
-
-static UCS_F_ALWAYS_INLINE void
-ucp_rdmo_client_flush_handle_free(ucp_rdmo_client_cache_entry_t *client,
-                                  uint64_t client_id, ucp_ep_h reply_ep,
-                                  uint64_t hdr_ep)
-{
-    ucp_ep_h ep                         = client->ep;
-    ucp_worker_h worker                 = ep->worker;
-    ucp_worker_rdmo_amo_cache_key_t key = {
-        .client_id                      = client_id,
-        .target                         = 0
-    };
-    ucp_worker_rdmo_amo_cache_entry_t *entry;
-    ucs_status_t status;
-
-    ucs_assert(client->lock == 0);
-
-    kh_foreach_key(&client->targets, key.target, {
-        entry = ucp_rdmo_cache_get(&worker->rdmo_clients_cache, &key);
-        ucs_assert_always(entry != NULL);
-
-        status = ucp_rdmo_cache_flush_offset(ep, entry);
-        ucs_assert_always(status == UCS_OK);
-
-        ucp_rdmo_cache_del(&worker->rdmo_clients_cache, &key);
-    });
-
-    /* all puts for targets are posted, flush client */
-    ucs_assert(kh_size(&client->targets) == 0);
-    ucp_rdmo_client_flush_single_ack(client->ep, reply_ep, hdr_ep);
 }
 
 static ucs_status_t
@@ -516,136 +543,76 @@ ucp_rdmo_client_flush_start(ucp_worker_h worker, uint64_t client_id,
     ucs_status_t status;
 
     client = ucp_rdmo_cache_get_client(&worker->rdmo_clients_cache, client_id);
-    status = ucp_rdmo_client_flush_handle_empty(client, client_id, reply_ep,
-                                                hdr_ep);
+    status = ucp_rdmo_client_flush_handle_empty(client, reply_ep, hdr_ep);
     if (status != UCS_ERR_NO_PROGRESS) {
         return status;
     }
 
-    status = ucp_rdmo_client_flush_handle_locked(client, client_id, reply_ep,
-                                                 hdr_ep);
+    status = ucp_rdmo_client_flush_handle_locked(client, reply_ep, hdr_ep);
     if (status != UCS_ERR_NO_PROGRESS) {
         return status;
     }
 
-    ucp_rdmo_client_flush_handle_free(client, client_id, reply_ep, hdr_ep);
+    ucp_rdmo_client_flush(client, reply_ep, hdr_ep, 1);
     return UCS_OK;
-}
-
-static void
-ucp_rdmo_client_flush_pending_completion(void *request, ucs_status_t status,
-                                         void *user_data)
-{
-    ucp_rdmo_cb_data_t *data = user_data;
-    ucs_queue_head_t *ack_queue = &data->pending_flush_acks;
-    ucp_rdmo_ack_elem_t *ack_elem;
-    ucp_rdmo_flush_ack_hdr_t hdr;
-
-    ucs_assert_always(status == UCS_OK);
-    ucs_assert(data != NULL);
-
-    ucs_queue_for_each_extract(ack_elem, ack_queue, elem, 1) {
-        hdr.ep     = ack_elem->hdr_ep;
-        hdr.status = status;
-
-        ucp_rdmo_flush_send_ack(ack_elem->reply_ep, &hdr);
-        ucs_mpool_put(ack_elem);
-    }
-
-    if (UCS_PTR_IS_PTR(request)) {
-        ucp_request_free(request);
-    }
-
-    ucs_mpool_put_inline(user_data);
-}
-
-static void
-ucp_rdmo_client_progress_pending_flush(ucp_ep_h ep,
-                                       ucs_queue_head_t *flush_ack_queue)
-{
-    ucp_rdmo_cb_data_t *user_data;
-    ucp_request_param_t param;
-    void *req;
-
-    if (ucs_queue_is_empty(flush_ack_queue)) {
-        return;
-    }
-
-    user_data = ucs_mpool_get_inline(&ep->worker->rdmo_mp);
-    ucs_assert_always(user_data != NULL);
-    param.op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK |
-                         UCP_OP_ATTR_FIELD_USER_DATA;
-    param.cb.send      = ucp_rdmo_client_flush_pending_completion;
-    param.user_data    = user_data;
-
-    ucs_queue_head_init(&user_data->pending_flush_acks);
-    ucs_queue_splice(&user_data->pending_flush_acks, flush_ack_queue);
-
-    req = ucp_ep_flush_nbx(ep, &param);
-    if (!UCS_PTR_IS_PTR(req)) {
-        ucp_rdmo_client_flush_pending_completion(NULL, UCS_PTR_STATUS(req),
-                                                 user_data);
-    }
 }
 
 static void ucp_rdmo_offset_fetch_callback(void *request, ucs_status_t status,
                                            void *user_data)
 {
-    ucp_rdmo_cb_data_t *fetch_cb_data = user_data;
-    ucp_ep_h ep                       = fetch_cb_data->fetch_offset.put_ep;
-    ucp_worker_h worker               = ep->worker;
-    ucp_worker_rdmo_amo_cache_key_t *key;
-    ucp_worker_rdmo_amo_cache_entry_t *entry;
+    ucp_rdmo_cb_data_t *data                   = user_data;
+    ucp_rdmo_fetch_offset_data_t *fetch_offset = &data->fetch_offset;
+    ucp_worker_rdmo_amo_cache_key_t *key       = &fetch_offset->cache_key;
     ucp_rdmo_client_cache_entry_t* client;
+    ucp_worker_rdmo_amo_cache_entry_t *entry;
 
-    key    = &fetch_cb_data->fetch_offset.cache_key;
-    entry  = ucp_rdmo_cache_get(&worker->rdmo_clients_cache, key);
-    client = ucp_rdmo_cache_get_client(&worker->rdmo_clients_cache,
-                                       key->client_id);
+    client = ucp_rdmo_cache_get_client(fetch_offset->cache, key->client_id);
+    entry  = ucp_rdmo_client_get_cache_entry(client, key->target);
 
     ucs_debug("client_id %"PRIx64": got offset %"PRIu64,
-              key->client_id, fetch_cb_data->fetch_offset.offset);
+              key->client_id, fetch_offset->offset);
 
     ucs_assert_always(status == UCS_OK);
     ucs_assert(entry != NULL);
-    ucs_assert(entry->fetch_cb_data == fetch_cb_data);
-    ucs_assert(fetch_cb_data->fetch_offset.offset != UINT64_MAX);
+    ucs_assert(entry->fetch_cb_data == user_data);
+    ucs_assert(fetch_offset->offset != UINT64_MAX);
 
-    client->lock--;
-    entry->append_offset = fetch_cb_data->fetch_offset.offset;
+    entry->append_offset = fetch_offset->offset;
 
-    ucp_rdmo_entry_dequeue_and_put_data(ep, entry, fetch_cb_data);
-    ucp_rdmo_client_progress_pending_flush(ep, client->flush_ack_queue);
+    ucs_assert_always(client->lock > 0);
+    if (--client->lock == 0) {
+        ucp_rdmo_client_do_pending(client);
+    }
 
-    ucs_mpool_put(fetch_cb_data);
+    ucs_mpool_put(data);
     ucp_request_free(request);
 }
 
 static ucs_status_t
-ucp_rdmo_offset_fetch(ucp_ep_h ep, const ucp_rdmo_append_hdr_t *append_hdr,
+ucp_rdmo_offset_fetch(ucp_rdmo_client_cache_entry_t *client,
+                      const ucp_rdmo_append_hdr_t *append_hdr,
                       const ucp_worker_rdmo_amo_cache_key_t *cache_key,
                       ucp_rdmo_cb_data_t **cb_data_p)
 {
-    ucp_rdmo_cb_data_t *cb_data = ucs_mpool_get(&ep->worker->rdmo_mp);
+    ucp_ep_h ep                 = client->ep;
+    ucp_worker_h worker         = ep->worker;
+    ucp_rdmo_cb_data_t *cb_data = ucs_mpool_get(&worker->rdmo_mp);
     ucp_request_param_t param   = {
         .op_attr_mask           = UCP_OP_ATTR_FIELD_CALLBACK |
                                   UCP_OP_ATTR_FIELD_USER_DATA,
         .cb.send                = ucp_rdmo_offset_fetch_callback,
         .user_data              = cb_data
     };
-    ucp_rdmo_client_cache_entry_t* client;
+    ucp_worker_rdmo_clients_cache_t *cache = &worker->rdmo_clients_cache;
     ucs_status_ptr_t status_ptr;
 
-    ucs_assert_always(cb_data != NULL);
-    ucs_queue_head_init(&cb_data->fetch_offset.put_queue);
-    cb_data->fetch_offset.put_queue_len = 0;
-    cb_data->fetch_offset.cache_key     = *cache_key;
-    cb_data->fetch_offset.put_ep        = ep;
-    cb_data->fetch_offset.offset        = UINT64_MAX;
+    ++client->lock;
 
-    client = ucp_rdmo_cache_get_client(&ep->worker->rdmo_clients_cache,
-                                       cache_key->client_id);
-    client->lock++;
+    ucs_assert_always(cb_data != NULL);
+    cb_data->fetch_offset.offset    = UINT64_MAX;
+    cb_data->fetch_offset.cache_key = *cache_key;
+    cb_data->fetch_offset.cache     = cache;
+
 
     ucs_debug("client_id %"PRIx64": get offset start for target 0x%"PRIx64,
               append_hdr->client_id, append_hdr->target_addr);
@@ -676,8 +643,8 @@ ucp_rdmo_append_handler(void *arg, const void *header, size_t header_length,
     ucp_worker_h worker                     = arg;
     const ucp_rdmo_append_hdr_t *append_hdr = header;
     ucp_worker_rdmo_amo_cache_key_t cache_key;
+    ucp_rdmo_client_cache_entry_t *client;
     ucp_worker_rdmo_amo_cache_entry_t *cache_entry;
-    ucp_ep_h ep;
     ucs_status_t status;
 
     ucs_assert(worker->context->config.ext.proto_enable);
@@ -724,26 +691,25 @@ ucp_rdmo_append_handler(void *arg, const void *header, size_t header_length,
                   kh_size(&c->targets));
     }
 
-    ep = ucp_rdmo_cache_get_client(&worker->rdmo_clients_cache,
-                                   cache_key.client_id)->ep;
-    ucs_debug("client %"PRIx64": ep %p", cache_key.client_id, ep);
+    client = ucp_rdmo_cache_get_client(&worker->rdmo_clients_cache,
+                                       cache_key.client_id);
     if (RDMO_FETCH_OFFSET &&
         ucs_unlikely(cache_entry->append_offset == UINT64_MAX)) {
         if (cache_entry->fetch_cb_data == NULL) {
             status = ucp_rdmo_offset_fetch(
-                    ep, append_hdr, &cache_key,
+                    client, append_hdr, &cache_key,
                     (ucp_rdmo_cb_data_t **)&cache_entry->fetch_cb_data);
             ucs_assert_always(!UCS_STATUS_IS_ERR(status));
         }
 
-        if (cache_entry->fetch_cb_data != NULL) {
-            status = ucp_rdmo_enqueue_data(cache_entry->fetch_cb_data,
-                                           data, length);
+        if (client->lock) {
+            status = ucp_rdmo_enqueue_data(worker, client->pending_q,
+                                           &cache_key, data, length);
             return UCS_INPROGRESS;
         }
     }
 
-    return ucp_rdmo_append_put_data(ep, cache_entry, data, length);
+    return ucp_rdmo_append_put_data(client->ep, cache_entry, data, length);
 #endif
 }
 

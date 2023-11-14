@@ -258,7 +258,7 @@ typedef struct ucp_rdmo_client_cache_entry {
     ucp_rdmo_client_cache_t targets;
     ucp_ep_h                ep;
     unsigned                lock;
-    ucs_queue_head_t        *flush_ack_queue; /* acks on flush completion */
+    ucs_queue_head_t        *pending_q; /* got while locked by offset fetch */
 } ucp_rdmo_client_cache_entry_t;
 
 /* client_id -> target */

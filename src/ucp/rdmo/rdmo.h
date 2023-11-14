@@ -43,38 +43,45 @@ typedef struct ucp_rdmo_flush_ack_hdr {
     uint8_t     status;
 } UCS_S_PACKED ucp_rdmo_flush_ack_hdr_t;
 
-typedef struct ucp_rdmo_queued_put_data {
-    void             *data;
-    size_t           length;
-    ucs_queue_elem_t q_elem;
-} ucp_rdmo_queued_put_data_t;
+typedef enum ucp_rdmo_pending_elem_type {
+    UCP_RDMO_PENDING_ELEM_PUT_DATA,
+    UCP_RDMO_PENDING_ELEM_CLIENT_FLUSH
+} ucp_rdmo_pending_elem_type_t;
 
-typedef struct ucp_rdmo_ack_elem {
-    ucs_queue_elem_t                elem;
-    uint64_t                        client_id;
-    ucp_ep_h                        reply_ep;
-    uint64_t                        hdr_ep;
-} ucp_rdmo_ack_elem_t;
+typedef struct ucp_rdmo_pending_put_data_elem {
+    ucp_worker_rdmo_amo_cache_key_t key;
+    void                            *data;
+    size_t                          length;
+} ucp_rdmo_pending_put_data_elem_t;
+
+typedef struct ucp_rdmo_flush_elem {
+    ucp_ep_h        reply_ep;
+    uint64_t        hdr_ep;
+    ucs_status_t    status;
+} ucp_rdmo_flush_elem_t;
+
+typedef struct ucp_rdmo_pending_elem {
+    ucs_queue_elem_t             q_elem;
+    ucp_ep_h                     ep;
+    ucp_rdmo_pending_elem_type_t type;
+    union {
+        ucp_rdmo_pending_put_data_elem_t    put_data;
+        ucp_rdmo_flush_elem_t               flush;
+    };
+} ucp_rdmo_pending_elem_t;
+
+typedef struct ucp_rdmo_fetch_offset_data {
+    uint64_t                        offset;
+    ucp_worker_rdmo_clients_cache_t *cache;
+    ucp_worker_rdmo_amo_cache_key_t cache_key;
+} ucp_rdmo_fetch_offset_data_t;
 
 typedef struct ucp_rdmo_op_data {
     union {
-        struct {
-            ucs_queue_head_t                put_queue;
-            size_t                          put_queue_len;
-            ucp_worker_rdmo_amo_cache_key_t cache_key;
-            ucp_ep_h                        put_ep;
-            uint64_t                        offset;
-        } fetch_offset;
-
-        struct {
-            ucp_ep_h                 reply_ep;
-            ucp_rdmo_flush_ack_hdr_t hdr;
-        } flush;
-
-        ucp_rdmo_queued_put_data_t queued_put;
-        ucp_rdmo_ack_elem_t        queued_ack;
-        ucs_queue_head_t           pending_flush_acks;
-        uint64_t                   put_offset;
+        ucp_rdmo_fetch_offset_data_t    fetch_offset;
+        uint64_t                        put_offset;
+        ucp_rdmo_flush_elem_t           flush;
+        ucp_rdmo_pending_elem_t         pending_elem;
     };
 } ucp_rdmo_cb_data_t;
 
