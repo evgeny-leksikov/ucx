@@ -134,8 +134,8 @@ ucp_rdmo_cache_put(ucp_worker_h worker,
 
         i = kh_put(ucp_worker_rdmo_clients_cache, cache, key->client_id, &r);
         ucs_assert(r >= 0);
-        kh_init_inplace(ucp_rdmo_client_cache, &kh_val(cache, i).targets);
-        client            = &kh_val(cache, i);
+        client = &kh_val(cache, i);
+        kh_init_inplace(ucp_rdmo_client_cache, &client->targets);
         client->ep        = ucp_rdmo_dst_ep(worker, key->client_id);
         client->lock      = 0;
         client->pending_q = q;
@@ -152,8 +152,9 @@ ucp_rdmo_cache_put(ucp_worker_h worker,
     ucs_assert(r >= 0);
     kh_val(targets, i) = *entry;
 
-    ucs_debug("client_id %"PRIx64": new cache entry %p target 0x%"PRIx64,
-              key->client_id, &kh_val(targets, i), key->target);
+    ucs_debug("client_id %"PRIx64": new cache entry %p target 0x%"PRIx64"[%d]",
+              key->client_id, &kh_val(targets, i), key->target,
+              kh_size(targets));
 }
 
 static UCS_F_ALWAYS_INLINE ucp_rdmo_client_cache_entry_t*
@@ -203,17 +204,6 @@ ucp_rdmo_client_del_cache_entry(ucp_rdmo_client_cache_entry_t *client,
 
     ucs_assert(i != kh_end(&client->targets));
     kh_del(ucp_rdmo_client_cache, &client->targets, i);
-}
-
-static UCS_F_ALWAYS_INLINE void
-ucp_rdmo_cache_del(ucp_worker_rdmo_clients_cache_t *cache,
-                   const ucp_worker_rdmo_amo_cache_key_t *key)
-{
-    ucp_rdmo_client_cache_entry_t *client =
-            ucp_rdmo_cache_get_client(cache, key->client_id);
-
-    ucs_assert(client != NULL);
-    ucp_rdmo_client_del_cache_entry(client, key->target);
 }
 
 void ucp_rdmo_cache_free(ucp_worker_rdmo_clients_cache_t *cache)
@@ -355,7 +345,8 @@ ucp_rdmo_client_flush_completion(void *request, ucs_status_t status,
         .status = ucs_likely(flush->status == UCS_OK) ? status : flush->status
     };
 
-    ucs_debug("flush completion, send ack to 0x%"PRIx64, flush->hdr_ep);
+    ucs_debug("flush completion req %p, send ack to 0x%"PRIx64,
+              request, flush->hdr_ep);
     ucp_rdmo_flush_send_ack(flush->reply_ep, &hdr);
     if (UCS_PTR_IS_PTR(request)) {
         ucp_request_free(request);
@@ -424,6 +415,8 @@ ucp_rdmo_cache_flush_offset(ucp_ep_h ep,
 
     user_data->put_offset = entry->append_offset;
 
+    ucs_debug("put target 0x%"PRIu64" offset_val %"PRIu64,
+              entry->target_buffer, entry->append_offset);
     req = ucp_put_nbx(ep, &user_data->put_offset, sizeof(user_data->put_offset),
                       entry->target_buffer, entry->target_rkey, &fast);
     if (UCS_PTR_IS_PTR(req)) {
@@ -459,7 +452,6 @@ ucp_rdmo_client_flush(ucp_rdmo_client_cache_entry_t *client, ucp_ep_h reply_ep,
     });
 
     /* all puts for targets are posted, flush client */
-    ucs_assert(kh_size(&client->targets) == 0);
     op_status = ucp_rdmo_client_flush_ack(client->ep, reply_ep, hdr_ep, status);
     return ucs_likely(status == UCS_OK) ? op_status : status;
 }
@@ -487,8 +479,6 @@ ucp_rdmo_client_do_pending(ucp_rdmo_client_cache_entry_t *client)
         ucs_assert_always(!UCS_PTR_IS_ERR(status));
         ucs_mpool_put_inline(e);
     }
-
-    kh_clear(ucp_rdmo_client_cache, &client->targets);
 }
 
 static UCS_F_ALWAYS_INLINE ucs_status_t
@@ -505,6 +495,7 @@ ucp_rdmo_client_flush_handle_empty(const ucp_rdmo_client_cache_entry_t *client,
         return UCS_ERR_NO_PROGRESS;
     }
 
+    ucs_debug("client empty, send ack to 0x%"PRIx64, hdr_ep);
     ucp_rdmo_flush_send_ack(reply_ep, &ack);
     return UCS_OK;
 }
@@ -569,14 +560,15 @@ static void ucp_rdmo_offset_fetch_callback(void *request, ucs_status_t status,
     client = ucp_rdmo_cache_get_client(fetch_offset->cache, key->client_id);
     entry  = ucp_rdmo_client_get_cache_entry(client, key->target);
 
-    ucs_debug("client_id %"PRIx64": got offset %"PRIu64,
-              key->client_id, fetch_offset->offset);
+    ucs_debug("client_id %"PRIx64": got offset %"PRIu64" lock %u",
+               key->client_id, fetch_offset->offset, client->lock);
 
     ucs_assert_always(status == UCS_OK);
     ucs_assert(entry != NULL);
     ucs_assert(entry->fetch_cb_data == user_data);
     ucs_assert(fetch_offset->offset != UINT64_MAX);
 
+    entry->fetch_cb_data = NULL;
     entry->append_offset = fetch_offset->offset;
 
     ucs_assert_always(client->lock > 0);
@@ -681,14 +673,11 @@ ucp_rdmo_append_handler(void *arg, const void *header, size_t header_length,
                   cache_key.client_id, cache_key.target,
                   cache_entry->append_rkey, (ucp_rkey_h)append_hdr->data_rkey);
     } else {
-        ucp_rdmo_client_cache_entry_t* c =
-                ucp_rdmo_cache_get_client(&worker->rdmo_clients_cache,
-                                          cache_key.client_id);
         ucs_debug("client %"PRIx64": hit cache entry target 0x%"PRIx64
-                  " append rkey %p hdr_rkey %p, size %d",
+                  " append rkey %p hdr_rkey %p, offset %"PRIu64,
                   cache_key.client_id, cache_key.target,
                   cache_entry->append_rkey, (ucp_rkey_h)append_hdr->data_rkey,
-                  kh_size(&c->targets));
+                  cache_entry->append_offset);
     }
 
     client = ucp_rdmo_cache_get_client(&worker->rdmo_clients_cache,
