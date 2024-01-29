@@ -818,7 +818,7 @@ public:
                                 uint64_t field_mask)
     {
         entity *dummy = uct_test::create_entity(0);
-        m_entities.push_back(dummy);
+        m_entities.m_entities.push_back(dummy);
         uct_iface_params_t params = dummy->iface_params();
 
         check_skip_test();

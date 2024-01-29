@@ -97,6 +97,7 @@ struct ucx_perf_context {
             uct_peer_t             *peers;
             uct_allocated_memory_t send_mem;
             uct_allocated_memory_t recv_mem;
+            uct_allocated_memory_t import;
             uct_iov_t              *iov;
         } uct;
 

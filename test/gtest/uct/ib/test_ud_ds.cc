@@ -22,10 +22,10 @@ public:
         uct_test::init();
 
         m_e1 = create_entity(0);
-        m_entities.push_back(m_e1);
+        m_entities.m_entities.push_back(m_e1);
 
         m_e2 = create_entity(0);
-        m_entities.push_back(m_e2);
+        m_entities.m_entities.push_back(m_e2);
 
         uct_iface_get_address(m_e1->iface(), (uct_iface_addr_t*)(void *)&if_adr1);
         uct_iface_get_address(m_e2->iface(), (uct_iface_addr_t*)(void *)&if_adr2);

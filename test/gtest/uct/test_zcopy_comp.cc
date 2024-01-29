@@ -13,7 +13,7 @@ protected:
         uct_test::init();
 
         m_sender = create_entity(0);
-        m_entities.push_back(m_sender);
+        m_entities.m_entities.push_back(m_sender);
 
         check_skip_test();
     }
@@ -27,10 +27,10 @@ UCS_TEST_SKIP_COND_P(test_zcopy_comp, issue1440,
                      !check_caps(UCT_IFACE_FLAG_PUT_ZCOPY))
 {
     entity *receiver_small = create_entity(0);
-    m_entities.push_back(receiver_small);
+    m_entities.m_entities.push_back(receiver_small);
 
     entity *receiver_large = create_entity(0);
-    m_entities.push_back(receiver_large);
+    m_entities.m_entities.push_back(receiver_large);
 
     m_sender->connect(0, *receiver_small, 0);
     m_sender->connect(1, *receiver_large, 0);

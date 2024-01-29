@@ -267,6 +267,69 @@ uct_rc_mlx5_iface_rx_mp_context_from_hash(uct_rc_mlx5_iface_common_t *iface,
     return mp_ctx;
 }
 
+static UCS_F_ALWAYS_INLINE void
+uct_rc_mlx5_iface_update_tx_res(uct_rc_iface_t *rc_iface,
+                                uct_rc_mlx5_base_ep_t *rc_mlx5_base_ep,
+                                uint16_t hw_ci)
+{
+    uct_ib_mlx5_txwq_t *txwq = &rc_mlx5_base_ep->tx.wq;
+    uct_rc_txqp_t *txqp      = &rc_mlx5_base_ep->super.txqp;
+    uint16_t bb_num;
+
+    bb_num = uct_ib_mlx5_txwq_update_bb(txwq, hw_ci) -
+             uct_rc_txqp_available(txqp);
+
+    /* Must always have positive number of released resources. The first
+     * completion will report bb_num=1 (because prev_sw_pi is initialized to -1)
+     * and all the rest report the amount of BBs the previous WQE has consumed.
+     */
+    ucs_assertv(bb_num > 0, "hw_ci=%d prev_sw_pi=%d available=%d bb_num=%d",
+                hw_ci, txwq->prev_sw_pi, txqp->available, bb_num);
+
+    uct_rc_txqp_available_add(txqp, bb_num);
+    ucs_assert(uct_rc_txqp_available(txqp) <= txwq->bb_max);
+
+    uct_rc_iface_update_reads(rc_iface);
+    uct_rc_iface_add_cq_credits(rc_iface, bb_num);
+}
+
+static UCS_F_ALWAYS_INLINE unsigned
+uct_rc_mlx5_iface_poll_tx(uct_rc_mlx5_iface_common_t *iface, int poll_flags)
+{
+    struct mlx5_cqe64 *cqe;
+    uct_rc_mlx5_base_ep_t *ep;
+    unsigned qp_num;
+    uint16_t hw_ci;
+
+    cqe = uct_ib_mlx5_poll_cq(&iface->super.super, &iface->cq[UCT_IB_DIR_TX],
+                              poll_flags, uct_ib_mlx5_check_completion);
+    if (cqe == NULL) {
+        return 0;
+    }
+
+    UCS_STATS_UPDATE_COUNTER(iface->super.super.stats,
+                             UCT_IB_IFACE_STAT_TX_COMPLETION, 1);
+
+    ucs_memory_cpu_load_fence();
+
+    qp_num = ntohl(cqe->sop_drop_qpn) & UCS_MASK(UCT_IB_QPN_ORDER);
+    ep = ucs_derived_of(uct_rc_iface_lookup_ep(&iface->super, qp_num),
+                        uct_rc_mlx5_base_ep_t);
+    ucs_assert(ep != NULL);
+
+    hw_ci = ntohs(cqe->wqe_counter);
+    ucs_trace_poll("rc_mlx5 iface %p tx_cqe: ep %p qpn 0x%x hw_ci %d", iface,
+                   ep, qp_num, hw_ci);
+
+    uct_rc_mlx5_txqp_process_tx_cqe(&ep->super.txqp, cqe, hw_ci);
+    ucs_arbiter_group_schedule(&iface->super.tx.arbiter, &ep->super.arb_group);
+    uct_rc_mlx5_iface_update_tx_res(&iface->super, ep, hw_ci);
+    uct_rc_iface_arbiter_dispatch(&iface->super);
+    uct_ib_mlx5_update_db_cq_ci(&iface->cq[UCT_IB_DIR_TX]);
+
+    return 1;
+}
+
 static UCS_F_ALWAYS_INLINE struct mlx5_cqe64*
 uct_rc_mlx5_iface_poll_rx_cq(uct_rc_mlx5_iface_common_t *iface, int poll_flags)
 {
@@ -801,6 +864,7 @@ void uct_rc_mlx5_txqp_dptr_post_iov(uct_rc_mlx5_iface_common_t *iface, int qp_ty
                                     size_t av_size, uint8_t fm_ce_se,
                                     uint16_t dci_channel, int max_log_sge)
 {
+    unsigned opmode = 0;
     struct mlx5_wqe_ctrl_seg     *ctrl;
     struct mlx5_wqe_raddr_seg    *raddr;
     struct mlx5_wqe_data_seg     *dptr;
@@ -808,6 +872,7 @@ void uct_rc_mlx5_txqp_dptr_post_iov(uct_rc_mlx5_iface_common_t *iface, int qp_ty
     uct_rc_mlx5_hdr_t            *rch;
     unsigned                      wqe_size, inl_seg_size, ctrl_av_size;
     void                         *next_seg;
+    uct_ib_mlx5_dma_wqe_t        *gga_wqe;
 
     if (!(fm_ce_se & MLX5_WQE_CTRL_CQ_UPDATE)) {
         fm_ce_se |= uct_rc_iface_tx_moderation(&iface->super, txqp, MLX5_WQE_CTRL_CQ_UPDATE);
@@ -875,13 +940,29 @@ void uct_rc_mlx5_txqp_dptr_post_iov(uct_rc_mlx5_iface_common_t *iface, int qp_ty
                                                         iov, iovcnt);
         break;
 
+    case MLX5_OPCODE_MMO:
+        gga_wqe               = txwq->curr;
+        gga_wqe->gga_ctrl1    = 0;
+        gga_wqe->gga_ctrl2    = 0;
+        gga_wqe->opaque_lkey  = htobe32(txwq->super.devx.opaque_mr->lkey);
+        gga_wqe->opaque_vaddr = htobe64((uintptr_t)txwq->super.devx.opaque_buf);
+
+        ucs_assert(iovcnt == 1);
+        uct_ib_mlx5_set_data_seg_iov(txwq, &gga_wqe->gather, iov, iovcnt);
+        mlx5dv_set_data_seg(&gga_wqe->scatter, iov[0].length, rkey, remote_addr);
+        *(uint32_t *)(gga_wqe + 1) = 0;
+
+        wqe_size = sizeof(*gga_wqe);
+        opmode   = UCT_IB_MLX5_OPMOD_MMO_DMA;
+        break;
+
     default:
         ucs_fatal("invalid send opcode");
     }
 
     uct_rc_mlx5_common_post_send(iface, qp_type, txqp, txwq,
-                                 opcode_flags & UCT_RC_MLX5_OPCODE_MASK,
-                                 0, fm_ce_se, dci_channel, wqe_size, ib_imm_be,
+                                 opcode_flags & UCT_RC_MLX5_OPCODE_MASK, opmode,
+                                 fm_ce_se, dci_channel, wqe_size, ib_imm_be,
                                  max_log_sge, NULL);
 }
 
@@ -1806,4 +1887,39 @@ uct_rc_mlx5_iface_common_atomic_data(unsigned opcode, unsigned size, uint64_t va
         return UCS_ERR_UNSUPPORTED;
     }
     return UCS_OK;
+}
+
+/*
+ * Helper function for zero-copy post.
+ * Adds user completion to the callback queue.
+ */
+static UCS_F_ALWAYS_INLINE ucs_status_t uct_rc_mlx5_base_ep_zcopy_post(
+        uct_rc_mlx5_base_ep_t *ep, unsigned opcode, const uct_iov_t *iov,
+        size_t iovcnt, size_t iov_total_length,
+        /* SEND */ uint8_t am_id, const void *am_hdr, unsigned am_hdr_len,
+        /* RDMA */ uint64_t rdma_raddr, uct_rkey_t rdma_rkey,
+        /* TAG  */ uct_tag_t tag, uint32_t app_ctx, uint32_t ib_imm_be,
+        int force_sig, uct_rc_send_handler_t handler, uint16_t op_flags,
+        uct_completion_t *comp)
+{
+    uct_rc_mlx5_iface_common_t *iface  = ucs_derived_of(ep->super.super.super.iface,
+                                                        uct_rc_mlx5_iface_common_t);
+    uint16_t sn;
+
+    sn = ep->tx.wq.sw_pi;
+    uct_rc_mlx5_txqp_dptr_post_iov(iface, IBV_QPT_RC,
+                                   &ep->super.txqp, &ep->tx.wq,
+                                   opcode, iov, iovcnt,
+                                   am_id, am_hdr, am_hdr_len,
+                                   rdma_raddr, uct_ib_md_direct_rkey(rdma_rkey),
+                                   tag, app_ctx, ib_imm_be, 0,
+                                   (comp == NULL) ? force_sig : MLX5_WQE_CTRL_CQ_UPDATE,
+                                   0,
+                                   UCT_IB_MAX_ZCOPY_LOG_SGE(&iface->super.super));
+
+    uct_rc_txqp_add_send_comp(&iface->super, &ep->super.txqp, handler, comp, sn,
+                              op_flags | UCT_RC_IFACE_SEND_OP_FLAG_ZCOPY,
+                              iov, iovcnt, iov_total_length);
+
+    return UCS_INPROGRESS;
 }

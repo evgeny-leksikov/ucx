@@ -122,7 +122,7 @@ UCS_TEST_P(test_ud_timer, backoff_config) {
                   "UD_TIMER_BACKOFF",
                   ucs::to_string(UCT_UD_MIN_TIMER_TIMER_BACKOFF).c_str()));
     entity *e = uct_test::create_entity(0);
-    m_entities.push_back(e);
+    m_entities.m_entities.push_back(e);
 
     {
         /* iface creation should fail with back off value less than

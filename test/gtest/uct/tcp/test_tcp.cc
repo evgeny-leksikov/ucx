@@ -21,7 +21,7 @@ public:
 
         uct_test::init();
         m_ent = uct_test::create_entity(0);
-        m_entities.push_back(m_ent);
+        m_entities.m_entities.push_back(m_ent);
         m_tcp_iface = (uct_tcp_iface*)m_ent->iface();
     }
 

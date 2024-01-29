@@ -387,6 +387,9 @@ typedef struct uct_rc_mlx5_iface_common {
         uct_rc_mlx5_release_desc_t     am_desc;
         UCS_STATS_NODE_DECLARE(stats)
     } tm;
+    struct {
+        uint8_t enabled;
+    } gga;
 #if HAVE_IBV_DM
     struct {
         uct_mlx5_dm_data_t             *dm;

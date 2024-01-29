@@ -36,11 +36,11 @@ protected:
 
         m_sender = uct_test::create_entity(0, NULL, NULL, NULL, NULL, NULL,
                                            send_async_event_handler, this);
-        m_entities.push_back(m_sender);
+        m_entities.m_entities.push_back(m_sender);
 
         m_receiver = uct_test::create_entity(0, NULL, NULL, NULL, NULL, NULL,
                                              recv_async_event_handler, this);
-        m_entities.push_back(m_receiver);
+        m_entities.m_entities.push_back(m_receiver);
 
         check_skip_test();
 

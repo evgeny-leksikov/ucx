@@ -144,9 +144,9 @@ public:
         m_connect_addr.set_port(port);
 
         m_server = uct_test::create_entity();
-        m_entities.push_back(m_server);
+        m_entities.m_entities.push_back(m_server);
         m_client = uct_test::create_entity();
-        m_entities.push_back(m_client);
+        m_entities.m_entities.push_back(m_client);
 
         m_client->max_conn_priv = m_client->cm_attr().max_conn_priv;
         m_server->max_conn_priv = m_server->cm_attr().max_conn_priv;
@@ -795,10 +795,10 @@ UCS_TEST_P(test_uct_sockaddr, cm_query)
     ucs_status_t status;
     size_t i;
 
-    for (i = 0; i < m_entities.size(); ++i) {
+    for (i = 0; i < m_entities.m_entities.size(); ++i) {
         uct_cm_attr_t attr;
         attr.field_mask = UCT_CM_ATTR_FIELD_MAX_CONN_PRIV;
-        status = uct_cm_query(m_entities.at(i).cm(), &attr);
+        status = uct_cm_query(m_entities.m_entities.at(i).cm(), &attr);
         ASSERT_UCS_OK(status);
         EXPECT_LT(0ul, attr.max_conn_priv);
     }
@@ -862,7 +862,7 @@ UCS_TEST_P(test_uct_sockaddr, cm_open_listen_close)
 
 UCS_TEST_P(test_uct_sockaddr, cm_open_listen_close_large_priv_data)
 {
-    m_entities.clear();
+    m_entities.m_entities.clear();
 
     /* Set the values for max send/recv socket buffers (for tcp_sockcm) to
      * small enough values to have the send/recv of a large data buffer in
@@ -892,7 +892,7 @@ UCS_TEST_P(test_uct_sockaddr, cm_open_listen_kill_server)
     EXPECT_TRUE(ucs_test_all_flags(m_state, (TEST_STATE_SERVER_CONNECTED |
                                              TEST_STATE_CLIENT_CONNECTED)));
 
-    EXPECT_EQ(1ul, m_entities.remove(m_server));
+    EXPECT_EQ(1ul, m_entities.m_entities.remove(m_server));
     m_server = NULL;
 
     wait_for_bits(&m_state, TEST_STATE_CLIENT_DISCONNECTED);
@@ -1284,7 +1284,7 @@ UCS_TEST_P(test_uct_sockaddr_stress, many_clients_to_one_server)
     /* multiple clients, each on a cm of its own, connecting to the same server */
     for (i = 0; i < m_clients_num; ++i) {
         client_test = uct_test::create_entity();
-        m_entities.push_back(client_test);
+        m_entities.m_entities.push_back(client_test);
 
         client_test->max_conn_priv  = client_test->cm_attr().max_conn_priv;
         connect(*client_test, 0, client_disconnect_cb);
@@ -1308,7 +1308,7 @@ UCS_TEST_P(test_uct_sockaddr_stress, many_clients_to_one_server)
     /* save all the clients' and server's eps in the m_all_eps array */
     for (i = 0; i < m_clients_num; ++i) {
         /* first 2 entities are m_server and m_client */
-        m_all_eps[i].ep                    = m_entities.at(2 + i).ep(0);
+        m_all_eps[i].ep                    = m_entities.m_entities.at(2 + i).ep(0);
         m_all_eps[i].state                 = 0;
         m_all_eps[m_clients_num + i].ep    = m_server->ep(i);
         m_all_eps[m_clients_num + i].state = 0;
@@ -1376,7 +1376,7 @@ UCS_TEST_P(test_uct_sockaddr_stress, many_clients_to_one_server)
 
     /* destroy all the eps here (and not in the test's destruction flow) so that
      * no disconnect callbacks are invoked after the test ends */
-    m_entities.clear();
+    m_entities.m_entities.clear();
 
     /* destroyed EPs don't invoke CBs, need to clean up user data manually */
     release_user_data();

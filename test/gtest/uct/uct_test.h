@@ -38,8 +38,8 @@
 
 
 #define FOR_EACH_ENTITY(_iter) \
-    for (ucs::ptr_vector<entity>::const_iterator _iter = m_entities.begin(); \
-         _iter != m_entities.end(); ++_iter) \
+    for (ucs::ptr_vector<entity>::const_iterator _iter = m_entities.m_entities.begin(); \
+         _iter != m_entities.m_entities.end(); ++_iter) \
 
 
 /* Testing resource */
@@ -151,6 +151,12 @@ protected:
 
         void rkey_release(const uct_rkey_bundle *rkey_bundle) const;
 
+        /* Caller takes ownership of the returned buffer and must delete it */
+        void *memh_export(uct_mem_h memh) const;
+
+        /* Import the exported rkey and release it */
+        void memh_attach(void *rkey_buffer, uct_rkey_bundle *rkey_bundle);
+
         unsigned progress() const;
 
         bool is_caps_supported(uint64_t required_flags);
@@ -227,6 +233,7 @@ protected:
         const resource              m_resource;
         ucs::handle<uct_md_h>       m_md;
         uct_md_attr_v2_t            m_md_attr;
+        uct_mem_h                   m_exp_memh;
         mutable async_wrapper       m_async;
         ucs::handle<uct_worker_h>   m_worker;
         ucs::handle<uct_cm_h>       m_cm;
@@ -255,6 +262,7 @@ protected:
         ucs_memory_type_t mem_type() const;
         void *reg_addr() const;
         uct_rkey_t rkey() const;
+        void rkey_import(const uct_rkey_bundle_t &rkey_bundle);
         const uct_iov_t* iov() const;
 
         void pattern_fill(uint64_t seed);
@@ -271,6 +279,7 @@ protected:
         void                    *m_buf;
         void                    *m_end;
         uct_rkey_bundle_t       m_rkey;
+        uct_rkey_bundle_t       m_rkey_imported;
         uct_allocated_memory_t  m_mem;
         uct_iov_t               m_iov;
     };
@@ -445,10 +454,10 @@ protected:
 
     ucs_status_t send_am_message(entity *e, uint8_t am_id = 0, int ep_idx = 0);
 
-    ucs::ptr_vector<entity> m_entities;
-    uct_iface_config_t      *m_iface_config;
-    uct_md_config_t         *m_md_config;
-    uct_cm_config_t         *m_cm_config;
+    ucs::entities_storage<entity> m_entities;
+    uct_iface_config_t            *m_iface_config;
+    uct_md_config_t               *m_md_config;
+    uct_cm_config_t               *m_cm_config;
 };
 
 std::ostream& operator<<(std::ostream& os, const resource* resource);
@@ -472,7 +481,8 @@ protected:
     rc_verbs,           \
     dc_mlx5,            \
     ud_verbs,           \
-    ud_mlx5
+    ud_mlx5,            \
+    gga_mlx5
 
 
 #define UCT_TEST_CMS rdmacm, tcp

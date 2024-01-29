@@ -27,10 +27,10 @@ public:
         uct_test::init();
 
         m_e1 = uct_test::create_entity(0);
-        m_entities.push_back(m_e1);
+        m_entities.m_entities.push_back(m_e1);
 
         m_e2 = uct_test::create_entity(0);
-        m_entities.push_back(m_e2);
+        m_entities.m_entities.push_back(m_e2);
 
         uct_iface_set_am_handler(m_e1->iface(), 0, am_dummy_handler, NULL, 0);
         uct_iface_set_am_handler(m_e2->iface(), 0, am_dummy_handler, NULL, 0);
@@ -41,7 +41,7 @@ public:
             UCS_TEST_ABORT("Error: cannot enable random DCI policy");
         }
         entity *rand_e = uct_test::create_entity(0);
-        m_entities.push_back(rand_e);
+        m_entities.m_entities.push_back(rand_e);
         return rand_e;
     }
 

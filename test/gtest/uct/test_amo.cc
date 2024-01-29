@@ -19,13 +19,13 @@ void uct_amo_test::init() {
     srand48(ucs::rand());
 
     entity *receiver = uct_test::create_entity(0);
-    m_entities.push_back(receiver);
+    m_entities.m_entities.push_back(receiver);
 
     check_skip_test();
 
     for (unsigned i = 0; i < num_senders(); ++i) {
         entity *sender = uct_test::create_entity(0);
-        m_entities.push_back(sender);
+        m_entities.m_entities.push_back(sender);
         sender->connect(0, *receiver, i);
         receiver->connect(i, *sender, 0);
     }
@@ -56,11 +56,11 @@ void uct_amo_test::add_reply_safe(uint64_t data) {
 }
 
 const uct_amo_test::entity& uct_amo_test::receiver() {
-    return m_entities.at(0);
+    return m_entities.m_entities.at(0);
 }
 
 const uct_amo_test::entity& uct_amo_test::sender(unsigned index) {
-    return m_entities.at(1 + index);
+    return m_entities.m_entities.at(1 + index);
 }
 
 void uct_amo_test::validate_replies(const std::vector<uint64_t>& exp_replies) {

@@ -9,6 +9,7 @@
 #endif
 
 #include "ib_mlx5_log.h"
+#include "rc/accel/rc_mlx5.h"
 
 #include <uct/ib/base/ib_device.h>
 #include <uct/ib/mlx5/ib_mlx5.inl>
@@ -282,6 +283,7 @@ static void uct_ib_mlx5_wqe_dump(uct_ib_iface_t *iface, void *wqe, void *qstart,
                                            UCT_IB_OPCODE_FLAG_HAS_RADDR|UCT_IB_OPCODE_FLAG_HAS_EXT_ATOMIC },
         [MLX5_OPCODE_ATOMIC_MASKED_FA] = { "MASKED_FETCH_ADD",
                                            UCT_IB_OPCODE_FLAG_HAS_RADDR|UCT_IB_OPCODE_FLAG_HAS_EXT_ATOMIC },
+        [MLX5_OPCODE_MMO     ]         = { "MMO",        UCT_IB_OPCODE_FLAG_HAS_RADDR},
    };
 
     struct mlx5_wqe_ctrl_seg *ctrl = wqe;
@@ -334,12 +336,22 @@ static void uct_ib_mlx5_wqe_dump(uct_ib_iface_t *iface, void *wqe, void *qstart,
 
     /* Remote address segment */
     if (op->flags & UCT_IB_OPCODE_FLAG_HAS_RADDR) {
-        struct mlx5_wqe_raddr_seg *rseg = seg;
-        uct_ib_log_dump_remote_addr(be64toh(rseg->raddr), ntohl(rseg->rkey), s, ends - s);
+        if (opcode == MLX5_OPCODE_MMO) {
+            uct_ib_mlx5_dma_wqe_t *dma_wqe = seg;
+            uct_ib_log_dump_remote_addr(be64toh(dma_wqe->scatter.addr),
+                                        ntohl(dma_wqe->scatter.lkey),
+                                        s, ends - s);
+            seg = dma_wqe + 1;
+        } else {
+            struct mlx5_wqe_raddr_seg *rseg = seg;
+            uct_ib_log_dump_remote_addr(be64toh(rseg->raddr), ntohl(rseg->rkey),
+                                        s, ends - s);
+            seg = rseg + 1;
+        }
+
         s += strlen(s);
 
         --ds;
-        seg = rseg + 1;
         if (seg == qend) {
             seg = qstart;
         }

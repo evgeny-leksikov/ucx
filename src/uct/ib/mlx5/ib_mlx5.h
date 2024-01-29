@@ -86,6 +86,8 @@
 #define UCT_IB_MLX5_OPMOD_EXT_ATOMIC(_log_arg_size) \
     ((8) | ((_log_arg_size) - 2))
 
+#define UCT_IB_MLX5_OPMOD_MMO_DMA   0x1
+
 #ifdef HAVE_STRUCT_MLX5_WQE_AV_BASE
 
 #  define mlx5_av_base(_av)         (&(_av)->base)
@@ -233,6 +235,14 @@ enum {
 
 
 #if HAVE_DEVX
+typedef struct uct_ib_mlx5_dma_opaque {
+    uint32_t syndrom;
+    uint32_t reserved;
+    uint32_t scattered_length;
+    uint32_t gathered_length;
+    uint8_t  reserved2[48];
+} UCS_S_PACKED uct_ib_mlx5_dma_opaque_t;
+
 typedef struct {
     struct mlx5dv_devx_obj *dvmr;
     int                    mr_num;
@@ -519,6 +529,7 @@ typedef struct uct_ib_mlx5_qp_attr {
     int                         full_handshake;
     int                         rdma_wr_disabled;
     uint8_t                     log_num_dci_stream_channels;
+    uint8_t                     enable_mmo;
 } uct_ib_mlx5_qp_attr_t;
 
 
@@ -537,6 +548,9 @@ typedef struct uct_ib_mlx5_qp {
             uct_ib_mlx5_dbrec_t        *dbrec;
             uct_ib_mlx5_devx_umem_t    mem;
             struct mlx5dv_devx_obj     *obj;
+            /* GGA */
+            struct mlx5_dma_opaque     *opaque_buf;
+            struct ibv_mr              *opaque_mr;
         } devx;
 #endif
     };

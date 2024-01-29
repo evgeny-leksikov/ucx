@@ -10,6 +10,7 @@
 
 #ifdef HAVE_CONFIG_H
 #  include "config.h"
+#include "uct/api/v2/uct_v2.h"
 #endif
 
 #include <ucs/debug/log.h>
@@ -689,7 +690,21 @@ static ucs_status_t uct_perf_test_setup_endpoints(ucx_perf_context_t *perf)
         goto err_free;
     }
 
-    if (md_attr.cap.flags & (UCT_MD_FLAG_ALLOC|UCT_MD_FLAG_REG)) {
+    if (md_attr.cap.flags & (UCT_MD_FLAG_EXPORTED_MKEY | UCT_MD_FLAG_ALLOC |
+                             UCT_MD_FLAG_REG)) {
+        uct_md_mkey_pack_params_t params = {
+            .field_mask = UCT_MD_MKEY_PACK_FIELD_FLAGS,
+            .flags      = UCT_MD_MKEY_PACK_FLAG_EXPORT
+        };
+
+        memset(rkey_buffer, 0, info.rkey_size);
+        status = uct_md_mkey_pack_v2(perf->uct.md, perf->uct.recv_mem.memh,
+                                     NULL, SIZE_MAX, &params, rkey_buffer);
+        if (status != UCS_OK) {
+            ucs_error("Failed to uct_rkey_pack: %s", ucs_status_string(status));
+            goto err_free;
+        }
+    } else if (md_attr.cap.flags & (UCT_MD_FLAG_ALLOC|UCT_MD_FLAG_REG)) {
         memset(rkey_buffer, 0, info.rkey_size);
         status = uct_md_mkey_pack(perf->uct.md, perf->uct.recv_mem.memh, rkey_buffer);
         if (status != UCS_OK) {
@@ -765,7 +780,32 @@ static ucs_status_t uct_perf_test_setup_endpoints(ucx_perf_context_t *perf)
             goto err_destroy_eps;
         }
 
-        if (md_attr.cap.flags & (UCT_MD_FLAG_ALLOC|UCT_MD_FLAG_REG)) {
+        if (md_attr.cap.flags & (UCT_MD_FLAG_EXPORTED_MKEY | UCT_MD_FLAG_ALLOC |
+                                 UCT_MD_FLAG_REG)) {
+            void *rkey_repack_buf;
+            uct_md_mem_attach_params_t attach_params = {0};
+            ucs_assert(perf->uct.send_mem.memh != NULL);
+            status = uct_md_mem_attach(perf->uct.md, rkey_buffer,
+                           &attach_params, &perf->uct.import.memh);
+            if (status != UCS_OK) {
+                ucs_error("Failed to uct_md_mem_attach: %s", ucs_status_string(status));
+                goto err_destroy_eps;
+            }
+
+            rkey_repack_buf = ucs_alloca(md_attr.rkey_packed_size);
+            status = uct_md_mkey_pack(perf->uct.md, perf->uct.import.memh,
+                                      rkey_repack_buf);
+            if (status != UCS_OK) {
+                ucs_error("Failed to uct_md_mkey_pack: %s", ucs_status_string(status));
+                goto err_destroy_eps; // TODO: destroy import.memh
+            }
+            status = uct_rkey_unpack(perf->uct.cmpt, rkey_repack_buf,
+                                     &perf->uct.peers[i].rkey);
+            if (status != UCS_OK) {
+                ucs_error("Failed to uct_rkey_unpack: %s", ucs_status_string(status));
+                goto err_destroy_eps;
+            }
+        } else if (md_attr.cap.flags & (UCT_MD_FLAG_ALLOC|UCT_MD_FLAG_REG)) {
             status = uct_rkey_unpack(perf->uct.cmpt, rkey_buffer,
                                      &perf->uct.peers[i].rkey);
             if (status != UCS_OK) {

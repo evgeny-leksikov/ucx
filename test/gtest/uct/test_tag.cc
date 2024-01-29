@@ -453,11 +453,11 @@ public:
 
 protected:
     uct_test::entity& sender() {
-        return **m_entities.begin();
+        return **m_entities.m_entities.begin();
     }
 
     uct_test::entity& receiver() {
-        return **(m_entities.end() - 1);
+        return **(m_entities.m_entities.end() - 1);
     }
 
     std::vector<void*> m_uct_descs;
@@ -968,11 +968,11 @@ protected:
     bool               m_hold_uct_desc;
 
     uct_test::entity& sender() {
-        return **m_entities.begin();
+        return **m_entities.m_entities.begin();
     }
 
     uct_test::entity& receiver() {
-        return **(m_entities.end() - 1);
+        return **(m_entities.m_entities.end() - 1);
     }
 
 private:
@@ -1026,12 +1026,12 @@ void test_tag_mp_xrq::init()
     entity *sender = uct_test::create_entity(0ul, NULL, unexp_eager, unexp_rndv,
                                              reinterpret_cast<void*>(this),
                                              reinterpret_cast<void*>(this));
-    m_entities.push_back(sender);
+    m_entities.m_entities.push_back(sender);
 
     entity *receiver = uct_test::create_entity(0ul, NULL, unexp_eager, unexp_rndv,
                                                reinterpret_cast<void*>(this),
                                                reinterpret_cast<void*>(this));
-    m_entities.push_back(receiver);
+    m_entities.m_entities.push_back(receiver);
 
     if (!UCT_RC_MLX5_MP_ENABLED(rc_mlx5_iface(test_tag_mp_xrq::sender()))) {
         UCS_TEST_SKIP_R("No MP XRQ support");

@@ -49,7 +49,7 @@ public:
         uct_test::init();
 
         m_receiver = create_entity(sizeof(receive_desc_t));
-        m_entities.push_back(m_receiver);
+        m_entities.m_entities.push_back(m_receiver);
 
         check_skip_test();
     }
@@ -120,7 +120,7 @@ UCS_TEST_SKIP_COND_P(test_many2one_am, am_bcopy,
         mapped_buffer *buffer = new mapped_buffer(
                             sender->iface_attr().cap.am.max_bcopy, 0, *sender);
         sender->connect(0, *m_receiver, i);
-        m_entities.push_back(sender);
+        m_entities.m_entities.push_back(sender);
         buffers.push_back(buffer);
     }
 

@@ -935,7 +935,7 @@ public:
 
     void kill_receiver()
     {
-        m_entities.remove(m_e2);
+        m_entities.m_entities.remove(m_e2);
     }
 
     static ucs_status_t err_cb(void *arg, uct_ep_h ep, ucs_status_t status)

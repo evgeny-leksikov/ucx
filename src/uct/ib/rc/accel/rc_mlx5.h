@@ -25,6 +25,18 @@
                                    UCS_STATUS_PTR(UCS_ERR_NO_RESOURCE))
 
 
+typedef struct uct_ib_mlx5_dma_wqe {
+    uint32_t opcode;
+    uint32_t sq_ds;
+    uint32_t flags;
+    uint32_t gga_ctrl1;  /* unused for dma */
+    uint32_t gga_ctrl2;  /* unused for dma */
+    uint32_t opaque_lkey;
+    uint64_t opaque_vaddr;
+    struct mlx5_wqe_data_seg gather;
+    struct mlx5_wqe_data_seg scatter;
+} uct_ib_mlx5_dma_wqe_t;
+
 enum {
     /* EP address includes flush_rkey value */
     UCT_RC_MLX5_EP_ADDR_FLAG_FLUSH_RKEY = UCS_BIT(0)
@@ -40,6 +52,12 @@ typedef struct uct_rc_mlx5_base_ep {
         uct_ib_mlx5_txwq_t   wq;
     } tx;
 } uct_rc_mlx5_base_ep_t;
+
+
+UCS_CLASS_DECLARE(uct_rc_mlx5_base_ep_t, const uct_ep_params_t *);
+UCS_CLASS_DECLARE_NEW_FUNC(uct_rc_mlx5_base_ep_t, uct_ep_t,
+                           const uct_ep_params_t *);
+UCS_CLASS_DECLARE_DELETE_FUNC(uct_rc_mlx5_base_ep_t, uct_ep_t);
 
 
 /**
@@ -229,5 +247,9 @@ unsigned uct_rc_mlx5_ep_cleanup_qp(void *arg);
 ucs_status_t uct_rc_mlx5_iface_event_fd_get(uct_iface_h tl_iface, int *fd_p);
 
 ucs_status_t uct_rc_mlx5_iface_arm(uct_iface_h tl_iface, unsigned events);
+
+void
+uct_rc_mlx5_iface_handle_failure(uct_ib_iface_t *ib_iface, void *arg,
+                                 ucs_status_t ep_status);
 
 #endif

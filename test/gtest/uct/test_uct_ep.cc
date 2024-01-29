@@ -18,7 +18,7 @@ protected:
 
         m_sender   = NULL;
         m_receiver = uct_test::create_entity(0);
-        m_entities.push_back(m_receiver);
+        m_entities.m_entities.push_back(m_receiver);
 
         check_skip_test();
 
@@ -30,7 +30,7 @@ protected:
     void create_sender()
     {
         m_sender = uct_test::create_entity(0);
-        m_entities.push_back(m_sender);
+        m_entities.m_entities.push_back(m_sender);
     }
 
     void connect()
@@ -150,8 +150,8 @@ UCS_TEST_SKIP_COND_P(test_uct_ep, is_connected,
     e2 = create_entity(0);
     e1->connect(0, *e2, 0);
 
-    m_entities.push_back(e1);
-    m_entities.push_back(e2);
+    m_entities.m_entities.push_back(e1);
+    m_entities.m_entities.push_back(e2);
 
     ASSERT_UCS_OK(uct_iface_query(m_receiver->iface(), &iface_attr));
     dev_addr.resize(iface_attr.device_addr_len);
@@ -236,7 +236,7 @@ UCS_TEST_SKIP_COND_P(test_uct_ep, destroy_entity_after_send,
         /* Mapped buffer has to be released before destroying a sender entity */
         buffer.reset();
 
-        m_entities.remove(m_sender);
+        m_entities.m_entities.remove(m_sender);
     }
 }
 

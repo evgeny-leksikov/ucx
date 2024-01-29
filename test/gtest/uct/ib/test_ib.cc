@@ -19,8 +19,8 @@ void test_uct_ib::create_connected_entities() {
     m_e1 = uct_test::create_entity(0);
     m_e2 = uct_test::create_entity(0);
 
-    m_entities.push_back(m_e1);
-    m_entities.push_back(m_e2);
+    m_entities.m_entities.push_back(m_e1);
+    m_entities.m_entities.push_back(m_e2);
 
     m_e1->connect(0, *m_e2, 0);
     m_e2->connect(0, *m_e1, 0);
@@ -193,7 +193,7 @@ UCS_TEST_P(test_uct_ib_addr, address_pack) {
 
 UCS_TEST_P(test_uct_ib_addr, address_pack_path_mtu, "IB_PATH_MTU=2048")
 {
-    uct_ib_iface_t *iface = ucs_derived_of(m_entities.front()->iface(),
+    uct_ib_iface_t *iface = ucs_derived_of(m_entities.m_entities.front()->iface(),
                                            uct_ib_iface_t);
     size_t addr_len       = uct_ib_iface_address_size(iface);
     std::vector<char> buffer(addr_len);
@@ -833,8 +833,8 @@ public:
                                        async_event_handler, this);
         m_e2 = uct_test::create_entity(0);
 
-        m_entities.push_back(m_e1);
-        m_entities.push_back(m_e2);
+        m_entities.m_entities.push_back(m_e1);
+        m_entities.m_entities.push_back(m_e2);
 
         m_e1->connect(0, *m_e2, 0);
         m_e2->connect(0, *m_e1, 0);
@@ -1019,8 +1019,8 @@ public:
         modify_config("IB_PATH_MTU", "2048");
         m_e2 = uct_test::create_entity(0);
 
-        m_entities.push_back(m_e1);
-        m_entities.push_back(m_e2);
+        m_entities.m_entities.push_back(m_e1);
+        m_entities.m_entities.push_back(m_e2);
 
         m_e1->connect(0, *m_e2, 0);
         m_e2->connect(0, *m_e1, 0);

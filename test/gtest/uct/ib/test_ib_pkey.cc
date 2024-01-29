@@ -41,8 +41,8 @@ protected:
     void cleanup_entities() {
         m_e1->destroy_eps();
         m_e2->destroy_eps();
-        m_entities.remove(m_e1);
-        m_entities.remove(m_e2);
+        m_entities.m_entities.remove(m_e1);
+        m_entities.m_entities.remove(m_e2);
         m_e1 = NULL;
         m_e2 = NULL;
     }
@@ -185,13 +185,13 @@ UCS_TEST_P(test_uct_ib_pkey, test_pkey_pairs) {
                       ucs::to_hex_string(m_pkey[0] &
                                          UCT_IB_PKEY_PARTITION_MASK));
         m_e1 = uct_test::create_entity(0);
-        m_entities.push_back(m_e1);
+        m_entities.m_entities.push_back(m_e1);
 
         modify_config("IB_PKEY", "0x" +
                       ucs::to_hex_string(m_pkey[1] &
                                          UCT_IB_PKEY_PARTITION_MASK));
         m_e2 = uct_test::create_entity(0);
-        m_entities.push_back(m_e2);
+        m_entities.m_entities.push_back(m_e2);
 
         m_e1->connect(0, *m_e2, 0);
         m_e2->connect(0, *m_e1, 0);

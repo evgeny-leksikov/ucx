@@ -20,7 +20,7 @@ public:
         uct_test::init();
 
         m_e = create_entity(0);
-        m_entities.push_back(m_e);
+        m_entities.m_entities.push_back(m_e);
 
         if (!(md()->super.dev.flags & UCT_IB_DEVICE_FLAG_MLX5_PRM &&
               md()->flags & UCT_IB_MLX5_MD_FLAG_DEVX)) {

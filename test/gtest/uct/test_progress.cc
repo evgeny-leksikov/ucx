@@ -16,7 +16,7 @@ public:
     virtual void init()
     {
         uct_test::init();
-        m_entities.push_back(create_entity(0));
+        m_entities.m_entities.push_back(create_entity(0));
     }
 
 protected:

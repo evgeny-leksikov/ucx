@@ -7,12 +7,12 @@ void ud_base_test::init()
     uct_test::init();
 
     m_e1 = uct_test::create_entity(0, get_err_handler());
-    m_entities.push_back(m_e1);
+    m_entities.m_entities.push_back(m_e1);
 
     check_skip_test();
 
     m_e2 = uct_test::create_entity(0, get_err_handler());
-    m_entities.push_back(m_e2);
+    m_entities.m_entities.push_back(m_e2);
 }
 
 uct_error_handler_t ud_base_test::get_err_handler() const

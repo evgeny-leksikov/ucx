@@ -55,7 +55,7 @@ public:
         constexpr int counters[2] = {UCT_IB_IFACE_STAT_TX_COMPLETION_ZIPPED,
                                      UCT_IB_IFACE_STAT_RX_COMPLETION_ZIPPED};
 
-        for (auto &entity : m_entities) {
+        for (auto &entity : m_entities.m_entities) {
             auto stats = ucs_derived_of(entity->iface(), uct_ib_iface_t)->stats;
             for (auto &counter : counters) {
                 zipped_cqes_count += UCS_STATS_GET_COUNTER(stats, counter);

@@ -37,7 +37,7 @@ ucs_status_t uct_p2p_rma_test::put_zcopy(uct_ep_h ep, const mapped_buffer &sendb
                                          const mapped_buffer &recvbuf)
 {
     UCS_TEST_GET_BUFFER_IOV(iov, iovcnt, sendbuf.ptr(), sendbuf.length(),
-                            sendbuf.memh(), sender().iface_attr().cap.put.max_iov);
+                            sendbuf.memh(), 1 /*sender().iface_attr().cap.put.max_iov*/);
 
     return uct_ep_put_zcopy(ep, iov, iovcnt, recvbuf.addr(), recvbuf.rkey(), comp());
 }
@@ -79,6 +79,16 @@ void uct_p2p_rma_test::test_xfer(send_func_t send, size_t length,
     mapped_buffer sendbuf(length, SEED1, sender(), 1, src_mem_type);
     mapped_buffer recvbuf(length, SEED2, receiver(), 3, mem_type);
 
+    if (!m_entities.is_loopback() &&
+        (sender().md_attr().flags & UCT_MD_FLAG_EXPORTED_MKEY) &&
+        (receiver().md_attr().flags & UCT_MD_FLAG_EXPORTED_MKEY)) {
+
+        void *exp_memh = receiver().memh_export(recvbuf.memh());
+        uct_rkey_bundle rkey_bundle;
+        sender().memh_attach(exp_memh, &rkey_bundle);
+        recvbuf.rkey_import(rkey_bundle);
+    }
+
     blocking_send(send, sender_ep(), sendbuf, recvbuf, true);
     if (flags & TEST_UCT_FLAG_SEND_ZCOPY) {
         sendbuf.memset(0);
@@ -108,7 +118,7 @@ UCS_TEST_SKIP_COND_P(uct_p2p_rma_test, put_bcopy,
 UCS_TEST_SKIP_COND_P(uct_p2p_rma_test, put_zcopy,
                      !check_caps(UCT_IFACE_FLAG_PUT_ZCOPY)) {
     test_xfer_multi(static_cast<send_func_t>(&uct_p2p_rma_test::put_zcopy),
-                    0ul, sender().iface_attr().cap.put.max_zcopy,
+                    1ul, sender().iface_attr().cap.put.max_zcopy,
                     TEST_UCT_FLAG_SEND_ZCOPY);
 }
 

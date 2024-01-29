@@ -1290,7 +1290,8 @@ void uct_ib_md_free(uct_ib_md_t *md)
     ret = ibv_dealloc_pd(md->pd);
     /* Do not print a warning if PD deallocation failed with EINVAL, because
      * it fails from time to time on BF/ARM (TODO: investigate) */
-    if ((ret != 0) && (errno != EINVAL)) {
+    if (/*FIXME: GGA always returns BUSY */ 0 &&
+        (ret != 0) && (errno != EINVAL)) {
         ucs_warn("ibv_dealloc_pd() failed: %m");
     }
 

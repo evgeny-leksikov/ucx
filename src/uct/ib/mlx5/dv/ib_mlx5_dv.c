@@ -126,6 +126,44 @@ void uct_ib_mlx5dv_qp_init_attr(uct_ib_qp_init_attr_t *qp_init_attr,
 }
 
 #if HAVE_DEVX
+static ucs_status_t uct_ib_mlx5_devx_qp_enable_mmo(uct_ib_mlx5_qp_t *qp,
+                                                   uct_ib_mlx5_md_t *md)
+{
+    char in[UCT_IB_MLX5DV_ST_SZ_BYTES(init2init_qp_in)] = {};
+    char out[UCT_IB_MLX5DV_ST_SZ_BYTES(init2init_qp_out)] = {};
+    void *qpce = UCT_IB_MLX5DV_ADDR_OF(init2init_qp_in, in, qpc_data_extension);
+    int rc;
+
+    rc = ucs_posix_memalign((void**)&qp->devx.opaque_buf,
+                            sizeof(uct_ib_mlx5_dma_opaque_t),
+                            sizeof(uct_ib_mlx5_dma_opaque_t), "gga_opaque_buf");
+    if (rc != 0) {
+        ucs_error("cannot allocate MMO opaque buffer: %m");
+        return UCS_ERR_NO_MEMORY;
+    }
+
+    qp->devx.opaque_mr = ibv_reg_mr(md->super.pd, qp->devx.opaque_buf,
+                                    sizeof(uct_ib_mlx5_dma_opaque_t),
+                                    IBV_ACCESS_LOCAL_WRITE);
+    if (qp->devx.opaque_mr == NULL) {
+        ucs_error("cannot register MMO opaque buffer: %m");
+        ucs_free(qp->devx.opaque_buf);
+        return UCS_ERR_NO_MEMORY;
+    }
+
+    UCT_IB_MLX5DV_SET(init2init_qp_in, in, opcode,
+                      UCT_IB_MLX5_CMD_OP_INIT2INIT_QP);
+    UCT_IB_MLX5DV_SET(init2init_qp_in, in, qpc_ext, 1);
+    UCT_IB_MLX5DV_SET(init2init_qp_in, in, qpn, qp->qp_num);
+    UCT_IB_MLX5DV_SET64(init2init_qp_in, in, opt_param_mask_95_32,
+                        UCT_IB_MLX5_QPC_OPT_MASK_32_INIT2INIT_MMO);
+
+    UCT_IB_MLX5DV_SET(qpc_ext, qpce, mmo, 1);
+
+    return uct_ib_mlx5_devx_obj_modify(qp->devx.obj, in, sizeof(in),
+                                       out, sizeof(out), "2INIT_QP_MMO");
+}
+
 ucs_status_t uct_ib_mlx5_devx_create_qp(uct_ib_iface_t *iface,
                                         const uct_ib_mlx5_cq_t *send_cq,
                                         const uct_ib_mlx5_cq_t *recv_cq,
@@ -282,6 +320,13 @@ ucs_status_t uct_ib_mlx5_devx_create_qp(uct_ib_iface_t *iface,
     } else {
         ucs_assert(qp->devx.wq_buf == NULL);
         uct_worker_tl_data_put(uar, uct_ib_mlx5_devx_uar_cleanup);
+    }
+
+    if (attr->enable_mmo) {
+        status = uct_ib_mlx5_devx_qp_enable_mmo(qp, md);
+        if (status != UCS_OK) {
+            goto err_free;
+        }
     }
 
     return UCS_OK;

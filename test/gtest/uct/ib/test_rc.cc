@@ -15,12 +15,12 @@ void test_rc::init()
     uct_test::init();
 
     m_e1 = uct_test::create_entity(0);
-    m_entities.push_back(m_e1);
+    m_entities.m_entities.push_back(m_e1);
 
     check_skip_test();
 
     m_e2 = uct_test::create_entity(0);
-    m_entities.push_back(m_e2);
+    m_entities.m_entities.push_back(m_e2);
 
     connect();
 }
@@ -39,7 +39,7 @@ void test_rc::connect()
 void test_rc::test_iface_ops(int cq_len)
 {
     entity *e = uct_test::create_entity(0);
-    m_entities.push_back(e);
+    m_entities.m_entities.push_back(e);
     e->connect(0, *m_e2, 0);
 
     mapped_buffer sendbuf(1024, 0ul, *e);
@@ -185,8 +185,8 @@ public:
         params.features    |= UCT_IFACE_FEATURE_FLUSH_REMOTE;
         m_entity_flush_rkey = uct_test::create_entity(params);
 
-        m_entities.push_back(m_entity);
-        m_entities.push_back(m_entity_flush_rkey);
+        m_entities.m_entities.push_back(m_entity);
+        m_entities.m_entities.push_back(m_entity_flush_rkey);
     }
 
     using map_size_t = std::map<std::string, std::pair<size_t, size_t>>;
@@ -405,7 +405,7 @@ UCS_TEST_SKIP_COND_P(test_rc_get_limit, invalid_get_size,
 
     scoped_log_handler wrap_warn(hide_warns_logger);
     entity *e = uct_test::create_entity(0);
-    m_entities.push_back(e);
+    m_entities.m_entities.push_back(e);
 
     EXPECT_EQ(m_max_get_zcopy, m_e1->iface_attr().cap.get.max_zcopy);
 }

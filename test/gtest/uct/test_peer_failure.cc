@@ -43,7 +43,7 @@ void test_uct_peer_failure::init()
     p.field_mask |= UCT_IFACE_PARAM_FIELD_OPEN_MODE;
     p.open_mode   = UCT_IFACE_OPEN_MODE_DEVICE;
     m_sender = uct_test::create_entity(p);
-    m_entities.push_back(m_sender);
+    m_entities.m_entities.push_back(m_sender);
 
     check_skip_test();
     for (size_t i = 0; i < 2; ++i) {
@@ -128,8 +128,8 @@ void test_uct_peer_failure::kill_receiver(unsigned idx)
 {
     /* TODO: add mapping sender idx -> receiver */
     ucs_assert(!m_receivers.empty());
-    m_entities.remove(m_receivers.front());
-    ucs_assert(m_entities.size() == m_receivers.size());
+    m_entities.m_entities.remove(m_receivers.front());
+    ucs_assert(m_entities.m_entities.size() == m_receivers.size());
     m_receivers.erase(m_receivers.begin());
 }
 
@@ -139,7 +139,7 @@ void test_uct_peer_failure::new_receiver()
     p.field_mask |= UCT_IFACE_PARAM_FIELD_OPEN_MODE;
     p.open_mode   = UCT_IFACE_OPEN_MODE_DEVICE;
     m_receivers.push_back(uct_test::create_entity(p));
-    m_entities.push_back(m_receivers.back());
+    m_entities.m_entities.push_back(m_receivers.back());
     m_sender->connect(m_receivers.size() - 1, *m_receivers.back(), 0);
 
     if (m_sender->iface_attr().cap.flags & UCT_IFACE_FLAG_AM_SHORT) {
@@ -478,13 +478,13 @@ public:
     {
         m_entity = create_entity(0, err_handler_cb);
         m_entity->connect(0, *m_entity, 0);
-        m_entities.push_back(m_entity);
+        m_entities.m_entities.push_back(m_entity);
         ASSERT_TRUE(has_mm());
     }
 
     void cleanup()
     {
-        m_entities.clear();
+        m_entities.m_entities.clear();
     }
 
     uct_keepalive_info_t *m_ka()
