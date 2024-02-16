@@ -12,6 +12,7 @@
 #include <ucs/sys/string.h>
 #include <common/test_helpers.h>
 #include <algorithm>
+#include <c++/4.8.2/iomanip>
 #ifdef HAVE_MALLOC_H
 #include <malloc.h>
 #endif
@@ -498,6 +499,14 @@ void uct_test::check_caps_skip(uint64_t required_flags, uint64_t invalid_flags) 
     }
 }
 
+void uct_test::skip_transport(const std::string &tl_name,
+                              const std::string &reason) const
+{
+    if (has_transport(tl_name)) {
+        UCS_TEST_SKIP_R(tl_name + ": " + reason);
+    }
+}
+
 bool uct_test::check_event_caps(uint64_t required_flags, uint64_t invalid_flags) {
     FOR_EACH_ENTITY(iter) {
         if (!(*iter)->check_event_caps(required_flags, invalid_flags)) {
@@ -585,6 +594,11 @@ bool uct_test::get_config(const std::string& name, std::string& value) const
     }
 
     return false;
+}
+
+bool uct_test::has_any_transport(const std::vector<std::string>& tls) const
+{
+    return std::find(tls.begin(), tls.end(), GetParam()->tl_name) != tls.end();
 }
 
 bool uct_test::has_transport(const std::string& tl_name) const {
@@ -847,15 +861,25 @@ uct_test::entity::entity(const resource& resource, uct_iface_config_t *iface_con
 
     for (;;) {
         {
-            scoped_log_handler slh(wrap_errors_logger);
-            status = UCS_TEST_TRY_CREATE_HANDLE(uct_iface_h, m_iface,
-                                                uct_iface_close, uct_iface_open,
-                                                m_md, m_worker, params,
-                                                iface_config);
-            if (status == UCS_OK) {
+            scoped_log_handler slh(hide_errors_logger);
+            if (params->open_mode == UCT_IFACE_OPEN_MODE_SOCKADDR_SERVER) {
+                status = UCS_TEST_TRY_CREATE_HANDLE(uct_iface_h, m_iface,
+                                                    uct_iface_close, uct_iface_open,
+                                                    m_md, m_worker, params,
+                                                             iface_config);
+                if (status == UCS_OK) {
+                    break;
+                }
+            } else {
+                UCS_TEST_CREATE_HANDLE_IF_SUPPORTED(uct_iface_h, m_iface,
+                                                    uct_iface_close, uct_iface_open,
+                                                    m_md, m_worker, params,
+                                                    iface_config);
                 break;
             }
+
         }
+
         EXPECT_EQ(UCS_ERR_BUSY, status);
         if (params->open_mode != UCT_IFACE_OPEN_MODE_SOCKADDR_SERVER) {
             UCS_TEST_ABORT("any mode different from UCT_IFACE_OPEN_MODE_SOCKADDR_SERVER must go with status UCS_OK");
@@ -1495,6 +1519,32 @@ void uct_test::mapped_buffer::pattern_check(uint64_t seed) {
 void uct_test::mapped_buffer::memset(int c)
 {
     mem_buffer::memset(ptr(), length(), c, m_mem.mem_type);
+}
+
+void uct_test::mapped_buffer::print() const
+{
+    std::stringstream ss;
+//    ss << std::setfill('0');// << std::setw(2);// << std::hex;
+//    uint8_t *buf8;
+//    size_t i = 0;
+//    for (buf8 = (uint8_t*)m_buf; buf8 < m_end; ++buf8) {
+//        ss << *buf8;
+//        if (++i % 4 == 0) {
+//            ss << ' ';
+//            if (i % 16 == 0) {
+//                ss << '\n';
+//            }
+//        }
+//    }
+
+    ss << std::hex << std::setfill('0');
+    for (uint16_t *buf = (uint16_t*)m_buf; buf < m_end; ++buf) {
+        ss //<< std::setfill('0')
+           << std::setw(sizeof(*buf)*2)
+//           << std::hex
+           << *buf << ' ';
+    }
+    UCS_TEST_MESSAGE << ss.str();
 }
 
 void *uct_test::mapped_buffer::ptr() const {

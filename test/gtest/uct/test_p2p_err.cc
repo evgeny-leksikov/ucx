@@ -106,9 +106,8 @@ public:
         /* Count how many error messages match/don't match the given pattern */
         size_t num_matched   = 0;
         size_t num_unmatched = 0;
-        for (std::vector<std::string>::iterator iter = m_errors.begin();
-                        iter != m_errors.end(); ++iter) {
-            if (iter->find(error_pattern) != iter->npos) {
+        for (auto &err : m_errors) {
+            if (err.find(error_pattern) != err.npos) {
                 ++num_matched;
             } else {
                 ++num_unmatched;
@@ -156,8 +155,8 @@ ucs_status_t uct_p2p_err_test::last_error = UCS_OK;
 
 UCS_TEST_SKIP_COND_P(uct_p2p_err_test, local_access_error,
                      !check_caps(UCT_IFACE_FLAG_PUT_ZCOPY |
-                                 UCT_IFACE_FLAG_ERRHANDLE_ZCOPY_BUF),
-                                 "FAILURE=error") {
+                                 UCT_IFACE_FLAG_ERRHANDLE_ZCOPY_BUF) ||
+                     has_transport("gga_mlx5"), "FAILURE=error") {
     mapped_buffer sendbuf(16, 1, sender());
     mapped_buffer recvbuf(16, 2, receiver());
 

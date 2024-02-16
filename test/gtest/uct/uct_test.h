@@ -268,6 +268,7 @@ protected:
         void pattern_fill(uint64_t seed);
         void pattern_check(uint64_t seed);
         void memset(int c);
+        void print() const;
 
         static size_t pack(void *dest, void *arg);
 
@@ -389,6 +390,7 @@ protected:
                                modify_config_mode_t mode = FAIL_IF_NOT_EXIST);
     bool get_config(const std::string& name, std::string& value) const;
 
+    virtual bool has_any_transport(const std::vector<std::string>& tls) const;
     virtual bool has_transport(const std::string& tl_name) const;
     virtual bool has_ud() const;
     virtual bool has_rc() const;
@@ -403,6 +405,8 @@ protected:
     bool is_caps_supported(uint64_t required_flags);
     bool check_caps(uint64_t required_flags, uint64_t invalid_flags = 0);
     void check_caps_skip(uint64_t required_flags, uint64_t invalid_flags = 0);
+    void skip_transport(const std::string &tl_name,
+                        const std::string &reason) const;
     bool check_event_caps(uint64_t required_flags, uint64_t invalid_flags = 0);
     bool check_atomics(uint64_t required_ops, atomic_mode mode);
     const entity& ent(unsigned index) const;

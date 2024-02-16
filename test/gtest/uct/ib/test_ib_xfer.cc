@@ -94,7 +94,8 @@ class uct_p2p_rma_test_alloc_methods : public uct_p2p_rma_test {
 protected:
     void test_put_zcopy() {
         test_xfer_multi(static_cast<send_func_t>(&uct_p2p_rma_test::put_zcopy),
-                        0, sender().iface_attr().cap.put.max_zcopy,
+                        sender().iface_attr().cap.put.min_zcopy,
+                        sender().iface_attr().cap.put.max_zcopy,
                         TEST_UCT_FLAG_SEND_ZCOPY);
     }
 

@@ -780,11 +780,12 @@ static ucs_status_t uct_perf_test_setup_endpoints(ucx_perf_context_t *perf)
             goto err_destroy_eps;
         }
 
-        if (md_attr.cap.flags & (UCT_MD_FLAG_EXPORTED_MKEY | UCT_MD_FLAG_ALLOC |
-                                 UCT_MD_FLAG_REG)) {
+        if ((md_attr.cap.flags & (UCT_MD_FLAG_EXPORTED_MKEY | UCT_MD_FLAG_ALLOC |
+                                  UCT_MD_FLAG_REG)) &&
+            !strcmp("gga_mlx5", perf->params.uct.tl_name)) {
             void *rkey_repack_buf;
             uct_md_mem_attach_params_t attach_params = {0};
-            ucs_assert(perf->uct.send_mem.memh != NULL);
+            ucs_assert(0 && perf->uct.send_mem.memh != NULL);
             status = uct_md_mem_attach(perf->uct.md, rkey_buffer,
                            &attach_params, &perf->uct.import.memh);
             if (status != UCS_OK) {

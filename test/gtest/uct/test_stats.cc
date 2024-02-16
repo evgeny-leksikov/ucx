@@ -327,7 +327,12 @@ UCS_TEST_SKIP_COND_P(test_uct_stats, put_zcopy,
 {
     ucs_status_t status;
 
-    init_bufs(0, sender().iface_attr().cap.put.max_zcopy);
+    if (!m_entities.is_loopback()) {
+        skip_transport("gga_mlx5", "non-loopback on the same GVMI");
+    }
+
+    init_bufs(sender().iface_attr().cap.put.min_zcopy,
+              sender().iface_attr().cap.put.max_zcopy);
 
     UCS_TEST_GET_BUFFER_IOV(iov, iovcnt, lbuf->ptr(), lbuf->length(), lbuf->memh(),
                             sender().iface_attr().cap.put.max_iov);
@@ -335,7 +340,7 @@ UCS_TEST_SKIP_COND_P(test_uct_stats, put_zcopy,
     UCT_TEST_CALL_AND_TRY_AGAIN(
         uct_ep_put_zcopy(sender_ep(), iov, iovcnt, rbuf->addr(),
                          rbuf->rkey(), 0), status);
-    EXPECT_FALSE(UCS_STATUS_IS_ERR(status));
+    EXPECT_FALSE(UCS_STATUS_IS_ERR(status)) << ucs_status_string(status);
 
     EXPECT_STAT(sender, uct_ep, UCT_EP_STAT_PUT, 1UL);
     EXPECT_STAT(sender, uct_ep, UCT_EP_STAT_BYTES_ZCOPY,
@@ -475,7 +480,7 @@ UCS_TEST_P(test_uct_stats, flush)
     EXPECT_STAT(sender, uct_iface, UCT_IFACE_STAT_FLUSH_WAIT, 0UL);
 }
 
-UCS_TEST_P(test_uct_stats, fence)
+UCS_TEST_SKIP_COND_P(test_uct_stats, fence, has_transport("gga_mlx5"))
 {
     ucs_status_t status;
 

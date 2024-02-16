@@ -274,6 +274,29 @@ uct_gga_mlx5_iface_query(uct_iface_h tl_iface, uct_iface_attr_t *iface_attr)
     iface_attr->latency.m     += 1e-9; /* 1 ns per each extra QP */
     iface_attr->ep_addr_len    = ep_addr_len;
     iface_attr->iface_addr_len = sizeof(uint8_t);
+
+    /* Disable not implemented caps */
+    iface_attr->cap.flags &=
+            ~(UCT_IFACE_FLAG_AM_SHORT        | UCT_IFACE_FLAG_AM_BCOPY        |
+              UCT_IFACE_FLAG_AM_ZCOPY        | UCT_IFACE_FLAG_PUT_SHORT       |
+              UCT_IFACE_FLAG_PUT_BCOPY       | UCT_IFACE_FLAG_GET_SHORT       |
+              UCT_IFACE_FLAG_GET_BCOPY       | UCT_IFACE_FLAG_GET_ZCOPY       |
+              UCT_IFACE_FLAG_TAG_EAGER_SHORT | UCT_IFACE_FLAG_TAG_EAGER_BCOPY |
+              UCT_IFACE_FLAG_TAG_EAGER_ZCOPY | UCT_IFACE_FLAG_TAG_RNDV_ZCOPY);
+    iface_attr->cap.atomic32.op_flags  =
+    iface_attr->cap.atomic32.fop_flags =
+    iface_attr->cap.atomic64.op_flags  =
+    iface_attr->cap.atomic64.fop_flags = 0;
+
+    iface_attr->cap.put.max_short       = 0;
+    iface_attr->cap.put.max_bcopy       = 0;
+    iface_attr->cap.put.min_zcopy       = 1;
+    iface_attr->cap.put.max_zcopy       =
+            uct_ib_iface_port_attr(&rc_iface->super)->max_msg_sz;
+    iface_attr->cap.put.opt_zcopy_align = UCS_SYS_CACHE_LINE_SIZE;
+    iface_attr->cap.put.align_mtu       = UCS_SYS_PCI_MAX_PAYLOAD;
+    iface_attr->cap.put.max_iov         = 1;
+
     return UCS_OK;
 }
 
@@ -366,7 +389,7 @@ static uct_iface_ops_t uct_gga_mlx5_iface_tl_ops = {
     .iface_event_arm          = uct_rc_mlx5_iface_arm,
     .iface_close              = UCS_CLASS_DELETE_FUNC_NAME(uct_gga_mlx5_iface_t),
     .iface_query              = uct_gga_mlx5_iface_query,
-//    .iface_get_address        = uct_rc_mlx5_iface_get_address,
+    .iface_get_address        = ucs_empty_function_return_success,
     .iface_get_device_address = uct_ib_iface_get_device_address,
     .iface_is_reachable       = uct_base_iface_is_reachable
 };

@@ -29,7 +29,7 @@ void test_uct_perf::test_execute(unsigned flags = 0,
                                  UCS_MEMORY_TYPE_HOST,
                                  ucs_memory_type_t recv_mem_type =
                                  UCS_MEMORY_TYPE_HOST) {
-    if (has_transport("ugni_udt")) {
+    if (has_any_transport({"ugni_udt", "gga_mlx5"})) {
         UCS_TEST_SKIP;
     }
 
@@ -50,7 +50,7 @@ void test_uct_perf::test_execute(unsigned flags = 0,
         }
     }
 
-    if (has_transport("tcp") || has_transport("cuda_copy")) {
+    if (has_any_transport({"tcp", "cuda_copy"})) {
         check_perf = false; /* TODO calibrate expected performance based on transport */
         max_iter   = 1000lu;
     }

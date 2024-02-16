@@ -312,6 +312,8 @@ typedef struct uct_ib_mlx5_mem_lru_entry {
 
 KHASH_MAP_INIT_INT(rkeys, uct_ib_mlx5_mem_lru_entry_t*);
 
+
+
 #endif
 
 

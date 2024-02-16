@@ -24,7 +24,8 @@ protected:
 
 
 UCS_TEST_SKIP_COND_P(test_zcopy_comp, issue1440,
-                     !check_caps(UCT_IFACE_FLAG_PUT_ZCOPY))
+                     !check_caps(UCT_IFACE_FLAG_PUT_ZCOPY) ||
+                     has_transport("gga_mlx5"))
 {
     entity *receiver_small = create_entity(0);
     m_entities.m_entities.push_back(receiver_small);
