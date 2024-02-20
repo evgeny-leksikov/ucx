@@ -20,6 +20,7 @@
 typedef struct {
     uct_ib_md_packed_mkey_t packed_mkey;
     uct_ib_mlx5_devx_mem_t  *memh;
+    uct_ib_mlx5_md_t        *md;
     uct_rkey_bundle_t       rkey_ob;
 } uct_gga_mlx5_rkey_handle_t;
 
@@ -82,6 +83,28 @@ uct_gga_mlx5_rkey_unpack(uct_component_t *component, const void *rkey_buffer,
     return UCS_OK;
 }
 
+static void
+uct_gga_mlx5_rkey_handle_dereg(uct_gga_mlx5_rkey_handle_t *rkey_handle)
+{
+    uct_md_mem_dereg_params_t params = {
+        .field_mask = UCT_MD_MEM_DEREG_FIELD_MEMH,
+        .memh       = rkey_handle->memh
+    };
+    ucs_status_t status;
+
+    if (rkey_handle->memh == NULL) {
+        return;
+    }
+
+    status = uct_ib_mlx5_devx_mem_dereg(&rkey_handle->md->super.super, &params);
+    if (status != UCS_OK) {
+        ucs_warn("md %p: failed to deregister GGA memh %p", rkey_handle->md,
+                 rkey_handle->memh);
+    }
+
+    rkey_handle->memh = NULL;
+}
+
 static ucs_status_t uct_gga_mlx5_rkey_release(uct_component_t *component,
                                               uct_rkey_t rkey, void *handle)
 {
@@ -89,9 +112,7 @@ static ucs_status_t uct_gga_mlx5_rkey_release(uct_component_t *component,
     uct_gga_mlx5_rkey_handle_t *rkey_handle = rkey_bundle->handle;
 
     ucs_assert(rkey_bundle->handle == handle);
-    if (rkey_handle->memh != NULL) {
-    // TODO: detach
-    }
+    uct_gga_mlx5_rkey_handle_dereg(rkey_handle);
     ucs_free(handle);
     ucs_free(rkey_bundle);
     return UCS_OK;
@@ -408,7 +429,7 @@ uct_gga_mlx5_rkey_resolve(uct_ib_mlx5_md_t *md, uct_rkey_t rkey)
     uint64_t repack_mkey;
     ucs_status_t status;
 
-    if (rkey_handle->memh != NULL) {
+    if (ucs_likely(rkey_handle->memh != NULL)) {
         return UCS_OK;
     }
 
@@ -416,8 +437,10 @@ uct_gga_mlx5_rkey_resolve(uct_ib_mlx5_md_t *md, uct_rkey_t rkey)
                                          &atach_params,
                                          (uct_mem_h *)&rkey_handle->memh);
     if (status != UCS_OK) {
-        return status;
+        goto err_out;
     }
+
+    rkey_handle->md = md;
 
     status = uct_ib_mlx5_devx_mkey_pack(uct_md, (uct_mem_h)rkey_handle->memh,
                                         NULL, 0, &repack_params, &repack_mkey);
@@ -428,6 +451,10 @@ uct_gga_mlx5_rkey_resolve(uct_ib_mlx5_md_t *md, uct_rkey_t rkey)
     return uct_ib_rkey_unpack(NULL, &repack_mkey,
                               &rkey_handle->rkey_ob.rkey,
                               &rkey_handle->rkey_ob.handle);
+err_dereg:
+    uct_gga_mlx5_rkey_handle_dereg(rkey_handle);
+err_out:
+    return status;
 }
 
 static ucs_status_t
@@ -610,22 +637,6 @@ static uct_md_ops_t uct_mlx5_gga_md_ops = {
     .mkey_pack          = uct_ib_mlx5_gga_mkey_pack,
     .detect_memory_type = ucs_empty_function_return_unsupported,
 };
-
-//static uct_ib_md_ops_t uct_ib_mlx5_gga_md_ops = {
-//    .super = {
-//        .close              = uct_ib_mlx5_devx_md_close,
-//        .query              = uct_ib_mlx5_devx_md_query,
-//        .mem_alloc          = uct_ib_mlx5_devx_device_mem_alloc,
-//        .mem_free           = uct_ib_mlx5_devx_device_mem_free,
-//        .mem_reg            = uct_ib_mlx5_devx_mem_reg,
-//        .mem_dereg          = uct_ib_mlx5_devx_mem_dereg,
-//        .mem_attach         = uct_ib_mlx5_devx_mem_attach,
-//        .mem_advise         = uct_ib_mem_advise,
-//        .mkey_pack          = uct_ib_mlx5_gga_mkey_pack,
-//        .detect_memory_type = ucs_empty_function_return_unsupported,
-//    },
-//    .open = uct_ib_mlx5_gga_md_open,
-//};
 
 ucs_status_t uct_ib_mlx5_gga_md_open(struct ibv_device *ibv_device,
                                      const uct_ib_md_config_t *md_config,
