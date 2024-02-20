@@ -59,6 +59,43 @@ static UCS_CLASS_DEFINE_NEW_FUNC(uct_gga_mlx5_iface_t, uct_iface_t, uct_md_h,
                                  uct_worker_h, const uct_iface_params_t*,
                                  const uct_iface_config_t*);
 
+ucs_status_t uct_ib_mlx5_gga_md_open(struct ibv_device *ibv_device,
+                                     const uct_ib_md_config_t *md_config,
+                                     struct uct_ib_md **md_p)
+{
+    ucs_status_t status;
+
+    if (md_config->devx == UCS_NO) {
+        return UCS_ERR_UNSUPPORTED;
+    }
+
+    status = uct_ib_mlx5_devx_md_open(ibv_device, md_config, md_p);
+    if (status != UCS_OK) {
+        return status;
+    }
+
+    (*md_p)->name = UCT_IB_MD_NAME(gga);
+    return UCS_OK;
+}
+
+static uct_ib_md_ops_t uct_ib_mlx5_gga_md_ops = {
+    .super = {
+        .close              = uct_ib_mlx5_devx_md_close,
+        .query              = uct_ib_mlx5_devx_md_query,
+        .mem_alloc          = uct_ib_mlx5_devx_device_mem_alloc,
+        .mem_free           = uct_ib_mlx5_devx_device_mem_free,
+        .mem_reg            = uct_ib_mlx5_devx_mem_reg,
+        .mem_dereg          = uct_ib_mlx5_devx_mem_dereg,
+        .mem_attach         = uct_ib_mlx5_devx_mem_attach,
+        .mem_advise         = uct_ib_mem_advise,
+        .mkey_pack          = uct_ib_mlx5_devx_mkey_pack,
+        .detect_memory_type = ucs_empty_function_return_unsupported,
+    },
+    .open = uct_ib_mlx5_gga_md_open,
+};
+
+UCT_IB_MD_DEFINE_ENTRY(gga, uct_ib_mlx5_gga_md_ops);
+
 static ucs_status_t
 uct_gga_mlx5_query_tl_devices(uct_md_h md,
                               uct_tl_device_resource_t **tl_devices_p,

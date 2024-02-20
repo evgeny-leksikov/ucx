@@ -209,12 +209,14 @@ static uct_tl_t *uct_ib_tls[] = {
 };
 
 extern uct_ib_md_ops_entry_t UCT_IB_MD_OPS_NAME(devx);
+extern uct_ib_md_ops_entry_t UCT_IB_MD_OPS_NAME(gga);
 extern uct_ib_md_ops_entry_t UCT_IB_MD_OPS_NAME(dv);
 static uct_ib_md_ops_entry_t UCT_IB_MD_OPS_NAME(verbs);
 
 static uct_ib_md_ops_entry_t *uct_ib_ops[] = {
 #if defined (HAVE_DEVX)
     &UCT_IB_MD_OPS_NAME(devx),
+    &UCT_IB_MD_OPS_NAME(gga),
 #endif
 #if defined (HAVE_MLX5_DV)
     &UCT_IB_MD_OPS_NAME(dv),
