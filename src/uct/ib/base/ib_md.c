@@ -190,20 +190,22 @@ extern uct_tl_t UCT_TL_NAME(ud_mlx5);
 extern uct_tl_t UCT_TL_NAME(gga_mlx5);
 
 static uct_tl_t *uct_ib_tls[] = {
-#ifdef HAVE_TL_DC
+#if HAVE_TL_DC
     &UCT_TL_NAME(dc_mlx5),
 #endif
-#ifdef HAVE_TL_RC
+#if HAVE_TL_RC
     &UCT_TL_NAME(rc_verbs),
 #endif
-#if defined (HAVE_TL_RC) && defined (HAVE_MLX5_DV)
+#if HAVE_TL_RC && HAVE_MLX5_DV
     &UCT_TL_NAME(rc_mlx5),
+#if HAVE_DEVX
     &UCT_TL_NAME(gga_mlx5),
 #endif
-#ifdef HAVE_TL_UD
+#endif
+#if HAVE_TL_UD
     &UCT_TL_NAME(ud_verbs),
 #endif
-#if defined (HAVE_TL_UD) && defined (HAVE_MLX5_HW_UD)
+#if HAVE_TL_UD && HAVE_MLX5_HW_UD
     &UCT_TL_NAME(ud_mlx5)
 #endif
 };
