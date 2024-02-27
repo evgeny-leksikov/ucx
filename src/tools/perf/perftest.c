@@ -359,6 +359,7 @@ static ucs_status_t setup_sock_rte_p2p(struct perftest_context *ctx)
     char service[8];
     char err_str[64];
     unsigned needed_flags;
+    char local_param_device[UCT_DEVICE_NAME_MAX];
 
     ucs_snprintf_safe(service, sizeof(service), "%u", ctx->port);
     memset(&hints, 0, sizeof(hints));
@@ -438,6 +439,11 @@ static ucs_status_t setup_sock_rte_p2p(struct perftest_context *ctx)
     }
 
     if (ctx->server_addr == NULL) {
+        if (ctx->params.super.api == UCX_PERF_API_UCT) {
+            /* backup local device name */
+            strcpy(local_param_device, ctx->params.super.uct.dev_name);
+        }
+
         /* release the memory for the list of the message sizes allocated
          * during the initialization of the default testing parameters */
         release_msg_size_list(&ctx->params);
@@ -449,6 +455,12 @@ static ucs_status_t setup_sock_rte_p2p(struct perftest_context *ctx)
             status = UCS_ERR_IO_ERROR;
             goto err_close_connfd;
         }
+
+        if (ctx->params.super.api == UCX_PERF_API_UCT) {
+            /* restore local device name */
+            strcpy(ctx->params.super.uct.dev_name, local_param_device);
+        }
+
         ctx->params.super.flags |= needed_flags;
 
         if (ctx->params.super.msg_size_cnt != 0) {
