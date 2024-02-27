@@ -690,8 +690,9 @@ static ucs_status_t uct_perf_test_setup_endpoints(ucx_perf_context_t *perf)
         goto err_free;
     }
 
-    if (md_attr.cap.flags & (UCT_MD_FLAG_EXPORTED_MKEY | UCT_MD_FLAG_ALLOC |
-                             UCT_MD_FLAG_REG)) {
+    if ((md_attr.cap.flags & UCT_MD_FLAG_EXPORTED_MKEY) &&
+        ((strcmp("gga_mlx5", perf->params.uct.tl_name) == 0) ||
+         (strcmp("rc_mlx5", perf->params.uct.tl_name) == 0))) {
         uct_md_mkey_pack_params_t params = {
             .field_mask = UCT_MD_MKEY_PACK_FIELD_FLAGS,
             .flags      = UCT_MD_MKEY_PACK_FLAG_EXPORT
@@ -780,12 +781,12 @@ static ucs_status_t uct_perf_test_setup_endpoints(ucx_perf_context_t *perf)
             goto err_destroy_eps;
         }
 
-        if ((md_attr.cap.flags & (UCT_MD_FLAG_EXPORTED_MKEY | UCT_MD_FLAG_ALLOC |
-                                  UCT_MD_FLAG_REG)) &&
-            !strcmp("gga_mlx5", perf->params.uct.tl_name)) {
+        if ((md_attr.cap.flags & UCT_MD_FLAG_EXPORTED_MKEY) &&
+            ((strcmp("gga_mlx5", perf->params.uct.tl_name) == 0) ||
+             (strcmp("rc_mlx5", perf->params.uct.tl_name) == 0))) {
             void *rkey_repack_buf;
             uct_md_mem_attach_params_t attach_params = {0};
-            ucs_assert(0 && perf->uct.send_mem.memh != NULL);
+            ucs_assert(perf->uct.send_mem.memh != NULL);
             status = uct_md_mem_attach(perf->uct.md, rkey_buffer,
                            &attach_params, &perf->uct.import.memh);
             if (status != UCS_OK) {
@@ -1602,6 +1603,10 @@ static ucs_status_t uct_perf_create_md(ucx_perf_context_t *perf)
             }
 
             for (tl_index = 0; tl_index < num_tl_resources; ++tl_index) {
+                ucs_info("tl %s dev %s: check tl %s, dev %s",
+                         perf->params.uct.tl_name, perf->params.uct.dev_name,
+                         tl_resources[tl_index].tl_name,
+                         tl_resources[tl_index].dev_name);
                 if (!strcmp(perf->params.uct.tl_name,  tl_resources[tl_index].tl_name) &&
                     !strcmp(perf->params.uct.dev_name, tl_resources[tl_index].dev_name))
                 {
