@@ -490,11 +490,16 @@ uct_gga_mlx5_query_tl_devices(uct_md_h md,
                               unsigned *num_tl_devices_p)
 {
     uct_ib_mlx5_md_t *mlx5_md = ucs_derived_of(md, uct_ib_mlx5_md_t);
+    uint32_t check_flags      = UCT_IB_MLX5_MD_FLAG_DEVX                       |
+                                UCT_IB_MLX5_MD_FLAG_INDIRECT_XGVMI |
+                                UCT_IB_MLX5_MD_FLAG_MMO_DMA;
+
+    ucs_info("gga q dev: md name %s vs %s, flags 0x%x & 0x%x = 0x%x",
+             mlx5_md->super.name, UCT_IB_MD_NAME(mlx5), mlx5_md->flags,
+             check_flags, mlx5_md->flags & check_flags);
 
     if (strcmp(mlx5_md->super.name, UCT_IB_MD_NAME(mlx5)) ||
-        !ucs_test_all_flags(mlx5_md->flags, UCT_IB_MLX5_MD_FLAG_DEVX           |
-                                            UCT_IB_MLX5_MD_FLAG_INDIRECT_XGVMI |
-                                            UCT_IB_MLX5_MD_FLAG_MMO_DMA)) {
+        !ucs_test_all_flags(mlx5_md->flags, check_flags)) {
         return UCS_ERR_NO_DEVICE;
     }
 
