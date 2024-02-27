@@ -12,7 +12,6 @@
 #include <ucs/sys/string.h>
 #include <common/test_helpers.h>
 #include <algorithm>
-#include <c++/4.8.2/iomanip>
 #ifdef HAVE_MALLOC_H
 #include <malloc.h>
 #endif
