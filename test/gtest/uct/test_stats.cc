@@ -99,6 +99,17 @@ public:
 
         lbuf = new mapped_buffer(size, 0, sender(), 0, (ucs_memory_type_t)mem_type_index);
         rbuf = new mapped_buffer(size, 0, receiver(), 0, (ucs_memory_type_t)mem_type_index);
+
+        if (/*TODO: !is_loopback() */ (&sender() != &receiver()) && (size != 0) &&
+            (sender().md_attr().flags & UCT_MD_FLAG_EXPORTED_MKEY) &&
+            (receiver().md_attr().flags & UCT_MD_FLAG_EXPORTED_MKEY)) {
+
+            void *exp_memh = receiver().memh_export(rbuf->memh());
+            uct_rkey_bundle rkey_bundle;
+            sender().memh_attach(exp_memh, &rkey_bundle);
+            rbuf->rkey_import(rkey_bundle);
+        }
+
     }
 
     virtual void cleanup() {
@@ -327,7 +338,7 @@ UCS_TEST_SKIP_COND_P(test_uct_stats, put_zcopy,
 {
     ucs_status_t status;
 
-    if (!m_entities.is_loopback()) {
+    if (false && !m_entities.is_loopback()) {
         skip_transport("gga_mlx5", "non-loopback on the same GVMI");
     }
 
