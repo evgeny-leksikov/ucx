@@ -121,6 +121,12 @@ typedef enum {
 } uct_ib_mr_type_t;
 
 
+enum {
+    UCT_IB_PACKED_MKEY_FLAG_EXPORTED = UCS_BIT(0),
+    UCT_IB_PACKED_MKEY_FLAG_GGA      = UCS_BIT(1)
+};
+
+
 /**
  * IB memory domain.
  */
@@ -162,6 +168,9 @@ typedef struct uct_ib_md {
 typedef struct uct_ib_md_packed_mkey {
     uint32_t lkey;
     uint16_t vhca_id;
+#if ENABLE_DEBUG_DATA
+    uint8_t  flags;
+#endif
 } UCS_S_PACKED uct_ib_md_packed_mkey_t;
 
 
@@ -265,6 +274,7 @@ uct_ib_md_pack_exported_mkey(uct_ib_md_t *md, uint32_t lkey, void *buffer)
 
     mkey->lkey    = lkey;
     mkey->vhca_id = md->vhca_id;
+    mkey->flags   = UCT_IB_PACKED_MKEY_FLAG_EXPORTED;
 
     ucs_trace("packed exported mkey on %s: lkey 0x%x",
               uct_ib_device_name(&md->dev), lkey);
