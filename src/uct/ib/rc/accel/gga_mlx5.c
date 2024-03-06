@@ -17,6 +17,16 @@
 
 #include <uct/ib/rc/accel/rc_mlx5.inl>
 
+typedef struct {
+    uct_ib_mlx5_devx_mem_t super;
+    uct_ib_mlx5_md_t       *md;
+} uct_gga_mlx5_mem_t;
+
+typedef struct {
+    uct_ib_md_packed_mkey_t packed_mkey;
+    uct_ib_mlx5_devx_mem_t  *memh;
+    uct_rkey_bundle_t       rkey_ob;
+} uct_gga_mlx5_rkey_handle_t;
 
 /**
  * GGA MLX5 EP cleanup context
@@ -313,6 +323,43 @@ static void uct_gga_mlx5_iface_progress_enable(uct_iface_h tl_iface, unsigned fl
 }
 
 static ucs_status_t
+uct_gga_mlx5_rkey_resolve(const uct_iov_t *iov, size_t iov_count,
+                          uct_rkey_t rkey)
+{
+    uct_rkey_bundle_t *rkey_bundle          = (uct_rkey_bundle_t*)rkey;
+    uct_gga_mlx5_rkey_handle_t *rkey_handle = rkey_bundle->handle;
+    uct_gga_mlx5_mem_t *gga_memh            = iov[0].memh;
+    uct_md_h uct_md                         = (uct_md_h)gga_memh->md;
+    uct_md_mem_attach_params_t atach_params = { 0 };
+    uct_md_mkey_pack_params_t repack_params = { 0 };
+    uct_ib_md_packed_mkey_t repack_mkey;
+    ucs_status_t status;
+
+    ucs_assert(iov_count == 1);
+
+    if (rkey_handle->memh != NULL) {
+        return UCS_OK;
+    }
+
+    status = uct_ib_mlx5_devx_mem_attach(uct_md, &rkey_handle->packed_mkey,
+                                         &atach_params,
+                                         (uct_mem_h *)&rkey_handle->memh);
+    if (status != UCS_OK) {
+        return status;
+    }
+
+    status = uct_ib_mlx5_devx_mkey_pack(uct_md, (uct_mem_h)rkey_handle->memh,
+                                        iov[0].buffer, iov[0].length,
+                                        &repack_params, &repack_mkey);
+    if (status != UCS_OK) {
+        return status;
+    }
+
+    return uct_rkey_unpack(&uct_ib_component, &repack_mkey,
+                           &rkey_handle->rkey_ob);
+}
+
+static ucs_status_t
 uct_gga_mlx5_ep_put_zcopy(uct_ep_h tl_ep, const uct_iov_t *iov, size_t iovcnt,
                           uint64_t remote_addr, uct_rkey_t rkey,
                           uct_completion_t *comp)
@@ -320,12 +367,11 @@ uct_gga_mlx5_ep_put_zcopy(uct_ep_h tl_ep, const uct_iov_t *iov, size_t iovcnt,
     UCT_RC_MLX5_EP_DECL(tl_ep, iface, ep);
     ucs_status_t status;
 
-    if (iovcnt > 1) { /* TODO: iface cap */
-        return UCS_ERR_UNSUPPORTED;
+    status = uct_gga_mlx5_rkey_resolve(iov, iovcnt, rkey);
+    if (ucs_unlikely(status != UCS_OK)) {
+        return status;
     }
 
-    UCT_CHECK_IOV_SIZE(iovcnt, UCT_RC_MLX5_RMA_MAX_IOV(0),
-                       "uct_rc_mlx5_ep_put_zcopy");
     UCT_CHECK_LENGTH(uct_iov_total_length(iov, iovcnt), 0, UCT_IB_MAX_MESSAGE_SIZE,
                      "put_zcopy");
     UCT_RC_CHECK_RES(&iface->super, &ep->super.super);
@@ -477,20 +523,55 @@ ucs_status_t
 uct_ib_mlx5_gga_rkey_unpack(const uct_ib_md_packed_mkey_t *mkey,
                             uct_rkey_t *rkey_p, void **handle_p)
 {
-    uct_md_mem_attach_params_t params = { 0 };
+    uct_rkey_bundle_t *rkey_bundle;
+    uct_gga_mlx5_rkey_handle_t *rkey_handle;
 
     ucs_assert(mkey->flags & UCT_IB_PACKED_MKEY_FLAG_EXPORTED);
 
-//    uct_ib_mlx5_devx_mem_attach(uct_md_h uct_md, mkey,
-//                                         uct_md_mem_attach_params_t *params,
-//                                         uct_mem_h *memh_p);
+    rkey_bundle = ucs_malloc(sizeof(*rkey_bundle), "gga_rkey_bundle");
+    if (rkey_bundle == NULL) {
+        return UCS_ERR_NO_MEMORY;
+    }
 
-//        void *exp_memh = receiver().memh_export(recvbuf.memh());
-//        uct_rkey_bundle rkey_bundle;
-//        sender().memh_attach(exp_memh, &rkey_bundle);
-//        recvbuf.rkey_import(rkey_bundle);
+    rkey_handle = ucs_calloc(1, sizeof(uct_gga_mlx5_rkey_handle_t),
+                             "gga_rkey_handle");
+    if (rkey_handle == NULL) {
+        return UCS_ERR_NO_MEMORY;
+    }
 
-    return UCS_ERR_NOT_IMPLEMENTED;
+    /* md and rkey_ob will be initialized on demand */
+    rkey_handle->packed_mkey = *mkey;
+    rkey_bundle->handle      = rkey_handle;
+    rkey_bundle->rkey        = (uintptr_t)rkey_bundle;
+    rkey_bundle->type        = NULL;
+
+    *rkey_p   = rkey_bundle->rkey;
+    *handle_p = rkey_bundle->handle;
+    return UCS_OK;
+}
+
+static ucs_status_t
+uct_gga_mlx5_mem_reg(uct_md_h uct_md, void *address, size_t length,
+                     const uct_md_mem_reg_params_t *params, uct_mem_h *memh_p)
+{
+    uct_gga_mlx5_mem_t *gga_memh;
+    uct_mem_h ib_mlx5_memh;
+    ucs_status_t status;
+
+    status = uct_ib_mlx5_devx_mem_reg(uct_md, address, length, params,
+                                      &ib_mlx5_memh);
+    if (status != UCS_OK) {
+        return status;
+    }
+
+    gga_memh = ucs_realloc(ib_mlx5_memh, sizeof(*gga_memh), "gga_memh");
+    if (gga_memh == NULL) {
+        return UCS_ERR_NO_MEMORY;
+    }
+
+    gga_memh->md = ucs_derived_of(uct_md, uct_ib_mlx5_md_t);
+    *memh_p = gga_memh;
+    return UCS_OK;
 }
 
 static ucs_status_t uct_ib_mlx5_gga_md_open(struct ibv_device *ibv_device,
@@ -503,7 +584,7 @@ static uct_ib_md_ops_t uct_ib_mlx5_gga_md_ops = {
         .query              = uct_ib_mlx5_devx_md_query,
         .mem_alloc          = uct_ib_mlx5_devx_device_mem_alloc,
         .mem_free           = uct_ib_mlx5_devx_device_mem_free,
-        .mem_reg            = uct_ib_mlx5_devx_mem_reg,
+        .mem_reg            = uct_gga_mlx5_mem_reg,
         .mem_dereg          = uct_ib_mlx5_devx_mem_dereg,
         .mem_attach         = uct_ib_mlx5_devx_mem_attach,
         .mem_advise         = uct_ib_mem_advise,
