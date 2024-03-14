@@ -222,7 +222,6 @@ static uct_ib_md_ops_entry_t UCT_IB_MD_OPS_NAME(verbs);
 static uct_ib_md_ops_entry_t *uct_ib_ops[] = {
 #if defined (HAVE_DEVX)
     &UCT_IB_MD_OPS_NAME(devx),
-    &UCT_IB_MD_OPS_NAME(gga),
 #endif
 #if defined (HAVE_MLX5_DV)
     &UCT_IB_MD_OPS_NAME(dv),
@@ -1039,10 +1038,15 @@ static const char* get_ib_gga_dev_name(const char *md_name)
     static const char* gga_prefix      = "gga_";
     static const size_t gga_prefix_len = 4;
     const char *dev_name               = strncmp(md_name, gga_prefix,
-                                                 gga_prefix_len) ? "" :
+                                                 gga_prefix_len) ? NULL :
                                          (md_name + gga_prefix_len);
 
     return dev_name;
+}
+
+static int uct_ib_md_name_is_gga(const char *md_name)
+{
+    return get_ib_gga_dev_name(md_name) != NULL;
 }
 
 ucs_status_t uct_ib_md_open(uct_component_t *component, const char *md_name,
@@ -1055,7 +1059,7 @@ ucs_status_t uct_ib_md_open(uct_component_t *component, const char *md_name,
     struct ibv_device **ib_device_list, *ib_device;
     int i, num_devices, ret, fork_init = 0;
 
-    if (dev_name[0] == '\0') {
+    if (dev_name == NULL) {
         dev_name = md_name;
     }
 
@@ -1108,30 +1112,21 @@ ucs_status_t uct_ib_md_open(uct_component_t *component, const char *md_name,
         uct_ib_fork_warn_enable();
     }
 
-    for (i = 0; i < ucs_static_array_size(uct_ib_ops); i++) {
-        if (dev_name != md_name) {
-            /* gga */
-            if (strstr(uct_ib_ops[i]->name, "gga") == NULL) {
-                ucs_info("%s: md '%s' mismatch", md_name, uct_ib_ops[i]->name);
-                continue;
+    if (uct_ib_md_name_is_gga(md_name)) {
+        status = uct_ib_md_ops_gga_entry.ops->open(ib_device, md_config, &md);
+    } else {
+        for (i = 0; i < ucs_static_array_size(uct_ib_ops); i++) {
+            status = uct_ib_ops[i]->ops->open(ib_device, md_config, &md);
+            if (status == UCS_OK) {
+                ucs_info("%s: md open by '%s' is successful", md_name,
+                          uct_ib_ops[i]->name);
+                break;
+            } else if (status != UCS_ERR_UNSUPPORTED) {
+                goto out_free_dev_list;
             }
-        } else {
-            if (strstr(uct_ib_ops[i]->name, "gga") != NULL) {
-                ucs_info("%s: md '%s' mismatch", md_name, uct_ib_ops[i]->name);
-                continue;
-            }
-        }
-
-        status = uct_ib_ops[i]->ops->open(ib_device, md_config, &md);
-        if (status == UCS_OK) {
-            ucs_info("%s: md open by '%s' is successful", md_name,
+            ucs_info("%s: md open by '%s' failed, trying next", md_name,
                       uct_ib_ops[i]->name);
-            break;
-        } else if (status != UCS_ERR_UNSUPPORTED) {
-            goto out_free_dev_list;
         }
-        ucs_info("%s: md open by '%s' failed, trying next", md_name,
-                  uct_ib_ops[i]->name);
     }
 
     if (status != UCS_OK) {
