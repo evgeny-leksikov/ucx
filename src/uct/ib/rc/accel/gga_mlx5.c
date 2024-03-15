@@ -323,19 +323,17 @@ static void uct_gga_mlx5_iface_progress_enable(uct_iface_h tl_iface, unsigned fl
 }
 
 static ucs_status_t
-uct_gga_mlx5_rkey_resolve(const uct_iov_t *iov, size_t iov_count,
-                          uct_rkey_t rkey)
+uct_gga_mlx5_rkey_resolve(uct_ib_mlx5_md_t *md, uct_rkey_t rkey)
 {
+    uct_md_h uct_md                         = &md->super.super;
     uct_rkey_bundle_t *rkey_bundle          = (uct_rkey_bundle_t*)rkey;
     uct_gga_mlx5_rkey_handle_t *rkey_handle = rkey_bundle->handle;
-    uct_gga_mlx5_mem_t *gga_memh            = iov[0].memh;
-    uct_md_h uct_md                         = (uct_md_h)gga_memh->md;
     uct_md_mem_attach_params_t atach_params = { 0 };
     uct_md_mkey_pack_params_t repack_params = { 0 };
     uct_ib_md_packed_mkey_t repack_mkey;
     ucs_status_t status;
 
-    ucs_assert(iov_count == 1);
+//    ucs_assert(iov_count == 1);
 
     if (rkey_handle->memh != NULL) {
         return UCS_OK;
@@ -349,8 +347,7 @@ uct_gga_mlx5_rkey_resolve(const uct_iov_t *iov, size_t iov_count,
     }
 
     status = uct_ib_mlx5_devx_mkey_pack(uct_md, (uct_mem_h)rkey_handle->memh,
-                                        iov[0].buffer, iov[0].length,
-                                        &repack_params, &repack_mkey);
+                                        NULL, 0, &repack_params, &repack_mkey);
     if (status != UCS_OK) {
         return status;
     }
@@ -365,9 +362,15 @@ uct_gga_mlx5_ep_put_zcopy(uct_ep_h tl_ep, const uct_iov_t *iov, size_t iovcnt,
                           uct_completion_t *comp)
 {
     UCT_RC_MLX5_EP_DECL(tl_ep, iface, ep);
+    uct_ib_mlx5_md_t *md = ucs_derived_of(iface->super.super.super.md,
+                                          uct_ib_mlx5_md_t);
+
+    uct_rkey_bundle_t *rkey_bundle          = (uct_rkey_bundle_t*)rkey;
+    uct_gga_mlx5_rkey_handle_t *rkey_handle = rkey_bundle->handle;
+
     ucs_status_t status;
 
-    status = uct_gga_mlx5_rkey_resolve(iov, iovcnt, rkey);
+    status = uct_gga_mlx5_rkey_resolve(md, rkey);
     if (ucs_unlikely(status != UCS_OK)) {
         return status;
     }
@@ -376,12 +379,14 @@ uct_gga_mlx5_ep_put_zcopy(uct_ep_h tl_ep, const uct_iov_t *iov, size_t iovcnt,
                      "put_zcopy");
     UCT_RC_CHECK_RES(&iface->super, &ep->super.super);
 
-    uct_rc_mlx5_ep_fence_put(iface, &ep->super.tx.wq, &rkey, &remote_addr,
+    uct_rc_mlx5_ep_fence_put(iface, &ep->super.tx.wq,
+                             &rkey_handle->rkey_ob.rkey, &remote_addr,
                              ep->super.super.atomic_mr_offset);
 
     status = uct_rc_mlx5_base_ep_zcopy_post(&ep->super, MLX5_OPCODE_MMO,
                                             iov, iovcnt, 0ul, 0, NULL, 0,
-                                            remote_addr, rkey, 0ul, 0, 0,
+                                            remote_addr,
+                                            rkey_handle->rkey_ob.rkey, 0ul, 0, 0,
                                             MLX5_WQE_CTRL_CQ_UPDATE,
                                             uct_rc_ep_send_op_completion_handler,
                                             0, comp);
