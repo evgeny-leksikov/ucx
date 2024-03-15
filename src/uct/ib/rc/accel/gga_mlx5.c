@@ -18,11 +18,6 @@
 #include <uct/ib/rc/accel/rc_mlx5.inl>
 
 typedef struct {
-    uct_ib_mlx5_devx_mem_t super;
-    uct_ib_mlx5_md_t       *md;
-} uct_gga_mlx5_mem_t;
-
-typedef struct {
     uct_ib_md_packed_mkey_t packed_mkey;
     uct_ib_mlx5_devx_mem_t  *memh;
     uct_rkey_bundle_t       rkey_ob;
@@ -538,44 +533,24 @@ uct_ib_mlx5_gga_rkey_unpack(const uct_ib_md_packed_mkey_t *mkey,
         return UCS_ERR_NO_MEMORY;
     }
 
-    rkey_handle = ucs_calloc(1, sizeof(uct_gga_mlx5_rkey_handle_t),
-                             "gga_rkey_handle");
+    rkey_handle = ucs_malloc(sizeof(*rkey_handle), "gga_rkey_handle");
     if (rkey_handle == NULL) {
         return UCS_ERR_NO_MEMORY;
     }
 
-    /* md and rkey_ob will be initialized on demand */
-    rkey_handle->packed_mkey = *mkey;
+    rkey_handle->packed_mkey    = *mkey;
+    /* memh and rkey_ob will be initialized on demand */
+    rkey_handle->memh           = NULL;
+    rkey_handle->rkey_ob.rkey   = UCT_INVALID_RKEY;
+    rkey_handle->rkey_ob.handle = NULL;
+    rkey_handle->rkey_ob.type   = NULL;
+
     rkey_bundle->handle      = rkey_handle;
     rkey_bundle->rkey        = (uintptr_t)rkey_bundle;
     rkey_bundle->type        = NULL;
 
     *rkey_p   = rkey_bundle->rkey;
     *handle_p = rkey_bundle->handle;
-    return UCS_OK;
-}
-
-static ucs_status_t
-uct_gga_mlx5_mem_reg(uct_md_h uct_md, void *address, size_t length,
-                     const uct_md_mem_reg_params_t *params, uct_mem_h *memh_p)
-{
-    uct_gga_mlx5_mem_t *gga_memh;
-    uct_mem_h ib_mlx5_memh;
-    ucs_status_t status;
-
-    status = uct_ib_mlx5_devx_mem_reg(uct_md, address, length, params,
-                                      &ib_mlx5_memh);
-    if (status != UCS_OK) {
-        return status;
-    }
-
-    gga_memh = ucs_realloc(ib_mlx5_memh, sizeof(*gga_memh), "gga_memh");
-    if (gga_memh == NULL) {
-        return UCS_ERR_NO_MEMORY;
-    }
-
-    gga_memh->md = ucs_derived_of(uct_md, uct_ib_mlx5_md_t);
-    *memh_p = gga_memh;
     return UCS_OK;
 }
 
@@ -589,7 +564,7 @@ static uct_ib_md_ops_t uct_ib_mlx5_gga_md_ops = {
         .query              = uct_ib_mlx5_devx_md_query,
         .mem_alloc          = uct_ib_mlx5_devx_device_mem_alloc,
         .mem_free           = uct_ib_mlx5_devx_device_mem_free,
-        .mem_reg            = uct_gga_mlx5_mem_reg,
+        .mem_reg            = uct_ib_mlx5_devx_mem_reg,
         .mem_dereg          = uct_ib_mlx5_devx_mem_dereg,
         .mem_attach         = uct_ib_mlx5_devx_mem_attach,
         .mem_advise         = uct_ib_mem_advise,
