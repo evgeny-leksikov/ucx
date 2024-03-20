@@ -2254,10 +2254,10 @@ ucs_status_t uct_ib_mlx5_devx_mem_attach(uct_md_h uct_md,
     ucs_strncpy_zero(access_key, uct_ib_mkey_token,
                      UCT_IB_MLX5DV_FLD_SZ_BYTES(alias_context, access_key));
 
-    memh->cross_mr = uct_ib_mlx5_devx_obj_create(md->super.dev.ibv_context, in,
-                                                 sizeof(in), out, sizeof(out),
-                                                 "MKEY_ALIAS",
-                                                 uct_md_attach_log_lvl(flags));
+    memh->atomic_rkey = UCT_IB_INVALID_MKEY;
+    memh->cross_mr    = uct_ib_mlx5_devx_obj_create(
+            md->super.dev.ibv_context, in, sizeof(in), out, sizeof(out),
+            "MKEY_ALIAS", uct_md_attach_log_lvl(flags));
     if (memh->cross_mr == NULL) {
         status = UCS_ERR_IO_ERROR;
         goto err_memh_free;
