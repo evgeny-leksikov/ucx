@@ -237,4 +237,7 @@ void uct_rc_mlx5_base_ep_cleanup(uct_rc_mlx5_base_ep_t *ep,
                                  uct_rc_mlx5_iface_common_qp_cleanup_ctx_t *ctx,
                                  int async);
 
+void uct_rc_mlx5_iface_handle_failure(uct_ib_iface_t *ib_iface, void *arg,
+                                      ucs_status_t ep_status);
+
 #endif

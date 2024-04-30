@@ -14,6 +14,8 @@
 
 #include <uct/ib/rc/accel/rc_mlx5.inl>
 
+#include <infiniband/mlx5dv.h>
+
 #define UCT_GGA_MLX5_OPAQUE_BUF_LEN 64
 
 typedef struct {
@@ -179,8 +181,16 @@ static uct_component_t uct_gga_component = {
     .md_vfs_init        = (uct_component_md_vfs_init_func_t)ucs_empty_function
 };
 
-/* TODO: the function will be used on data path */
-static UCS_F_MAYBE_UNUSED ucs_status_t
+static void uct_gga_mlx5_rkey_trace(uct_ib_mlx5_md_t *md,
+                                    uct_gga_mlx5_rkey_handle_t *rkey_handle,
+                                    const char *prefix)
+{
+    ucs_trace("md %p: %s resolved rkey %p: rkey_ob %"PRIx64"/%p", md, prefix,
+              rkey_handle, rkey_handle->rkey_ob.rkey,
+              rkey_handle->rkey_ob.handle);
+}
+
+static UCS_F_ALWAYS_INLINE ucs_status_t
 uct_gga_mlx5_rkey_resolve(uct_ib_mlx5_md_t *md, uct_rkey_t rkey)
 {
     uct_md_h uct_md                         = &md->super.super;
@@ -191,6 +201,7 @@ uct_gga_mlx5_rkey_resolve(uct_ib_mlx5_md_t *md, uct_rkey_t rkey)
     ucs_status_t status;
 
     if (ucs_likely(rkey_handle->memh != NULL)) {
+        uct_gga_mlx5_rkey_trace(md, rkey_handle, "reuse");
         return UCS_OK;
     }
 
@@ -209,9 +220,12 @@ uct_gga_mlx5_rkey_resolve(uct_ib_mlx5_md_t *md, uct_rkey_t rkey)
         goto err_dereg;
     }
 
-    return uct_ib_rkey_unpack(NULL, &repack_mkey,
-                              &rkey_handle->rkey_ob.rkey,
-                              &rkey_handle->rkey_ob.handle);
+    status = uct_ib_rkey_unpack(NULL, &repack_mkey,
+                                &rkey_handle->rkey_ob.rkey,
+                                &rkey_handle->rkey_ob.handle);
+    uct_gga_mlx5_rkey_trace(md, rkey_handle, "new");
+    return status;
+
 err_dereg:
     uct_gga_mlx5_rkey_handle_dereg(rkey_handle);
 err_out:
@@ -267,15 +281,22 @@ uct_gga_mlx5_iface_query(uct_iface_h tl_iface, uct_iface_attr_t *iface_attr)
     iface_attr->device_addr_len += ucs_offsetof(uct_gga_mlx5_dev_addr_t,
                                                 ib_addr);
     iface_attr->ep_addr_len      = sizeof(uct_gga_mlx5_ep_address_t);
-    iface_attr->cap.flags        = /*
-                                   UCT_IFACE_FLAG_PUT_ZCOPY |
+    iface_attr->cap.flags        = UCT_IFACE_FLAG_PUT_ZCOPY |
                                    UCT_IFACE_FLAG_GET_ZCOPY |
-                                   UCT_IFACE_FLAG_PENDING   | */
+                                   UCT_IFACE_FLAG_PENDING   |
                                    UCT_IFACE_FLAG_CONNECT_TO_EP |
                                    UCT_IFACE_FLAG_CB_SYNC;
+    iface_attr->cap.event_flags  = UCT_IFACE_FLAG_EVENT_SEND_COMP |
+                                   UCT_IFACE_FLAG_EVENT_FD;
 
-    iface_attr->cap.event_flags = UCT_IFACE_FLAG_EVENT_SEND_COMP |
-                                  UCT_IFACE_FLAG_EVENT_FD;
+    iface_attr->cap.put.min_zcopy = 1;
+    iface_attr->cap.put.max_zcopy = 2 * UCS_MBYTE;
+    iface_attr->cap.put.max_iov   = 1;
+
+    iface_attr->cap.get.min_zcopy = 1;
+    iface_attr->cap.get.max_zcopy = 2 * UCS_MBYTE;
+    iface_attr->cap.get.max_iov   = 1;
+
     return UCS_OK;
 }
 
@@ -412,6 +433,91 @@ uct_gga_mlx5_ep_connect_to_ep_v2(uct_ep_h tl_ep,
 }
 
 static ucs_status_t
+uct_gga_mlx5_base_ep_put_zcopy(uct_ep_h tl_ep, const uct_iov_t *iov,
+                               size_t iovcnt, uint64_t remote_addr,
+                               uct_rkey_t rkey, uct_completion_t *comp)
+{
+    UCT_RC_MLX5_BASE_EP_DECL(tl_ep, iface, ep);
+    uct_gga_mlx5_ep_t *gga_ep = ucs_derived_of(ep, uct_gga_mlx5_ep_t);
+    uct_ib_mlx5_md_t *md      = ucs_derived_of(iface->super.super.super.md,
+                                               uct_ib_mlx5_md_t);
+    uct_gga_mlx5_rkey_handle_t *rkey_handle;
+    uct_rkey_t rkey_copy;
+    ucs_status_t status;
+
+    UCT_CHECK_IOV_SIZE(iovcnt, UCT_RC_MLX5_RMA_MAX_IOV(0),
+                       "uct_gga_mlx5_ep_put_zcopy");
+    UCT_CHECK_LENGTH(uct_iov_total_length(iov, iovcnt), 0, UCT_IB_MAX_MESSAGE_SIZE,
+                     "put_zcopy");
+
+    /* rkey resolution doesn't depend on available resources */
+    status = uct_gga_mlx5_rkey_resolve(md, rkey);
+    if (ucs_unlikely(status != UCS_OK)) {
+        return status;
+    }
+
+    UCT_RC_CHECK_RES(&iface->super, &ep->super);
+
+    rkey_handle = (uct_gga_mlx5_rkey_handle_t*)rkey;
+    rkey_copy   = rkey_handle->rkey_ob.rkey;
+    uct_rc_mlx5_ep_fence_put(iface, &ep->tx.wq, &rkey_copy, &remote_addr,
+                             ep->super.atomic_mr_offset);
+
+    status = uct_rc_mlx5_base_ep_zcopy_post(
+            ep, MLX5_OPCODE_MMO | UCT_RC_MLX5_OPCODE_FLAG_MMO_PUT, iov, iovcnt,
+            0ul, 0, NULL, 0, remote_addr, rkey_copy, 0ul, 0, 0,
+            gga_ep->dma_opaque.mr, MLX5_WQE_CTRL_CQ_UPDATE,
+            uct_rc_ep_send_op_completion_handler, 0, comp);
+    UCT_TL_EP_STAT_OP_IF_SUCCESS(status, &ep->super.super, PUT, ZCOPY,
+                                 uct_iov_total_length(iov, iovcnt));
+    uct_rc_ep_enable_flush_remote(&ep->super);
+    return status;
+}
+
+static ucs_status_t
+uct_gga_mlx5_base_ep_get_zcopy(uct_ep_h tl_ep, const uct_iov_t *iov,
+                               size_t iovcnt, uint64_t remote_addr,
+                               uct_rkey_t rkey, uct_completion_t *comp)
+{
+    uint8_t fm_ce_se    = MLX5_WQE_CTRL_CQ_UPDATE;
+    size_t total_length = uct_iov_total_length(iov, iovcnt);
+    UCT_RC_MLX5_BASE_EP_DECL(tl_ep, iface, ep);
+    uct_gga_mlx5_ep_t *gga_ep = ucs_derived_of(ep, uct_gga_mlx5_ep_t);
+    uct_ib_mlx5_md_t *md      = ucs_derived_of(iface->super.super.super.md,
+                                               uct_ib_mlx5_md_t);
+    uct_gga_mlx5_rkey_handle_t *rkey_handle;
+    uct_rkey_t rkey_copy;
+    ucs_status_t status;
+
+    UCT_CHECK_IOV_SIZE(iovcnt, UCT_RC_MLX5_RMA_MAX_IOV(0),
+                       "uct_gga_mlx5_ep_get_zcopy");
+    UCT_CHECK_LENGTH(total_length, 1ul, iface->super.config.max_get_zcopy,
+                     "get_zcopy");
+    /* rkey resolution doesn't depend on available resources */
+    status = uct_gga_mlx5_rkey_resolve(md, rkey);
+    if (ucs_unlikely(status != UCS_OK)) {
+        return status;
+    }
+
+    UCT_RC_CHECK_RES(&iface->super, &ep->super);
+
+    rkey_handle = (uct_gga_mlx5_rkey_handle_t*)rkey;
+    rkey_copy   = rkey_handle->rkey_ob.rkey;
+    uct_rc_mlx5_ep_fence_get(iface, &ep->tx.wq, &rkey_copy, &fm_ce_se);
+    status = uct_rc_mlx5_base_ep_zcopy_post(
+            ep, MLX5_OPCODE_MMO | UCT_RC_MLX5_OPCODE_FLAG_MMO_GET, iov, iovcnt,
+            total_length, 0, NULL, 0, remote_addr, rkey_copy, 0ul, 0, 0,
+            gga_ep->dma_opaque.mr, fm_ce_se,
+            uct_rc_ep_get_zcopy_completion_handler,
+            UCT_RC_IFACE_SEND_OP_FLAG_IOV, comp);
+    if (!UCS_STATUS_IS_ERR(status)) {
+        UCT_TL_EP_STAT_OP(&ep->super.super, GET, ZCOPY, total_length);
+        UCT_RC_RDMA_READ_POSTED(&iface->super, total_length);
+    }
+    return status;
+}
+
+static ucs_status_t
 uct_gga_mlx5_iface_get_device_address(uct_iface_h tl_iface,
                                       uct_device_addr_t *dev_addr)
 {
@@ -427,9 +533,9 @@ uct_gga_mlx5_iface_get_device_address(uct_iface_h tl_iface,
 static uct_iface_ops_t uct_gga_mlx5_iface_tl_ops = {
     .ep_put_short             = ucs_empty_function_return_unsupported,
     .ep_put_bcopy             = (uct_ep_put_bcopy_func_t)ucs_empty_function_return_unsupported,
-    .ep_put_zcopy             = ucs_empty_function_return_unsupported,
+    .ep_put_zcopy             = uct_gga_mlx5_base_ep_put_zcopy,
     .ep_get_bcopy             = ucs_empty_function_return_unsupported,
-    .ep_get_zcopy             = ucs_empty_function_return_unsupported,
+    .ep_get_zcopy             = uct_gga_mlx5_base_ep_get_zcopy,
     .ep_am_short              = (uct_ep_am_short_func_t)ucs_empty_function_return_unsupported,
     .ep_am_short_iov          = (uct_ep_am_short_iov_func_t)ucs_empty_function_return_unsupported,
     .ep_am_bcopy              = (uct_ep_am_bcopy_func_t)ucs_empty_function_return_unsupported,
@@ -440,15 +546,15 @@ static uct_iface_ops_t uct_gga_mlx5_iface_tl_ops = {
     .ep_atomic32_post         = ucs_empty_function_return_unsupported,
     .ep_atomic64_fetch        = ucs_empty_function_return_unsupported,
     .ep_atomic32_fetch        = ucs_empty_function_return_unsupported,
-    .ep_pending_add           = ucs_empty_function_return_unsupported,
-    .ep_pending_purge         = ucs_empty_function_do_assert_void,
+    .ep_pending_add           = uct_rc_ep_pending_add,
+    .ep_pending_purge         = uct_rc_ep_pending_purge,
     .ep_flush                 = uct_rc_mlx5_base_ep_flush,
     .ep_fence                 = uct_rc_mlx5_base_ep_fence,
     .ep_check                 = ucs_empty_function_return_unsupported,
     .ep_create                = UCS_CLASS_NEW_FUNC_NAME(uct_gga_mlx5_ep_t),
     .ep_destroy               = UCS_CLASS_DELETE_FUNC_NAME(uct_gga_mlx5_ep_t),
     .ep_get_address           = uct_gga_mlx5_ep_get_address,
-    .ep_connect_to_ep         = ucs_empty_function_return_unsupported,
+    .ep_connect_to_ep         = uct_base_ep_connect_to_ep,
     .iface_flush              = uct_rc_iface_flush,
     .iface_fence              = uct_rc_iface_fence,
     .iface_progress_enable    = uct_base_iface_progress_enable,
@@ -522,7 +628,7 @@ static uct_rc_iface_ops_t uct_gga_mlx5_iface_ops = {
         .create_cq      = uct_rc_mlx5_iface_common_create_cq,
         .destroy_cq     = uct_rc_mlx5_iface_common_destroy_cq,
         .event_cq       = uct_rc_mlx5_iface_common_event_cq,
-        .handle_failure = (uct_ib_iface_handle_failure_func_t)ucs_empty_function_do_assert_void,
+        .handle_failure = uct_rc_mlx5_iface_handle_failure,
     },
     .init_rx         = uct_gga_mlx5_iface_init_rx,
     .cleanup_rx      = ucs_empty_function,

@@ -237,6 +237,25 @@ static unsigned uct_ib_mlx5_parse_dseg(void **dseg_p, void *qstart, void *qend,
     return ds;
 }
 
+static size_t
+uct_ib_mlx5_dump_data_seg(const struct mlx5_wqe_data_seg *seg,
+                          const char *prefix, char *buf, size_t max)
+{
+    snprintf(buf, max, " %s[va 0x%"PRIx64" len %d lkey 0x%x]", prefix,
+             be64toh(seg->addr), be32toh(seg->byte_count), be32toh(seg->lkey));
+    return strlen(buf);
+}
+
+static void uct_ib_mlx5_dump_dma_wqe(const void *wqe, char *buf, size_t max)
+{
+    const uct_ib_mlx5_dma_wqe_t *dma_wqe = wqe;
+    const char *ends                     = buf + max;
+    char *s                              = buf;
+
+    s += uct_ib_mlx5_dump_data_seg(&dma_wqe->gather, "G_SEG", s, ends - s);
+    uct_ib_mlx5_dump_data_seg(&dma_wqe->scatter, "S_SEG", s, ends - s);
+}
+
 static uint64_t network_to_host(void *ptr, int size)
 {
     if (size == 4) {
@@ -282,7 +301,8 @@ static void uct_ib_mlx5_wqe_dump(uct_ib_iface_t *iface, void *wqe, void *qstart,
                                            UCT_IB_OPCODE_FLAG_HAS_RADDR|UCT_IB_OPCODE_FLAG_HAS_EXT_ATOMIC },
         [MLX5_OPCODE_ATOMIC_MASKED_FA] = { "MASKED_FETCH_ADD",
                                            UCT_IB_OPCODE_FLAG_HAS_RADDR|UCT_IB_OPCODE_FLAG_HAS_EXT_ATOMIC },
-   };
+        [MLX5_OPCODE_MMO]              = { "MMO",        0 }
+    };
 
     struct mlx5_wqe_ctrl_seg *ctrl = wqe;
     uint8_t opcode      = ctrl->opmod_idx_opcode >> 24;
@@ -312,6 +332,11 @@ static void uct_ib_mlx5_wqe_dump(uct_ib_iface_t *iface, void *wqe, void *qstart,
                            ctrl->fm_ce_se & (1 << 1),
                            s, ends - s);
     s += strlen(s);
+
+    if (opcode == MLX5_OPCODE_MMO) {
+        uct_ib_mlx5_dump_dma_wqe(wqe, s, ends - s);
+        return;
+    }
 
     /* Additional segments */
     --ds;
