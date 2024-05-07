@@ -17,6 +17,7 @@
 #include <infiniband/mlx5dv.h>
 
 #define UCT_GGA_MLX5_OPAQUE_BUF_LEN 64
+#define MAX_GGA_MSG_SIZE            (2u * UCS_MBYTE)
 
 typedef struct {
     uct_ib_md_packed_mkey_t packed_mkey;
@@ -171,7 +172,7 @@ static uct_component_t uct_gga_component = {
     .name               = "gga",
     .md_config          = {
         .name           = "GGA memory domain",
-        .prefix         = UCT_IB_CONFIG_PREFIX,
+        .prefix         = "GGA_", /* UCT_IB_CONFIG_PREFIX, */
         .table          = uct_ib_md_config_table,
         .size           = sizeof(uct_ib_md_config_t),
     },
@@ -270,10 +271,11 @@ uct_gga_mlx5_iface_arm(uct_iface_h tl_iface, unsigned events)
 static ucs_status_t
 uct_gga_mlx5_iface_query(uct_iface_h tl_iface, uct_iface_attr_t *iface_attr)
 {
-    uct_ib_iface_t *iface = ucs_derived_of(tl_iface, uct_ib_iface_t);
+    uct_rc_iface_t *iface = ucs_derived_of(tl_iface, uct_rc_iface_t);
     ucs_status_t status;
 
-    status = uct_ib_iface_query(iface, UCT_IB_RETH_LEN, iface_attr);
+//    status = uct_rc_iface_query(iface, UCT_IB_RETH_LEN, iface_attr);
+    status = uct_ib_iface_query(&iface->super, UCT_IB_RETH_LEN, iface_attr);
     if (status != UCS_OK) {
         return status;
     }
@@ -290,11 +292,11 @@ uct_gga_mlx5_iface_query(uct_iface_h tl_iface, uct_iface_attr_t *iface_attr)
                                    UCT_IFACE_FLAG_EVENT_FD;
 
     iface_attr->cap.put.min_zcopy = 1;
-    iface_attr->cap.put.max_zcopy = 2 * UCS_MBYTE;
+    iface_attr->cap.put.max_zcopy = MAX_GGA_MSG_SIZE;
     iface_attr->cap.put.max_iov   = 1;
 
     iface_attr->cap.get.min_zcopy = 1;
-    iface_attr->cap.get.max_zcopy = 2 * UCS_MBYTE;
+    iface_attr->cap.get.max_zcopy = iface->config.max_get_zcopy;
     iface_attr->cap.get.max_iov   = 1;
 
     return UCS_OK;
@@ -662,6 +664,28 @@ static UCS_CLASS_INIT_FUNC(uct_gga_mlx5_iface_t,
                               &init_attr);
 
     config->super.super.fc.enable = 0; /* FC requires AM capability */
+
+    if (config->super.super.tx.max_get_zcopy == UCS_MEMUNITS_AUTO) {
+        self->super.super.config.max_get_zcopy = MAX_GGA_MSG_SIZE;
+    } else if (config->super.super.tx.max_get_zcopy <= MAX_GGA_MSG_SIZE) {
+        self->super.super.config.max_get_zcopy =
+                config->super.super.tx.max_get_zcopy;
+    } else {
+        ucs_warn("gga_iface on %s:%d: reduced max_get_zcopy to %llu",
+                 uct_ib_device_name(uct_ib_iface_device(&self->super.super.super)),
+                 self->super.super.super.config.port_num,
+                 MAX_GGA_MSG_SIZE);
+        self->super.super.config.max_get_zcopy = MAX_GGA_MSG_SIZE;
+    }
+
+//    iface_attr->cap.put.min_zcopy = 1;
+//    iface_attr->cap.put.max_zcopy = ;
+//    iface_attr->cap.put.max_iov   = 1;
+//
+//    iface_attr->cap.get.min_zcopy = 1;
+//    iface_attr->cap.get.max_zcopy = 2 * UCS_MBYTE;
+//    iface_attr->cap.get.max_iov   = 1;
+
     return UCS_OK;
 }
 
