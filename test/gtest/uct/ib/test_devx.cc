@@ -48,4 +48,4 @@ UCS_TEST_P(test_devx, dbrec)
     ucs_mpool_put_inline(dbrec);
 }
 
-UCT_INSTANTIATE_IB_TEST_CASE(test_devx);
+UCT_INSTANTIATE_IB_AND_GGA_TEST_CASE(test_devx);

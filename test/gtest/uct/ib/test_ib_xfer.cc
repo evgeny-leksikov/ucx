@@ -13,6 +13,11 @@
 #include <uct/ib/mlx5/ib_mlx5.h>
 #endif
 
+static std::string get_config_prefix(bool is_gga)
+{
+    return is_gga ? "GGA_" : "IB_";
+}
+
 class uct_p2p_rma_test_xfer : public uct_p2p_rma_test {};
 
 UCS_TEST_SKIP_COND_P(uct_p2p_rma_test_xfer, fence_relaxed_order,
@@ -116,18 +121,15 @@ UCS_TEST_SKIP_COND_P(uct_p2p_rma_test_alloc_methods, xfer_reg,
     test_get_zcopy();
 }
 
+UCT_INSTANTIATE_IB_AND_GGA_TEST_CASE(uct_p2p_rma_test_alloc_methods)
+
 UCS_TEST_SKIP_COND_P(uct_p2p_rma_test_alloc_methods, xfer_reg_multithreaded,
                      !check_caps(UCT_IFACE_FLAG_PUT_ZCOPY |
-                                 UCT_IFACE_FLAG_GET_ZCOPY),
-                     "IB_REG_MT_THRESH=1", "IB_REG_MT_CHUNK=1G",
-                     "IB_REG_MT_BIND=y")
+                                 UCT_IFACE_FLAG_GET_ZCOPY))
 {
     test_put_zcopy();
     test_get_zcopy();
 }
-
-UCT_INSTANTIATE_IB_TEST_CASE(uct_p2p_rma_test_alloc_methods)
-
 
 class uct_p2p_mix_test_alloc_methods : public uct_p2p_mix_test {};
 
@@ -136,7 +138,7 @@ UCS_TEST_P(uct_p2p_mix_test_alloc_methods, mix1000)
     run(1000);
 }
 
-UCT_INSTANTIATE_IB_TEST_CASE(uct_p2p_mix_test_alloc_methods)
+UCT_INSTANTIATE_IB_AND_GGA_TEST_CASE(uct_p2p_mix_test_alloc_methods)
 
 
 class uct_p2p_mix_test_mt : public uct_p2p_mix_test {
@@ -167,9 +169,10 @@ protected:
 
     virtual void init() override
     {
+        const std::string prefix = get_config_prefix(has_transport("gga_mlx5"));
         push_config();
-        modify_config("IB_REG_MT_THRESH", ucs::to_string(reg_mt_chunk + 1));
-        modify_config("IB_REG_MT_CHUNK", ucs::to_string(reg_mt_chunk));
+        modify_config(prefix + "REG_MT_THRESH", ucs::to_string(reg_mt_chunk + 1));
+        modify_config(prefix + "REG_MT_CHUNK", ucs::to_string(reg_mt_chunk));
 
         uct_p2p_mix_test::init();
 
@@ -196,7 +199,8 @@ protected:
 
 constexpr size_t uct_p2p_mix_test_mt::reg_mt_chunk;
 
-UCS_TEST_P(uct_p2p_mix_test_mt, mix1000_alloc_methods, "IB_REG_MT_BIND=y")
+UCS_TEST_P(uct_p2p_mix_test_mt, mix1000_alloc_methods,
+           get_config_prefix(has_transport("gga_mlx5")) + "REG_MT_BIND=y")
 {
     run(1000);
 }
@@ -212,7 +216,7 @@ UCS_TEST_P(uct_p2p_mix_test_mt, mix1000_last_byte_offset)
     run(1000, (reg_mt_chunk * 2) - 8, 8);
 }
 
-UCT_INSTANTIATE_IB_TEST_CASE(uct_p2p_mix_test_mt)
+UCT_INSTANTIATE_IB_AND_GGA_TEST_CASE(uct_p2p_mix_test_mt)
 
 
 class uct_p2p_mix_test_indirect_atomic : public uct_p2p_mix_test {};

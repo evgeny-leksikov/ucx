@@ -29,6 +29,7 @@ void test_uct_ib::create_connected_entities() {
 void test_uct_ib::init() {
     uct_test::init();
     create_connected_entities();
+    check_skip_test();
     test_uct_ib::m_ib_am_handler_counter = 0;
 }
 
@@ -237,10 +238,6 @@ test_uct_ib_with_specific_port::test_uct_ib_with_specific_port() {
 }
 
 void test_uct_ib_with_specific_port::init() {
-    if (has_transport("gga_mlx5")) {
-        UCS_TEST_SKIP_R("TODO: adapt test for GGA address format");
-    }
-
     size_t colon_pos = GetParam()->dev_name.find(":");
     std::string port_num_str;
 

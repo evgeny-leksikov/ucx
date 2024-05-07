@@ -478,7 +478,11 @@ protected:
     rc_verbs,           \
     dc_mlx5,            \
     ud_verbs,           \
-    ud_mlx5,            \
+    ud_mlx5
+
+
+#define UCT_TEST_IB_AND_GGA_TLS \
+    UCT_TEST_IB_TLS,            \
     gga_mlx5
 
 
@@ -489,7 +493,7 @@ protected:
 
 
 #define UCT_TEST_NO_SELF_TLS \
-    UCT_TEST_IB_TLS,         \
+    UCT_TEST_IB_AND_GGA_TLS, \
     ugni_rdma,               \
     ugni_udt,                \
     ugni_smsg,               \
@@ -533,6 +537,16 @@ protected:
  */
 #define UCT_INSTANTIATE_IB_TEST_CASE(_test_case) \
     UCS_PP_FOREACH(_UCT_INSTANTIATE_TEST_CASE, _test_case, UCT_TEST_IB_TLS)
+
+
+/**
+ * Instantiate the parametrized test case for all IB and GGA transports.
+ *
+ * @param _test_case  Test case class, derived from uct_test.
+ */
+#define UCT_INSTANTIATE_IB_AND_GGA_TEST_CASE(_test_case) \
+    UCS_PP_FOREACH(_UCT_INSTANTIATE_TEST_CASE, _test_case, \
+                   UCT_TEST_IB_AND_GGA_TLS)
 
 
 /**

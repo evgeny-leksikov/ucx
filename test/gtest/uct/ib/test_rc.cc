@@ -71,10 +71,11 @@ void test_rc::test_iface_ops(int cq_len)
 UCS_TEST_SKIP_COND_P(test_rc, stress_iface_ops,
                      !check_caps(UCT_IFACE_FLAG_PUT_ZCOPY)) {
     int cq_len = 16;
+    const char *name = has_rc() ? "RC_TX_CQ_LEN" : "GGA_TX_CQ_LEN";
 
-    if (UCS_OK != uct_config_modify(m_iface_config, "RC_TX_CQ_LEN",
+    if (UCS_OK != uct_config_modify(m_iface_config, name,
                                     ucs::to_string(cq_len).c_str())) {
-        UCS_TEST_ABORT("Error: cannot modify RC_TX_CQ_LEN");
+        UCS_TEST_ABORT(std::string("Error: cannot modify ") + name);
     }
 
     test_iface_ops(cq_len);
@@ -118,10 +119,18 @@ UCT_INSTANTIATE_RC_TEST_CASE(test_rc)
 class test_rc_max_wr : public test_rc {
 protected:
     virtual void init() {
-        ucs_status_t status1, status2;
-        status1 = uct_config_modify(m_iface_config, "RC_VERBS_TX_MAX_WR", "32");
-        status2 = uct_config_modify(m_iface_config, "RC_TX_MAX_BB", "32");
-        if (status1 != UCS_OK && status2 != UCS_OK) {
+        ucs_status_t status;
+
+        if (has_rc()) {
+            status = uct_config_modify(m_iface_config, "RC_VERBS_TX_MAX_WR", "32");
+            if (status != UCS_OK) {
+                status = uct_config_modify(m_iface_config, "RC_TX_MAX_BB", "32");
+            }
+        } else {
+            status = uct_config_modify(m_iface_config, "GGA_TX_MAX_BB", "32");
+        }
+
+        if (status != UCS_OK) {
             UCS_TEST_ABORT("Error: cannot set rc max wr/bb");
         }
         test_rc::init();
@@ -129,7 +138,8 @@ protected:
 };
 
 /* Check that max_wr stops from sending */
-UCS_TEST_P(test_rc_max_wr, send_limit)
+UCS_TEST_SKIP_COND_P(test_rc_max_wr, send_limit,
+                     !check_caps(UCT_IFACE_FLAG_AM_BCOPY))
 {
     /* first 32 messages should be OK */
     send_am_messages(m_e1, 32, UCS_OK);
@@ -207,6 +217,7 @@ UCS_TEST_P(test_rc_iface_address, size_no_flush_remote)
         {"rc_mlx5", {7, 1}},
         {"dc_mlx5", {0, 5}},
         {"rc_verbs", {7, 0}},
+        {"gga_mlx5", {8, 0}},
     };
     check_sizes(m_entity, sizes);
 }
@@ -219,6 +230,7 @@ UCS_TEST_P(test_rc_iface_address, size_flush_remote)
         {"rc_mlx5", {flush_rkey_enabled ? 10 : 7, 1}},
         {"dc_mlx5", {0, flush_rkey_enabled ? 7 : 5}},
         {"rc_verbs", {flush_rkey_enabled || (mr_id != 0) ? 7 : 4, 0}},
+        {"gga_mlx5", {8, 0}},
     };
     check_sizes(m_entity_flush_rkey, sizes);
 }
@@ -235,20 +247,22 @@ public:
     };
 
     test_rc_get_limit() {
+        const std::string prefix = has_rc() ? "RC_" : "GGA_";
+
         m_num_get_bytes = 8 * UCS_KBYTE + 557; // some non power of 2 value
-        modify_config("RC_TX_NUM_GET_BYTES",
-                      ucs::to_string(m_num_get_bytes).c_str());
+        modify_config(prefix + "TX_NUM_GET_BYTES",
+                      ucs::to_string(m_num_get_bytes));
 
         m_max_get_zcopy = 4096;
-        modify_config("RC_MAX_GET_ZCOPY",
-                      ucs::to_string(m_max_get_zcopy).c_str());
+        modify_config(prefix + "MAX_GET_ZCOPY",
+                      ucs::to_string(m_max_get_zcopy), FAIL_IF_NOT_EXIST);
 
         if (!RUNNING_ON_VALGRIND) {
             /* Valgrind already has special small value for this */
-            modify_config("RC_TX_QUEUE_LEN", "32");
+            modify_config(prefix + "TX_QUEUE_LEN", "32");
         }
 
-        modify_config("RC_TM_ENABLE", "y", SETENV_IF_NOT_EXIST);
+        modify_config(prefix + "TM_ENABLE", "y", SETENV_IF_NOT_EXIST);
 
         m_comp.func   = NULL;
         m_comp.count  = 300000; // some big value to avoid func invocation
@@ -679,7 +693,8 @@ protected:
 
 size_t test_rc_ece_auto::m_recv_count = 0;
 
-UCS_TEST_P(test_rc_ece_auto, send_recv)
+UCS_TEST_SKIP_COND_P(test_rc_ece_auto, send_recv,
+                     !check_caps(UCT_IFACE_FLAG_AM_BCOPY))
 {
     send_recv(m_e1->ep(0), m_e2, m_e1->iface_attr().cap.am.max_bcopy);
 }
@@ -826,19 +841,22 @@ void test_rc_flow_control::test_pending_purge(int wnd, int num_pend_sends)
 
 
 /* Check that FC window works as expected */
-UCS_TEST_P(test_rc_flow_control, general_enabled)
+UCS_TEST_SKIP_COND_P(test_rc_flow_control, general_enabled,
+                     !check_caps(UCT_IFACE_FLAG_AM_BCOPY))
 {
     test_general(8, 4, 2, true);
 }
 
-UCS_TEST_P(test_rc_flow_control, general_disabled)
+UCS_TEST_SKIP_COND_P(test_rc_flow_control, general_disabled,
+                     !check_caps(UCT_IFACE_FLAG_AM_BCOPY))
 {
     test_general(8, 4, 2, false);
 }
 
 /* Test the scenario when ep is being destroyed while there is
  * FC grant message in the pending queue */
-UCS_TEST_P(test_rc_flow_control, pending_only_fc)
+UCS_TEST_SKIP_COND_P(test_rc_flow_control, pending_only_fc,
+                     !check_caps(UCT_IFACE_FLAG_AM_BCOPY))
 {
     int wnd = 2;
 
@@ -853,17 +871,20 @@ UCS_TEST_P(test_rc_flow_control, pending_only_fc)
 
 /* Check that user callback passed to uct_ep_pending_purge is not
  * invoked for FC grant message */
-UCS_TEST_P(test_rc_flow_control, pending_purge)
+UCS_TEST_SKIP_COND_P(test_rc_flow_control, pending_purge,
+                     !check_caps(UCT_IFACE_FLAG_AM_BCOPY))
 {
     test_pending_purge(2, 5);
 }
 
-UCS_TEST_P(test_rc_flow_control, pending_grant)
+UCS_TEST_SKIP_COND_P(test_rc_flow_control, pending_grant,
+                     !check_caps(UCT_IFACE_FLAG_AM_BCOPY))
 {
     test_pending_grant(5);
 }
 
-UCS_TEST_P(test_rc_flow_control, fc_disabled_flush)
+UCS_TEST_SKIP_COND_P(test_rc_flow_control, fc_disabled_flush,
+                     !check_caps(UCT_IFACE_FLAG_AM_BCOPY))
 {
     test_flush_fc_disabled();
 }
@@ -898,12 +919,14 @@ void test_rc_flow_control_stats::test_general(int wnd, int soft_thresh,
 }
 
 
-UCS_TEST_P(test_rc_flow_control_stats, general)
+UCS_TEST_SKIP_COND_P(test_rc_flow_control_stats, general,
+                     !check_caps(UCT_IFACE_FLAG_AM_BCOPY))
 {
     test_general(5, 2, 1);
 }
 
-UCS_TEST_P(test_rc_flow_control_stats, soft_request)
+UCS_TEST_SKIP_COND_P(test_rc_flow_control_stats, soft_request,
+                     !check_caps(UCT_IFACE_FLAG_AM_BCOPY))
 {
     uint64_t v;
     int wnd = 8;
@@ -936,7 +959,7 @@ extern "C" {
 #endif
 
 test_uct_iface_attrs::attr_map_t test_rc_iface_attrs::get_num_iov() {
-    if (has_transport("rc_mlx5")) {
+    if (has_transport("rc_mlx5") || has_transport("gga_mlx5")) {
         return get_num_iov_mlx5_common(0ul);
     } else {
         EXPECT_TRUE(has_transport("rc_verbs"));
@@ -958,9 +981,10 @@ test_rc_iface_attrs::get_num_iov_mlx5_common(size_t av_size)
     attr_map_t iov_map;
 
 #ifdef HAVE_MLX5_DV
-    // For RMA iovs can use all WQE space, remaining from control and
-    // remote address segments (and AV if relevant)
-    size_t rma_iov = (UCT_IB_MLX5_MAX_SEND_WQE_SIZE -
+    size_t rma_iov = has_transport("gga_mlx5") ? 1 :
+                     // For RMA iovs can use all WQE space, remaining from
+                     // control and remote address segments (and AV if relevant)
+                     (UCT_IB_MLX5_MAX_SEND_WQE_SIZE -
                       (sizeof(struct mlx5_wqe_raddr_seg) +
                        sizeof(struct mlx5_wqe_ctrl_seg) + av_size)) /
                      sizeof(struct mlx5_wqe_data_seg);
