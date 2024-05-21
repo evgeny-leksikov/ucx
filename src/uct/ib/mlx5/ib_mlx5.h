@@ -238,11 +238,11 @@ enum {
 typedef struct uct_ib_mlx5_dma_wqe {
     struct mlx5_wqe_ctrl_seg ctrl;
     uint32_t                 padding;   /* unused for dma */
-    uint32_t                 opaque_lkey;
-    uint64_t                 opaque_vaddr;
+    uint32_t                 be_opaque_lkey;
+    uint64_t                 be_opaque_vaddr;
     struct mlx5_wqe_data_seg gather;
     struct mlx5_wqe_data_seg scatter;
-} UCS_S_PACKED uct_ib_mlx5_dma_wqe_t;
+} UCS_S_PACKED UCS_V_ALIGNED(4) uct_ib_mlx5_dma_wqe_t;
 
 
 typedef struct {

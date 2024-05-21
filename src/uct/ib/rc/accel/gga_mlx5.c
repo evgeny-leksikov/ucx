@@ -16,7 +16,7 @@
 
 #include <infiniband/mlx5dv.h>
 
-#define UCT_GGA_MLX5_OPAQUE_BUF_LEN 64
+#define UCT_GGA_MLX5_OPAQUE_BUF_LEN (UCS_SYS_CACHE_LINE_SIZE + 64)
 #define MAX_GGA_MSG_SIZE            (2u * UCS_MBYTE)
 
 typedef struct {
@@ -38,11 +38,11 @@ typedef struct {
 typedef struct {
     uint8_t       buf[UCT_GGA_MLX5_OPAQUE_BUF_LEN];
     struct ibv_mr *mr;
-} UCS_V_ALIGNED(UCS_SYS_CACHE_LINE_SIZE) uct_gga_mlx5_dma_opaque_buf_t;
+} uct_gga_mlx5_dma_opaque_buf_t;
 
 typedef struct {
     uct_rc_mlx5_iface_common_qp_cleanup_ctx_t super;
-    uct_gga_mlx5_dma_opaque_buf_t             dma_opaque;
+    struct ibv_mr                             *dma_mr;
 } uct_gga_mlx5_iface_qp_cleanup_ctx_t;
 
 typedef struct {
@@ -327,15 +327,17 @@ static UCS_CLASS_INIT_FUNC(uct_gga_mlx5_ep_t, const uct_ep_params_t *params)
     uct_base_iface_t *iface;
     uct_ib_mlx5_md_t *md;
     ucs_status_t status;
-
     UCS_CLASS_CALL_SUPER_INIT(uct_rc_mlx5_base_ep_t, params);
 
     iface = ucs_derived_of(tl_iface, uct_base_iface_t);
     md    = ucs_derived_of(iface->md, uct_ib_mlx5_md_t);
 
-    self->dma_opaque.mr = ibv_reg_mr(md->super.pd, self->dma_opaque.buf,
-                                     UCT_GGA_MLX5_OPAQUE_BUF_LEN,
-                                     IBV_ACCESS_LOCAL_WRITE);
+    self->dma_opaque.mr =
+            ibv_reg_mr(md->super.pd,
+                       ucs_align_up_pow2_ptr(&self->dma_opaque.buf[0],
+                                             UCS_SYS_CACHE_LINE_SIZE),
+                       UCT_GGA_MLX5_OPAQUE_BUF_LEN,
+                       IBV_ACCESS_LOCAL_WRITE);
     if (self->dma_opaque.mr == NULL) {
         ucs_error("ibv_reg_mr(pd=%p, buf=%p, len=%d, 0x%x) failed to register "
                   "DMA/MMO opaque buffer: %m", md->super.pd,
@@ -361,9 +363,9 @@ err:
 static UCS_CLASS_CLEANUP_FUNC(uct_gga_mlx5_ep_t)
 {
     uct_gga_mlx5_iface_qp_cleanup_ctx_t cleanup_ctx = {
-        .super.qp   = self->super.tx.wq.super,
-        .super.reg  = self->super.tx.wq.reg,
-        .dma_opaque = self->dma_opaque
+        .super.qp  = self->super.tx.wq.super,
+        .super.reg = self->super.tx.wq.reg,
+        .dma_mr    = self->dma_opaque.mr
     };
 
     uct_rc_mlx5_base_ep_cleanup(&self->super, &cleanup_ctx.super, 0);
@@ -612,7 +614,7 @@ static void uct_gga_mlx5_iface_qp_cleanup(uct_rc_iface_qp_cleanup_ctx_t *ctx)
     uct_gga_mlx5_iface_qp_cleanup_ctx_t *gga_ctx =
             ucs_derived_of(ctx, uct_gga_mlx5_iface_qp_cleanup_ctx_t);
 
-    ibv_dereg_mr(gga_ctx->dma_opaque.mr);
+    ibv_dereg_mr(gga_ctx->dma_mr);
     uct_rc_mlx5_iface_common_qp_cleanup(&gga_ctx->super);
 }
 

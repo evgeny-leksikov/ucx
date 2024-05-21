@@ -252,6 +252,10 @@ static void uct_ib_mlx5_dump_dma_wqe(const void *wqe, char *buf, size_t max)
     const char *ends                     = buf + max;
     char *s                              = buf;
 
+    snprintf(s, max, " OPQ[lkey 0x%x va 0x%"PRIx64"]",
+             be32toh(dma_wqe->be_opaque_lkey),
+             be64toh(dma_wqe->be_opaque_vaddr));
+    s += strlen(s);
     s += uct_ib_mlx5_dump_data_seg(&dma_wqe->gather, "G_SEG", s, ends - s);
     uct_ib_mlx5_dump_data_seg(&dma_wqe->scatter, "S_SEG", s, ends - s);
 }
