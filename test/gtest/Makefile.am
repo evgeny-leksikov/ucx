@@ -164,6 +164,7 @@ gtest_SOURCES = \
 	ucp/test_ucp_wakeup.cc \
 	ucp/test_ucp_fence.cc \
 	ucp/test_ucp_sockaddr.cc \
+	ucp/test_ucp_rdmo.cc \
 	ucp/ucp_test.cc \
 	ucp/ucp_datatype.cc \
 	\
