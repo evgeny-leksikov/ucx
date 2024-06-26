@@ -79,7 +79,8 @@ gtest_CPPFLAGS = \
 	-I$(top_builddir)/src \
 	-I$(top_srcdir)/test/gtest \
 	$(GTEST_CPPFLAGS) \
-	$(OPENMP_CFLAGS)
+	$(OPENMP_CFLAGS) \
+	$(doca_urom_CFLAGS)
 
 gtest_LDFLAGS  = $(GTEST_LDFLAGS) -no-install $(LDFLAGS_DYNAMIC_LIST_DATA)
 gtest_CFLAGS   = $(BASE_CFLAGS)

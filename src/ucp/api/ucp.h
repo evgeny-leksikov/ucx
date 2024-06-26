@@ -164,7 +164,10 @@ enum ucp_feature {
      * @ref ucp_mem_map and packed by @ref ucp_memh_pack with the flag
      * @ref UCP_MEMH_PACK_FLAG_EXPORT and use it for local operations
      */
-    UCP_FEATURE_EXPORTED_MEMH = UCS_BIT(7)
+    UCP_FEATURE_EXPORTED_MEMH = UCS_BIT(7),
+
+    /** Request RDMO support */
+    UCP_FEATURE_RDMO          = UCS_BIT(8)
 };
 
 
@@ -683,6 +686,19 @@ typedef enum {
     UCP_ATOMIC_OP_XOR,   /**< Atomic xor  */
     UCP_ATOMIC_OP_LAST
 } ucp_atomic_op_t;
+
+
+/**
+ * @ingroup UCP_COMM
+ * @brief Remote Direct Memory Operation requested for @ref ucp_rdmo_nbx
+ *
+ * This enumeration defines which Remote Direct Memory Operation should be
+ * performed by the @ref ucp_rdmo_nbx routine.
+ */
+typedef enum {
+    UCP_RDMO_OP_APPEND,   /**< Remote Direct Memory Append */
+    UCP_RDMO_OP_LAST
+} ucp_rdmo_op_t;
 
 
 /**
@@ -3439,6 +3455,14 @@ ucs_status_ptr_t ucp_tag_send_nbx(ucp_ep_h ep, const void *buffer, size_t count,
 ucs_status_ptr_t ucp_tag_send_sync_nbx(ucp_ep_h ep, const void *buffer,
                                        size_t count, ucp_tag_t tag,
                                        const ucp_request_param_t *param);
+
+
+ucs_status_ptr_t
+ucp_rdmo_append_nbx(ucp_ep_h ep,
+                    const void *buffer, size_t count,
+                    uint64_t target, ucp_rkey_h target_rkey,
+                    uint64_t append, ucp_rkey_h append_rkey,
+                    const ucp_request_param_t *param);
 
 
 /**

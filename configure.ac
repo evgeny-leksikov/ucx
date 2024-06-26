@@ -250,6 +250,10 @@ AS_IF([test "x$with_docs_only" = xyes],
      m4_include([test/apps/iodemo/configure.m4])
      m4_include([test/apps/uct_info/configure.m4])
 
+     PKG_CHECK_MODULES([doca_urom], [doca-urom >= 2.7], [have_doca_urom=yes], [have_doca_urom=no])
+     AS_IF([test "x$have_doca_urom" = xyes],
+           AC_DEFINE([HAVE_DOCA_UROM], [1], [doca-urom support]),
+           AC_DEFINE([HAVE_DOCA_UROM], [0]))
 
      #
      # Disable checking user parameters
@@ -409,6 +413,7 @@ AC_MSG_NOTICE([          C compiler:   ${CC} ${BASE_CFLAGS}])
 AC_MSG_NOTICE([        C++ compiler:   ${CXX} ${BASE_CXXFLAGS}])
 AC_MSG_NOTICE([          ASAN check:   ${enable_asan}])
 AC_MSG_NOTICE([        Multi-thread:   ${mt_enable}])
+AC_MSG_NOTICE([        RDMO support:   ${have_doca_urom}])
 AC_MSG_NOTICE([           MPI tests:   ${mpi_enable}])
 AC_MSG_NOTICE([         VFS support:   ${vfs_enable}])
 AC_MSG_NOTICE([       Devel headers:   ${enable_devel_headers}])
