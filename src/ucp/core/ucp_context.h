@@ -27,6 +27,10 @@
 #include <ucs/sys/string.h>
 #include <ucs/type/param.h>
 
+#if HAVE_DOCA_UROM
+#include <doca_urom.h>
+#endif
+
 
 /* Hash map of rcaches which contain imported memory handles got from peers */
 KHASH_TYPE(ucp_context_imported_mem_hash, uint64_t, ucs_rcache_t*);
@@ -285,6 +289,45 @@ typedef struct ucp_tl_md {
 } ucp_tl_md_t;
 
 
+#if HAVE_DOCA_UROM
+typedef struct ucp_context_urom_data {
+    /**
+     * urom services array for RDMO ops
+     */
+    struct doca_urom_service                   *service;
+    /**
+     * TODO:
+     */
+    const struct doca_urom_service_plugin_info *info;
+    /**
+     * device set to service
+     */
+    struct doca_dev                            *device;
+
+    /**
+     * doca progress engine
+     */
+    struct doca_pe                             *pe;
+    /**
+     * urom workers array for RDMO ops.
+     * TODO: rkeys resolve protocol to
+             avoid mapping host to dpu workers
+     */
+    struct doca_urom_worker                    *urom_worker;
+
+    /**
+     * Address of DPU running UCP worker
+     */
+    void*                                      urom_worker_addr;
+
+    /**
+     * Address length of DPU running UCP worker
+     */
+    size_t                                     urom_worker_addr_len;
+} ucp_context_urom_data_t;
+#endif
+
+
 typedef struct ucp_context_alloc_md_index {
     int            initialized;
     /* Index of memory domain that is used to allocate memory of the given type
@@ -417,6 +460,12 @@ typedef struct ucp_context {
 
     /* Save cached uct configurations */
     ucs_list_link_t               cached_key_list;
+
+#if HAVE_DOCA_UROM
+    ucp_context_urom_data_t       *uroms;
+    /* number of urom services */
+    uint8_t                       num_uroms;
+#endif
 } ucp_context_t;
 
 
