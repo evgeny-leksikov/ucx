@@ -65,7 +65,7 @@ ucp_rdmo_append_nbx(ucp_ep_h ep,
                     uint64_t append, ucp_rkey_h append_rkey,
                     const ucp_request_param_t *param)
 {
-#if HAVE_UROM
+#if HAVE_DOCA_UROM
     ucp_request_param_t am_param = *param;
     ucp_rdmo_append_hdr_t hdr;
 
@@ -641,7 +641,7 @@ ucp_rdmo_append_handler(void *arg, const void *header, size_t header_length,
 
     ucs_assert(worker->context->config.ext.proto_enable);
 
-    ucs_debug("worker %p: client %"PRIx64" append %"PRIu64, worker,
+    ucs_info("worker %p: client %"PRIx64" append %"PRIu64, worker,
               append_hdr->client_id, length);
     worker->rdmo_outstanding++;
     stat_update(worker);

@@ -7,11 +7,10 @@
 
 lib_LTLIBRARIES     = libucp.la
 
-libucp_la_CFLAGS   = $(BASE_CFLAGS)
-libucp_la_LIBS     = $(UROM_LIBS)
-libucp_la_CPPFLAGS = $(BASE_CPPFLAGS) $(UROM_CPPFLAGS)
+libucp_la_CFLAGS   = $(BASE_CFLAGS) $(doca_urom_CFLAGS)
+libucp_la_CPPFLAGS = $(BASE_CPPFLAGS)
 libucp_la_LDFLAGS  = -ldl -version-info $(SOVERSION)
-libucp_la_LIBADD   = ../ucs/libucs.la ../uct/libuct.la
+libucp_la_LIBADD   = ../ucs/libucs.la ../uct/libuct.la $(doca_urom_LIBS)
 libucp_ladir       = $(includedir)/ucp
 
 nobase_dist_libucp_la_HEADERS = \

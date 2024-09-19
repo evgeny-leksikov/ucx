@@ -24,6 +24,14 @@
 #include <inttypes.h>
 
 
+#if HAVE_DOCA_UROM
+#include <doca_dev.h>
+#include <doca_ctx.h>
+#include <doca_pe.h>
+#include <doca_buf.h>
+#endif
+
+
 typedef struct {
     uint8_t   sys_dev;
     ucs_fp8_t latency;
@@ -77,10 +85,10 @@ size_t ucp_rkey_packed_size(ucp_context_h context, ucp_md_map_t md_map,
         size += ucs_popcount(sys_dev_map) * sizeof(ucp_rkey_packed_distance_t);
     }
 
-#if HAVE_UROM
-    size += ucs_field_sizeof(urom_worker_notify_t, rdmo.mr_reg.rkey) *
-            context->num_uroms;
-#endif /* HAVE_UROM */
+#if HAVE_DOCA_UROM
+    size += //ucs_field_sizeof(urom_worker_notify_t, rdmo.mr_reg.rkey) *
+            sizeof(uint64_t) * context->num_uroms;
+#endif /* HAVE_DOCA_UROM */
 
     return size;
 }
@@ -671,7 +679,7 @@ ucp_memh_pack_internal(ucp_mem_h memh, const ucp_memh_pack_params_t *params,
         goto err_destroy;
     }
 
-#if !HAVE_UROM /* FIXME: refactor pack/unpack and del this condition */
+#if !HAVE_DOCA_UROM /* FIXME: refactor pack/unpack and del this condition */
     ucs_assertv(packed_size == size, "packed_size=%zd size=%zu", packed_size,
                 size);
 #endif
@@ -706,76 +714,147 @@ void ucp_memh_buffer_release(void *buffer,
     ucs_free(buffer);
 }
 
-ucs_status_t ucp_rkey_pack(ucp_context_h context, ucp_mem_h memh,
-                           void **rkey_buffer_p, size_t *size_p)
-{
-    ucp_memh_pack_params_t params = {0};
-    ucs_status_t status           =
-            ucp_memh_pack_internal(memh, &params, 1, rkey_buffer_p, size_p);
+#if HAVE_DOCA_UROM
+typedef struct ucp_urom_cmd_reg_mr {
+    ucp_urom_cmd_notif_type_t type;
+    uint64_t                  va;
+    uint64_t                  va_size;
+    uint64_t                  rkey_size;
+    uint64_t                  memh_size;
+    uint8_t                   payload[]; // rkey + memh
+} UCS_S_PACKED UCS_V_ALIGNED(sizeof(void*)) ucp_urom_cmd_reg_mr_t;
 
-#if HAVE_UROM
-    urom_worker_cmd_t cmd  = {0};
+struct ucp_reg_mr_cb_ctx {
+    ucp_rkey_h rkey;
+    int        completed;
+};
+
+static void ucp_context_urom_reg_mr_cb(struct doca_urom_worker_cmd_task *task,
+                                       union doca_data task_user_data,
+                                       union doca_data ctx_user_data)
+{
+    struct doca_buf *response            = doca_urom_worker_cmd_task_get_response(task);
+    struct ucp_urom_task_data *task_data = doca_urom_worker_cmd_task_get_user_data(task);
+    struct ucp_reg_mr_cb_ctx *cb_ctx     = task_data->cookie.ptr;
+    ucp_urom_notify_packed_t *packed_notif;
+    ucp_rkey_h *rkey_p;
+    doca_error_t doca_err;
+
+    ucs_assert(response != NULL);
+
+    doca_err = doca_buf_get_data(response, (void **)&packed_notif);
+    ucs_assert(doca_err == DOCA_SUCCESS);
+    ucs_assert(packed_notif->type == UCP_UROM_CMD_NOTIF_TYPE_REG_MR);
+    ucs_assert(packed_notif->payload_size == sizeof(cb_ctx->rkey));
+    rkey_p = (ucp_rkey_h*)packed_notif->payload;
+    cb_ctx->rkey      = *rkey_p;
+    cb_ctx->completed = 1;
+    ucs_assert(cb_ctx->rkey != 0);
+}
+
+static ucs_status_t ucp_rkey_urom_reg(ucp_context_h context, ucp_mem_h memh,
+                                      void *rkey_buffer, size_t rkey_size)
+{
+    ucp_context_urom_data_t *urom   = &context->uroms[0];
+    ucp_memh_pack_params_t params   = {0};
+    struct ucp_reg_mr_cb_ctx cb_ctx = {0};
+    ucp_urom_cmd_reg_mr_t *cmd;
+
+    struct doca_urom_worker_cmd_task *task;
+    struct ucp_urom_task_data *task_data;
+    struct doca_buf *payload;
+    size_t payload_len;
+    ucp_rkey_h *rdmo_key_ptr;
+    doca_error_t doca_err;
+    int ret;
+
     void *packed_memh;
     size_t packed_memh_len;
-    void *rdmo_key_ptr;
-    urom_worker_notify_t *notif;
-    urom_status_t urom_status;
+    ucs_status_t status;
 
-    if ((status != UCS_OK) || !(context->config.features & UCP_FEATURE_RDMO)) {
-        goto out;
+    if (!(context->config.features & UCP_FEATURE_RDMO)) {
+        return UCS_OK;
     }
+
+    ucs_assert(context->num_uroms == 1);
 
     params.field_mask |= UCP_MEMH_PACK_PARAM_FIELD_FLAGS;
     params.flags       = UCP_MEMH_PACK_FLAG_EXPORT;
 
     status = ucp_memh_pack(memh, &params, &packed_memh, &packed_memh_len);
-    if (status != UCS_OK) {
-        goto out;
-    }
+    ucs_assert(status == UCS_OK);
 
-    cmd.cmd_type                    = UROM_WORKER_CMD_RDMO;
-    cmd.rdmo.type                   = UROM_WORKER_CMD_RDMO_MR_REG;
-    cmd.rdmo.mr_reg.packed_rkey     = *rkey_buffer_p;
-    ucs_assert(context->num_uroms == 1);
-    cmd.rdmo.mr_reg.packed_rkey_len = *size_p -
-                                      (ucs_field_sizeof(urom_worker_notify_t,
-                                       rdmo.mr_reg.rkey) * context->num_uroms);
-    cmd.rdmo.mr_reg.packed_memh     = packed_memh;
-    cmd.rdmo.mr_reg.packed_memh_len = packed_memh_len;
-    cmd.rdmo.mr_reg.va              = memh->super.super.start;
-    cmd.rdmo.mr_reg.len             = memh->super.super.end -
-                                      memh->super.super.start;
-    urom_status = urom_worker_push_cmdq(
-            /* FIXME: correct urom_worker */ context->uroms[0].worker, 0, &cmd);
-    ucs_assert(urom_status == UROM_OK);
+    doca_err = doca_urom_worker_cmd_task_allocate_init(urom->urom_worker,
+                                                       urom->info->id, &task);
+    ucs_assert(doca_err == DOCA_SUCCESS);
 
-    while (UROM_ERR_QUEUE_EMPTY ==
-           (urom_status = urom_worker_pop_notifyq(
-                /* FIXME: correct urom_worker */ context->uroms[0].worker,
-                0, &notif))) {
-        sched_yield();
-    }
+    payload  = doca_urom_worker_cmd_task_get_payload(task);
+    doca_err = doca_buf_get_data(payload, (void**)&cmd);
+    ucs_assert(doca_err == DOCA_SUCCESS);
 
-    ucs_assert(urom_status == UROM_OK);
-    ucs_assert(notif->notify_type == UROM_WORKER_NOTIFY_RDMO);
-    ucs_assert(notif->rdmo.type == UROM_WORKER_NOTIFY_RDMO_MR_REG);
+    doca_err = doca_buf_get_data_len(payload, &payload_len);
+    ucs_assert(doca_err == DOCA_SUCCESS);
+    ucs_assert(payload_len >= (sizeof(*cmd) + rkey_size + packed_memh_len));
 
-    rdmo_key_ptr = UCS_PTR_BYTE_OFFSET(*rkey_buffer_p,
-                                       cmd.rdmo.mr_reg.packed_rkey_len);
-    memcpy(rdmo_key_ptr, &notif->rdmo.mr_reg.rkey,
-           sizeof(notif->rdmo.mr_reg.rkey));
+    cmd->type      = UCP_UROM_CMD_NOTIF_TYPE_REG_MR;
+    cmd->va        = memh->super.super.start;
+    cmd->va_size   = memh->super.super.end - memh->super.super.start;
+    cmd->rkey_size = rkey_size - (sizeof(uint64_t) * context->num_uroms); // TODO: check
+    cmd->memh_size = packed_memh_len;
+    memcpy(cmd->payload, rkey_buffer, cmd->rkey_size);
+    memcpy(cmd->payload + cmd->rkey_size, packed_memh, packed_memh_len);
+
+    doca_buf_set_data(payload, cmd,
+                      sizeof(*cmd) + cmd->rkey_size  + cmd->memh_size);
+
+    task_data = doca_urom_worker_cmd_task_get_user_data(task);
+    task_data->cookie.ptr = &cb_ctx;
+
+    doca_urom_worker_cmd_task_set_cb(task, ucp_context_urom_reg_mr_cb);
+
+    doca_err = doca_task_submit(doca_urom_worker_cmd_task_as_task(task));
+    ucs_assert(doca_err == DOCA_SUCCESS);
+
+    do {
+        ret = doca_pe_progress(urom->pe);
+    } while ((ret == 0) || !cb_ctx.completed /* TODO: check status */);
+
+    ucs_assert(status == UCS_OK);
+
+    rdmo_key_ptr = UCS_PTR_BYTE_OFFSET(rkey_buffer, cmd->rkey_size);
+    ucs_assert(status == UCS_OK);
+    *rdmo_key_ptr = cb_ctx.rkey;
+
     ucs_info("packed offset=%"PRIu64" value=%"PRIx64" src=%"PRIx64,
-              cmd.rdmo.mr_reg.packed_rkey_len, *(uint64_t*)rdmo_key_ptr,
-              notif->rdmo.mr_reg.rkey);
-
-out_release_memh:
+              cmd->rkey_size, *(uint64_t*)rdmo_key_ptr, (uintptr_t)cb_ctx.rkey);
     ucp_memh_buffer_release(packed_memh, NULL);
-out_free_notif:
-    urom_worker_free_notif(/* FIXME: urom_worker */ NULL, notif);
+//    urom_worker_free_notif(/* FIXME: urom_worker */ NULL, notif);
 
-out:
+    return UCS_OK;
+}
+#endif // HAVE_DOCA_UROM
+
+ucs_status_t ucp_rkey_pack(ucp_context_h context, ucp_mem_h memh,
+                           void **rkey_buffer_p, size_t *size_p)
+{
+    ucp_memh_pack_params_t params = {0};
+    ucs_status_t status           = ucp_memh_pack_internal(memh, &params, 1,
+                                                           rkey_buffer_p, size_p);
+
+    if (status != UCS_OK) {
+        return status;
+    }
+
+#if HAVE_DOCA_UROM
+    {
+        ssize_t ret;
+
+        ret = ucp_rkey_urom_reg(context, memh, *rkey_buffer_p, *size_p);
+        ucs_assert(ret >= 0);
+        *size_p += ret;
+    }
 #endif
-    return status;
+    return UCS_OK;
 }
 
 void ucp_rkey_buffer_release(void *rkey_buffer)
@@ -982,12 +1061,14 @@ UCS_PROFILE_FUNC(ucs_status_t, ucp_ep_rkey_unpack_internal,
             goto err_destroy;
         }
 
-#if HAVE_UROM
+#if HAVE_DOCA_UROM
         rkey->cache.rdmo_rkey = *ucs_serialize_next(&p, uint64_t);
-        ucs_info("unpack rdmo_rkey: 0x%"PRIx64, rkey->cache.rdmo_rkey);
+        ucs_info("unpack rdmo_rkey: 0x%"PRIx64" offset=%"PRIu64,
+                 rkey->cache.rdmo_rkey,
+                 UCS_PTR_BYTE_DIFF(buffer, p) - sizeof(uint64_t));
 #else
         rkey->cache.rdmo_rkey = UINT64_MAX;
-#endif /* HAVE_UROM */
+#endif /* HAVE_DOCA_UROM */
     } else {
         ucp_rkey_resolve_inner(rkey, ep);
     }

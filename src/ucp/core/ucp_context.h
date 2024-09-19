@@ -28,8 +28,8 @@
 #include <ucs/sys/string.h>
 #include <ucs/type/param.h>
 
-#if HAVE_UROM
-#include <urom/api/urom.h>
+#if HAVE_DOCA_UROM
+#include <doca_urom.h>
 #endif
 
 
@@ -270,13 +270,49 @@ typedef struct ucp_tl_md {
 } ucp_tl_md_t;
 
 
-#if HAVE_UROM
+#if HAVE_DOCA_UROM
 typedef struct ucp_context_urom_data {
-    urom_service_h                   service;            /* urom services array for RDMO ops */
-    urom_worker_h                    worker;             /* urom workers array for RDMO ops.
-                                                          * TODO: rkeys resolve protocol to 
-                                                                  avoid mapping host to dpu workers */
+//    urom_service_h                   service;            /* urom services array for RDMO ops */
+//    urom_worker_h                    worker;             /* urom workers array for RDMO ops.
+//                                                          * TODO: rkeys resolve protocol to
+//                                                                  avoid mapping host to dpu workers */
+    struct doca_urom_service                   *service;
+    const struct doca_urom_service_plugin_info *info;
+    struct doca_dev                            *device;
+    struct doca_pe                             *pe;
+    struct doca_urom_worker                    *urom_worker;
+
+    void*                                      urom_worker_addr;
+    size_t                                     urom_worker_addr_len;
 } ucp_context_urom_data_t;
+
+typedef uint64_t ucp_urom_cmd_notif_type_t;
+
+enum ucp_urom_cmd_type {
+    UCP_UROM_CMD_NOTIF_TYPE_UNDEFINED = 0,
+    UCP_UROM_CMD_NOTIF_TYPE_GET_ADDRESS,
+    UCP_UROM_CMD_NOTIF_TYPE_RDMO_CLIENT_INIT,
+    UCP_UROM_CMD_NOTIF_TYPE_REG_MR,
+    UCP_UROM_CMD_NOTIF_TYPE_LAST
+};
+
+typedef struct ucp_urom_cmd_rdmo_client_init {
+    ucp_urom_cmd_notif_type_t type;
+    uint64_t                  client_id;
+    uint64_t                  addr_size;
+    uint8_t                   addr[];
+} UCS_S_PACKED ucp_urom_cmd_rdmo_client_init_t;
+
+typedef struct ucp_urom_notify_packed {
+    ucp_urom_cmd_notif_type_t type;
+    uint64_t                  payload_size;
+    uint8_t                   payload[];
+} UCS_S_PACKED ucp_urom_notify_packed_t;
+
+
+struct ucp_urom_task_data {
+    union doca_data cookie; /* User cookie */
+};
 #endif
 
 
@@ -398,7 +434,7 @@ typedef struct ucp_context {
     /* Save cached uct configurations */
     ucs_list_link_t               cached_key_list;
 
-#if HAVE_UROM
+#if HAVE_DOCA_UROM
     ucp_context_urom_data_t       *uroms;
     /* number of urom services */
     uint8_t                       num_uroms;

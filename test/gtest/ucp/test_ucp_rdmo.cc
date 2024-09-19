@@ -71,7 +71,7 @@ UCS_TEST_P(test_ucp_rdmo, basic)
 {
     const ucp_request_param_t param = { 0 };
     const uint64_t seed(0xbadc0ffe);
-    const size_t size = ucs::rand_range(4 * UCS_KBYTE);
+    const size_t size = ucs::rand_range(64 * UCS_KBYTE);
     const size_t iter = 100;
     mem_buffer src_buf(size, UCS_MEMORY_TYPE_HOST, seed);
     mem_buffer dst_buf(size * iter, UCS_MEMORY_TYPE_HOST);
@@ -117,6 +117,7 @@ UCS_TEST_P(test_ucp_rdmo, basic)
 
     ucp_rkey_destroy(off_rkey);
     ucp_mem_unmap(receiver().ucph(), off_memh);
+    UCS_TEST_MESSAGE << "Passed!!!";
 }
 
 UCP_INSTANTIATE_TEST_CASE_TLS(test_ucp_rdmo, all, "all")

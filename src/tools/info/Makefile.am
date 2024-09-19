@@ -16,16 +16,14 @@ DISTCLEANFILES = build_config.h
 build_config.h: $(top_builddir)/config.h Makefile
 	$(SED) -nr 's:\s*#define\s+(\w+)(\s+(\w+)|\s+(".*")|\s*)$$:{"\1", UCS_PP_MAKE_STRING(\3\4)},:p' <$(top_builddir)/config.h >$@
 
-ucx_info_CPPFLAGS  = $(BASE_CPPFLAGS) $(UROM_CPPFLAGS)
-ucx_info_CFLAGS    = $(BASE_CFLAGS)
+ucx_info_CPPFLAGS  = $(BASE_CPPFLAGS)
+ucx_info_CFLAGS    = $(BASE_CFLAGS) $(doca_urom_CFLAGS)
 if HAVE_IB
 ucx_info_CPPFLAGS += $(IBVERBS_CPPFLAGS)
 endif
 if HAVE_CRAY_UGNI
 ucx_info_CFLAGS   += $(CRAY_UGNI_CFLAGS)
 endif
-
-ucx_info_LDFLAGS = $(UROM_LDFLAGS) $(UROM_LIBS)
 
 ucx_info_SOURCES  = \
 	build_info.c \

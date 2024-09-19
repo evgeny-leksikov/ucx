@@ -26,6 +26,12 @@
 #include <string.h>
 #include <dlfcn.h>
 
+#if HAVE_DOCA_UROM
+#include <doca_dev.h>
+#include <doca_ctx.h>
+#include <doca_pe.h>
+#include <doca_buf.h>
+#endif
 
 #define UCP_RSC_CONFIG_ALL    "all"
 
@@ -2135,18 +2141,39 @@ ucp_version_check(unsigned api_major_version, unsigned api_minor_version)
     }
 }
 
-#if HAVE_UROM
+#if HAVE_DOCA_UROM
 
-static void ucp_context_urom_service_disconnect(ucp_context_h context)
+static void ucp_context_urom_services_stop(ucp_context_h context)
 {
-    urom_status_t status;
+    struct doca_urom_service *service;
+    struct doca_ctx *doca_context;
+    struct doca_dev *device;
+    doca_error_t doca_err;
     int i;
 
     for (i = 0; i < context->num_uroms; ++i) {
-         status = urom_service_disconnect(context->uroms[i].service);
-         ucs_warn("context %p: urom_service_disconnect(%p) failed with status %s",
-                  context, context->uroms[i].service,
-                  urom_status_string(status));
+        device       = context->uroms[i].device;
+        service      = context->uroms[i].service;
+        doca_context = doca_urom_service_as_ctx(service);
+        doca_err     = doca_ctx_stop(doca_context);
+        if (doca_err != DOCA_SUCCESS) {
+            ucs_warn("context %p: doca_ctx_stop(%p) failed with status %s",
+                     context, doca_context,
+                     doca_error_get_name(doca_err));
+        }
+
+        doca_err = doca_urom_service_destroy(service);
+        if (doca_err != DOCA_SUCCESS) {
+            ucs_warn("context %p: urom_service_disconnect(%p) failed with status %s",
+                     context, context->uroms[i].service,
+                     doca_error_get_name(doca_err));
+        }
+
+        doca_err = doca_dev_close(device);
+        if (doca_err != DOCA_SUCCESS) {
+            ucs_warn("context %p: doca_dev_close(%p) failed with status %s",
+                     context, device, doca_error_get_name(doca_err));
+        }
     }
 
     ucs_free(context->uroms);
@@ -2154,47 +2181,113 @@ static void ucp_context_urom_service_disconnect(ucp_context_h context)
     context->num_uroms = 0;
 }
 
+static ucs_status_t
+ucp_context_urom_service_start(ucp_context_h context,
+                               struct doca_devinfo *dev_info)
+{
+    char ibdev_name[DOCA_DEVINFO_IBDEV_NAME_SIZE];
+    struct doca_urom_service *service;
+    struct doca_dev *device;
+    struct doca_ctx *doca_ctx;
+    doca_error_t doca_err;
+    struct doca_pe *pe;
+    enum doca_ctx_states doca_state;
+
+    doca_err = doca_devinfo_get_ibdev_name(dev_info, ibdev_name,
+                                             sizeof(ibdev_name));
+    if (doca_err != DOCA_SUCCESS) {
+        ucs_diag("context %p: failed to doca_dev_info=%p name", context,
+                 dev_info);
+        goto err;
+    }
+
+    ucs_debug("context %p: starting doca_urom_service for device %s", context,
+              ibdev_name);
+
+    doca_err = doca_dev_open(dev_info, &device);
+    if (doca_err != DOCA_SUCCESS) {
+        ucs_diag("context %p: doca_dev_open(%s) failed with error: %s",
+                 context, ibdev_name, doca_error_get_name(doca_err));
+        goto err;
+    }
+
+    doca_err = doca_urom_service_create(&service);
+    if (doca_err != DOCA_SUCCESS) {
+        ucs_diag("context %p: doca_urom_service_create(%s) failed with "
+                 "error: %s", context, ibdev_name,
+                 doca_error_get_name(doca_err));
+        goto err_close_device;
+    }
+
+    doca_err = doca_pe_create(&pe);
+    ucs_assert(doca_err == DOCA_SUCCESS);
+
+    doca_ctx   = doca_urom_service_as_ctx(service);
+    doca_err = doca_pe_connect_ctx(pe, doca_ctx);
+    ucs_assert(doca_err == DOCA_SUCCESS);
+    doca_err = doca_urom_service_set_max_workers(service, 1);
+
+    doca_err = doca_urom_service_set_dev(service, device);
+    if (doca_err != DOCA_SUCCESS) {
+        ucs_diag("context %p: doca_urom_service_set_dev(%p, %s) failed with"
+                 " error: %s", context, service, ibdev_name,
+                 doca_error_get_name(doca_err));
+        goto err_destroy_service;
+    }
+
+    doca_err = doca_ctx_start(doca_ctx);
+    if (doca_err != DOCA_SUCCESS) {
+        ucs_diag("context %p: doca_ctx_start(%p) for device=%s failed with "
+                 "error: %s", context, doca_ctx, ibdev_name,
+                 doca_error_get_name(doca_err));
+        goto err_destroy_service;
+    }
+
+    doca_err = doca_ctx_get_state(doca_ctx, &doca_state);
+    ucs_assert(doca_err == DOCA_SUCCESS);
+    ucs_assert(doca_state == DOCA_CTX_STATE_RUNNING);
+
+    context->uroms[context->num_uroms].service = service;
+    context->uroms[context->num_uroms].device  = device;
+    context->uroms[context->num_uroms].pe      = pe;
+    context->num_uroms++;
+    return UCS_OK;
+
+err_destroy_service:
+    doca_urom_service_destroy(service);
+err_close_device:
+    doca_dev_close(device);
+err:
+    return UCS_ERR_IO_ERROR;
+}
+
 static ucs_status_t ucp_context_urom_service_connect(ucp_context_h context)
 {
     ucs_status_t status = UCS_OK;
-    urom_service_params_t service_params;
-    urom_status_t urom_status;
-    struct urom_device *device, *device_list;
-    int num_devices;
+    doca_error_t doca_error;
+    struct doca_devinfo **dev_info_list;
+    uint32_t i, nb_devs;
 
     context->uroms       = NULL;
     context->num_uroms   = 0;
 
-    urom_status = urom_get_device_list(&device_list, &num_devices);
-    if (urom_status != UROM_OK) {
+    doca_error = doca_devinfo_create_list(&dev_info_list, &nb_devs);
+    if (doca_error != DOCA_SUCCESS) {
         ucs_error("urom_get_device_list() returned error: %s\n",
-                  urom_status_string(urom_status));
+                  doca_error_get_name(doca_error));
         status = UCS_ERR_NO_DEVICE;
         goto out;
     };
 
-    context->uroms = ucs_calloc(num_devices, sizeof(*context->uroms), "uroms");
+    context->uroms = ucs_calloc(nb_devs, sizeof(*context->uroms), "uroms");
     if (context->uroms == NULL) {
         ucs_error("context %p: cannot allocate uroms", context);
         status = UCS_ERR_NO_MEMORY;
         goto free_devices;
     }
 
-    memset(&service_params, 0, sizeof(service_params));
-    for (device = device_list; device != NULL; device = device->next) {
-        service_params.flags  = UROM_SERVICE_PARAM_DEVICE;
-        service_params.device = device;
-
-        urom_status =
-                urom_service_connect(&service_params,
-                                     &context->uroms[context->num_uroms].service);
-        if (urom_status != UROM_OK) {
-            ucs_diag("context %p: cannot connect to urom device %s status %s",
-                     context, device->name, urom_status_string(urom_status));
-            continue;
-        }
-
-        context->num_uroms++;
+    for (i = 0; i < nb_devs; ++i) {
+        ucp_context_urom_service_start(context, dev_info_list[i]);
     }
 
     if (context->num_uroms == 0) {
@@ -2202,10 +2295,10 @@ static ucs_status_t ucp_context_urom_service_connect(ucp_context_h context)
     }
 
 free_devices:
-    urom_status = urom_free_device_list(device_list);
-    if (urom_status != UROM_OK) {
-        ucs_error("urom_free_device_list() returned error: %s\n",
-                       urom_status_string(urom_status));
+    doca_error = doca_devinfo_destroy_list(dev_info_list);
+    if (doca_error != DOCA_SUCCESS) {
+        ucs_error("doca_devinfo_destroy_list() failed with error: %s",
+                  doca_error_get_name(doca_error));
         if (status == UCS_OK) {
             status = UCS_ERR_IO_ERROR;
         }
@@ -2213,88 +2306,188 @@ free_devices:
 
 out:
     if (status != UCS_OK) {
-        ucp_context_urom_service_disconnect(context);
+        ucp_context_urom_services_stop(context);
     }
 
     return status;
+}
 
+static void ucp_context_urom_get_address_cb(
+        struct doca_urom_worker_cmd_task *task, union doca_data task_user_data,
+        union doca_data ctx_user_data)
+{
+    struct doca_buf *response            = doca_urom_worker_cmd_task_get_response(task);
+    struct ucp_urom_task_data *task_data = doca_urom_worker_cmd_task_get_user_data(task);
+    ucp_urom_notify_packed_t *packed_notif;
+    ucp_context_urom_data_t *urom;
+    doca_error_t doca_err;
+
+    urom = task_data->cookie.ptr;
+
+    ucs_assert(response != NULL);
+
+    doca_err = doca_buf_get_data(response, (void **)&packed_notif);
+    ucs_assert(doca_err == DOCA_SUCCESS);
+    ucs_assert(packed_notif->type == UCP_UROM_CMD_NOTIF_TYPE_GET_ADDRESS);
+    urom->urom_worker_addr = ucs_malloc(packed_notif->payload_size,
+                                        "urom_worker_address");
+    ucs_assert_always(urom->urom_worker_addr != NULL);
+    memcpy(urom->urom_worker_addr, packed_notif->payload,
+           packed_notif->payload_size);
+    urom->urom_worker_addr_len = packed_notif->payload_size;
+}
+
+static ucs_status_t
+ucp_context_urom_worker_addr_init(ucp_context_urom_data_t *urom)
+{
+    struct doca_urom_worker_cmd_task *task;
+    struct ucp_urom_task_data *task_data;
+    struct doca_buf *payload;
+    size_t payload_len;
+    doca_error_t doca_err;
+    ucp_urom_cmd_notif_type_t *urom_cmd;
+    int ret;
+
+    doca_err = doca_urom_worker_cmd_task_allocate_init(urom->urom_worker,
+                                                       urom->info->id, &task);
+    ucs_assert(doca_err == DOCA_SUCCESS);
+
+    payload  = doca_urom_worker_cmd_task_get_payload(task);
+    doca_err = doca_buf_get_data(payload, (void**)&urom_cmd);
+    ucs_assert(doca_err == DOCA_SUCCESS);
+
+    doca_err = doca_buf_get_data_len(payload, &payload_len);
+    ucs_assert(doca_err == DOCA_SUCCESS);
+    ucs_assert(payload_len >= sizeof(*urom_cmd));
+
+    *urom_cmd = UCP_UROM_CMD_NOTIF_TYPE_GET_ADDRESS;
+    doca_buf_set_data(payload, urom_cmd, sizeof(*urom_cmd));
+
+    task_data = doca_urom_worker_cmd_task_get_user_data(task);
+    task_data->cookie.ptr = urom;
+
+    doca_urom_worker_cmd_task_set_cb(task, ucp_context_urom_get_address_cb);
+
+    doca_err = doca_task_submit(doca_urom_worker_cmd_task_as_task(task));
+    ucs_assert(doca_err == DOCA_SUCCESS);
+
+    do {
+        ret = doca_pe_progress(urom->pe);
+    } while ((ret == 0) &&
+             (urom->urom_worker_addr_len == 0 /* TODO: check status */));
+
+    return UCS_OK;
+}
+
+static ucs_status_t
+ucp_context_urom_spawn_worker(ucp_context_urom_data_t *urom)
+{
+    struct doca_ctx *worker_ctx;
+    enum doca_ctx_states state;
+    doca_error_t doca_err;
+    ucs_status_t status;
+
+    doca_err = doca_urom_worker_create(&urom->urom_worker);
+    ucs_assert(doca_err == DOCA_SUCCESS);
+
+    doca_err = doca_urom_worker_set_service(urom->urom_worker, urom->service);
+    ucs_assert(doca_err == DOCA_SUCCESS);
+
+    worker_ctx = doca_urom_worker_as_ctx(urom->urom_worker);
+    doca_err   = doca_pe_connect_ctx(urom->pe, worker_ctx);
+    ucs_assert(doca_err == DOCA_SUCCESS);
+
+    doca_err = doca_urom_worker_set_id(urom->urom_worker,
+                                       /* TODO: ucp_worker->guid*/
+                                       DOCA_UROM_WORKER_ID_ANY);
+    ucs_assert(doca_err == DOCA_SUCCESS);
+
+    doca_err = doca_urom_worker_set_max_inflight_tasks(
+            urom->urom_worker, 16 /* TODO: tunining is required */);
+    ucs_assert(doca_err == DOCA_SUCCESS);
+
+    doca_err = doca_urom_worker_set_plugins(urom->urom_worker, urom->info->id);
+    ucs_assert(doca_err == DOCA_SUCCESS);
+
+    /* TODO: pinning
+    doca_err = doca_urom_worker_set_cpuset(urom->urom_worker, *cpuset);
+    ucs_assert(doca_err == DOCA_SUCCESS);
+    */
+
+    doca_err   = doca_ctx_start(worker_ctx);
+    ucs_assert(doca_err == DOCA_ERROR_IN_PROGRESS);
+
+    doca_err = doca_ctx_get_state(worker_ctx, &state);
+    ucs_assert(doca_err == DOCA_SUCCESS);
+    ucs_assert(state == DOCA_CTX_STATE_STARTING);
+
+    /* Loop till worker state changes to running */
+    do {
+        doca_pe_progress(urom->pe);
+        doca_err = doca_ctx_get_state(worker_ctx, &state);
+    } while (state != DOCA_CTX_STATE_RUNNING && doca_err == DOCA_SUCCESS);
+
+    status = ucp_context_urom_worker_addr_init(urom);
+    ucs_assert(status == UCS_OK);
+
+    return UCS_OK;
 }
 
 static ucs_status_t ucp_context_urom_spawn_workers(ucp_context_h context)
 {
-    urom_service_cmd_t service_cmd = {
-        .type                      = UROM_SERVICE_CMD_SPAWN_WORKER,
-        .spawn_worker.worker_type  = UROM_WORKER_TYPE_RDMO,
-        .spawn_worker.worker_id    = UROM_WORKER_ID_ANY
-    };
-    ucs_status_t status            = UCS_OK;
-    urom_service_notify_t service_notif;
-    urom_worker_params_t worker_params;
-    urom_status_t urom_status;
-    int i;
-
+    size_t i;
+    ucs_status_t status;
 
     for (i = 0; i < context->num_uroms; ++i) {
-        ucs_debug("context %p: spawn worker with id 0x%"PRIx64, context,
-                 service_cmd.spawn_worker.worker_id);
-        urom_status = urom_service_push_cmdq(context->uroms[i].service,
-                                             &service_cmd);
-        if (urom_status != UROM_OK) {
-            ucs_error("context %p: urom_service_push_cmdq(%p) returned error: %s",
-                      context, context->uroms[i].service,
-                      urom_status_string(urom_status));
-            return UCS_ERR_IO_ERROR;
-        }
+        status = ucp_context_urom_spawn_worker(&context->uroms[i]);
+        ucs_assert(status == UCS_OK);
     }
 
-    for (--i; i >= 0; --i) {
-        for (urom_status = urom_service_pop_notifyq(context->uroms[i].service,
-                                                    &service_notif);
-             urom_status == UROM_ERR_QUEUE_EMPTY;
-             urom_status = urom_service_pop_notifyq(context->uroms[i].service,
-                                                    &service_notif)) {
-            sched_yield();
+    return UCS_OK;
+}
+
+static ucs_status_t ucp_context_urom_plugin_init(ucp_context_h context)
+{
+    static uint64_t rdmoucx_version = 0x01; /* RDMO UCX plugin host version */
+    ucs_typeof(context->num_uroms) i;
+    size_t j;
+    doca_error_t doca_err;
+    struct doca_urom_service *service;
+    const struct doca_urom_service_plugin_info *plugins, *info = NULL;
+    size_t plugins_count;
+    ucs_status_t status;
+
+    for (i = 0; i < context->num_uroms; ++i) {
+        service  = context->uroms[i].service;
+        doca_err = doca_urom_service_get_plugins_list(service, &plugins,
+                                                      &plugins_count);
+        ucs_assert(doca_err == DOCA_SUCCESS);
+        ucs_assert(plugins_count != 0);
+
+        for (j = 0; j < plugins_count; ++j) {
+            ucs_diag("plugin %d %s", i, plugins[j].plugin_name);
+            if (strcmp("libdoca_urom_ucx", plugins[j].plugin_name) == 0) {
+                info   = &plugins[j];
+                status = UCS_OK;
+                break;
+            }
         }
 
-        if (urom_status != UROM_OK) {
-            ucs_error("context %p: urom_worker_spawn(%p) returned error: %s\n",
-                      context, context->uroms[i].service,
-                      urom_status_string(urom_status));
-            return UCS_ERR_IO_ERROR;
+        if (j == plugins_count) {
+            ucs_diag("Failed to match RDMO plugin");
+            status = UCS_ERR_NO_ELEM;
+            goto out;
         }
 
-        if ((service_notif.type   != UROM_SERVICE_NOTIFY_SPAWN_WORKER) ||
-            (service_notif.status != UROM_OK)) {
-            ucs_error("context %p: urom_worker_spawn(%p) bad notify type %"PRIu64
-                      ", status %s", context, context->uroms[i].service,
-                      service_notif.type,
-                      urom_status_string(service_notif.status));
-            return UCS_ERR_IO_ERROR;
-        }
-
-        worker_params.serviceh        = context->uroms[i].service;
-        worker_params.num_cmd_notifyq = 1;
-        worker_params.addr            = &service_notif.spawn_worker.worker_addr;
-        worker_params.addr_len        =
-                service_notif.spawn_worker.worker_addr_len;
-        urom_status = urom_worker_connect(&worker_params,
-                                          &context->uroms[i].worker);
-        if (urom_status != UROM_OK) {
-            ucs_error("context %p: urom_worker_connect(%p) returned error: %s",
-                      context, context->uroms[i].service,
-                      urom_status_string(urom_status));
-            return UCS_ERR_IO_ERROR;
-        }
+        ucs_assert(info->version >= rdmoucx_version);
+        context->uroms[i].info = info;
     }
 
-    /* TODO: create RDMO_RQ (check if needed?)  */
-    ucs_assert(status == UCS_OK);
-
-    /* TODO: error handling */
+out:
     return status;
 }
 
-#endif /* HAVE_UROM */
+#endif /* HAVE_DOCA_UROM */
 
 static ucs_status_t ucp_context_rdmo_check_init(ucp_context_h context)
 {
@@ -2305,7 +2498,7 @@ static ucs_status_t ucp_context_rdmo_check_init(ucp_context_h context)
         goto out;
     }
 
-#if HAVE_UROM
+#if HAVE_DOCA_UROM
     context->num_uroms = 0;
     context->uroms     = NULL;
 
@@ -2314,13 +2507,16 @@ static ucs_status_t ucp_context_rdmo_check_init(ucp_context_h context)
         goto out;
     }
 
+    status = ucp_context_urom_plugin_init(context);
+    ucs_assert(status == UCS_OK);
+
     status = ucp_context_urom_spawn_workers(context);
 #endif
 out:
     return status;
 }
 
-#if HAVE_UROM
+#if HAVE_DOCA_UROM && 0
 static void ucp_context_urom_close_workers(ucp_context_h context)
 {
     urom_status_t urom_status;
@@ -2342,7 +2538,7 @@ static void ucp_context_urom_close_workers(ucp_context_h context)
         context->uroms[i].worker      = NULL;
     }
 }
-#endif /* HAVE_UROM */
+#endif /* HAVE_DOCA_UROM */
 
 
 static void ucp_context_destroy_rdmo(ucp_context_h context)

@@ -190,6 +190,7 @@ AS_IF([test "x$with_docs_only" = xyes],
      AM_CONDITIONAL([HAVE_TL_DC], [false])
      AM_CONDITIONAL([HAVE_DC_DV], [false])
      AM_CONDITIONAL([HAVE_TL_UD], [false])
+     AM_CONDITIONAL([HAVE_DOCA_UROM], [false])
      AM_CONDITIONAL([HAVE_CRAY_UGNI], [false])
      AM_CONDITIONAL([HAVE_CUDA], [false])
      AM_CONDITIONAL([HAVE_CUDA_STATIC], [false])
@@ -223,7 +224,6 @@ AS_IF([test "x$with_docs_only" = xyes],
      AM_CONDITIONAL([IODEMO_CUDA], [false])
      AM_CONDITIONAL([HAVE_GCOV], [false])
      AM_CONDITIONAL([HAVE_LCOV], [false])
-     AM_CONDITIONAL([HAVE_UROM], [false])
     ],
     [
      AM_CONDITIONAL([DOCS_ONLY], [false])
@@ -239,7 +239,6 @@ AS_IF([test "x$with_docs_only" = xyes],
      m4_include([config/m4/gdrcopy.m4])
      m4_include([config/m4/mad.m4])
      m4_include([config/m4/lcov.m4])
-     m4_include([config/m4/urom.m4])
      m4_include([src/ucm/configure.m4])
      m4_include([src/ucs/configure.m4])
      m4_include([src/uct/configure.m4])
@@ -248,6 +247,15 @@ AS_IF([test "x$with_docs_only" = xyes],
      m4_include([test/apps/iodemo/configure.m4])
      m4_include([test/apps/uct_info/configure.m4])
 
+     PKG_CHECK_MODULES([doca_urom], [doca-urom >= 2.7], [have_doca_urom=yes], [have_doca_urom=no])
+     AS_IF([test "x$have_doca_urom" = xyes],
+           [AC_DEFINE([HAVE_DOCA_UROM], [1], [doca-urom support])
+               AM_CONDITIONAL([HAVE_DOCA_UROM], [true])
+           ],
+           [
+               AC_DEFINE([HAVE_DOCA_UROM], [0])
+               AM_CONDITIONAL([HAVE_DOCA_UROM], [false])
+           ])
 
      #
      # Disable checking user parameters
@@ -408,7 +416,7 @@ AC_MSG_NOTICE([        C++ compiler:   ${CXX} ${BASE_CXXFLAGS}])
 AC_MSG_NOTICE([        Multi-thread:   ${mt_enable}])
 AC_MSG_NOTICE([           MPI tests:   ${mpi_enable}])
 AC_MSG_NOTICE([         VFS support:   ${vfs_enable}])
-AC_MSG_NOTICE([        RDMO support:   ${urom_enable}])
+AC_MSG_NOTICE([        RDMO support:   ${have_doca_urom}])
 AC_MSG_NOTICE([       Devel headers:   ${enable_devel_headers}])
 AC_MSG_NOTICE([io_demo CUDA support:   ${with_iodemo_cuda}])
 AC_MSG_NOTICE([            Bindings:   <$(echo ${build_bindings}|tr ':' ' ') >])

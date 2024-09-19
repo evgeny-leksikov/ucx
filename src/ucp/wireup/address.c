@@ -460,18 +460,18 @@ static size_t ucp_address_urom_packed_size(ucp_worker_h worker)
 {
     size_t size = 0;
 
-#if HAVE_UROM
+#if HAVE_DOCA_UROM
     ucp_context_h context = worker->context;
     int i;
 
     for (i = 0; i < context->num_uroms; ++i) {
-        if (worker->uroms[i].addr == NULL) {
-            ucs_assert(worker->uroms[i].addr_length == 0);
+        if (context->uroms[i].urom_worker_addr == NULL) {
+            ucs_assert(context->uroms[i].urom_worker_addr == 0);
             continue;
         }
 
         size += ucs_offsetof(ucp_address_urom_worker_packed_t, urom_worker_addr);
-        size += worker->uroms[i].addr_length;
+        size += context->uroms[i].urom_worker_addr_len;
     }
 #endif
 
@@ -1283,8 +1283,8 @@ ucp_address_do_pack(ucp_worker_h worker, ucp_ep_h ep, void *buffer, size_t size,
         }
     }
 
-#if HAVE_UROM
-    *(uint8_t*)ptr = ((context->num_uroms > 0) && (worker->uroms[0].addr)) ?
+#if HAVE_DOCA_UROM
+    *(uint8_t*)ptr = ((context->num_uroms > 0) && (context->uroms[0].urom_worker_addr)) ?
                      context->num_uroms : 0;
 #else
     *(uint8_t*)ptr = 0;
@@ -1537,19 +1537,19 @@ ucp_address_do_pack(ucp_worker_h worker, ucp_ep_h ep, void *buffer, size_t size,
     }
 
 urom_pack:
-#if HAVE_UROM
+#if HAVE_DOCA_UROM
     for (addr_index = 0; addr_index < context->num_uroms; ++addr_index) {
         ucp_address_urom_worker_packed_t *urom = ptr;
 
-        if (worker->uroms[addr_index].addr == NULL) {
-            ucs_assert(worker->uroms[addr_index].addr_length == 0);
+        if (context->uroms[addr_index].urom_worker_addr == NULL) {
+            ucs_assert(context->uroms[addr_index].urom_worker_addr_len == 0);
             continue;
         }
 
-        ucs_assert(worker->uroms[addr_index].addr_length != 0);
-        urom->urom_worker_addr_len = worker->uroms[addr_index].addr_length;
-        memcpy(urom->urom_worker_addr, worker->uroms[addr_index].addr,
-               worker->uroms[addr_index].addr_length);
+        ucs_assert(context->uroms[addr_index].urom_worker_addr_len != 0);
+        urom->urom_worker_addr_len = context->uroms[addr_index].urom_worker_addr_len;
+        memcpy(urom->urom_worker_addr, context->uroms[addr_index].urom_worker_addr,
+               context->uroms[addr_index].urom_worker_addr_len);
         ptr = UCS_PTR_TYPE_OFFSET(ptr, urom->urom_worker_addr_len);
         ptr = UCS_PTR_BYTE_OFFSET(ptr, urom->urom_worker_addr_len);
     }

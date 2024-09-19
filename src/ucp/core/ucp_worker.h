@@ -405,9 +405,8 @@ typedef struct ucp_worker {
     } counters;
 
     struct {
-        void                         *addr;
-        size_t                       addr_length;
-    } *uroms;
+        int client_initialized;
+    } urom;
 
     khash_t(ucp_worker_eps_hash)     eps_hash;
     ucp_worker_rdmo_clients_cache_t  rdmo_clients_cache;

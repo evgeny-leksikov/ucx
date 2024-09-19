@@ -1046,7 +1046,7 @@ ucp_ep_create_to_worker_unpacked_addr(ucp_worker_h worker,
     ucp_ep_match_conn_sn_t conn_sn;
     unsigned flags;
     ucs_status_t status;
-#if HAVE_UROM
+#if HAVE_DOCA_UROM
     uint8_t urom_index;
 #endif
 
@@ -1136,7 +1136,7 @@ out_resolve_remote_id:
         }
     }
 
-#if HAVE_UROM /* UROM part should not connect to UROM */
+#if HAVE_DOCA_UROM /* UROM part should not connect to UROM */
     if (context->num_uroms == 0) {
         goto out;
     }

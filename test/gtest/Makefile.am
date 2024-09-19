@@ -58,8 +58,7 @@ gtest_LDADD = \
 	$(top_builddir)/src/tools/perf/lib/libucxperf.la \
 	common/googletest/libgtest.la \
 	$(OPENMP_CFLAGS) \
-	$(GTEST_LIBS) \
-	$(UROM_LIBS)
+	$(GTEST_LIBS)
 
 
 gtest_CPPFLAGS = \
@@ -70,8 +69,7 @@ gtest_CPPFLAGS = \
 	-I$(top_builddir)/src \
 	-I$(top_srcdir)/test/gtest \
 	$(GTEST_CPPFLAGS) \
-	$(OPENMP_CFLAGS) \
-	$(UROM_CPPFLAGS)
+	$(doca_urom_CFLAGS)
 
 gtest_LDFLAGS  = $(GTEST_LDFLAGS) $(UROM_LDFLAGS) -no-install $(LDFLAGS_DYNAMIC_LIST_DATA)
 gtest_CFLAGS   = $(BASE_CFLAGS)
