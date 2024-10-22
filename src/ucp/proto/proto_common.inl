@@ -347,6 +347,7 @@ ucp_proto_request_pack_rkey(ucp_request_t *req, ucp_md_map_t md_map,
                             void *rkey_buffer)
 {
     const ucp_datatype_iter_t *dt_iter = &req->send.state.dt_iter;
+    unsigned uct_rkey_flags = ucp_ep_config(req->send.ep)->uct_rkey_pack_flags;
     ucp_mem_h memh;
     ssize_t packed_rkey_size;
 
@@ -358,13 +359,18 @@ ucp_proto_request_pack_rkey(ucp_request_t *req, ucp_md_map_t md_map,
 
     memh = dt_iter->type.contig.memh;
 
-    /* Since global VA registration doesn't support invalidation yet, and error
-     * handling is enabled on this EP, we replace GVA registrations with
-     * regular ones */
     if (ucp_ep_config_err_mode_eq(req->send.ep,
-                                  UCP_ERR_HANDLING_MODE_PEER) &&
-        ucs_unlikely(memh->flags & UCP_MEMH_FLAG_HAS_AUTO_GVA)) {
-        ucp_memh_disable_gva(memh, md_map);
+                                  UCP_ERR_HANDLING_MODE_PEER)) {
+        if (ucs_unlikely(memh->flags & UCP_MEMH_FLAG_HAS_AUTO_GVA)) {
+            /* Since global VA registration doesn't support invalidation yet, and error
+             * handling is enabled on this EP, we replace GVA registrations with
+             * regular ones */
+            ucp_memh_disable_gva(memh, md_map);
+        }
+
+        if (memh->flags & UCP_MEMH_FLAG_IMPORTED) {
+            uct_rkey_flags &= ~UCT_MD_MKEY_PACK_FLAG_INVALIDATE_RMA;
+        }
     }
 
     if (!ucs_test_all_flags(memh->md_map, md_map)) {
@@ -375,8 +381,7 @@ ucp_proto_request_pack_rkey(ucp_request_t *req, ucp_md_map_t md_map,
     packed_rkey_size = ucp_rkey_pack_memh(
             req->send.ep->worker->context, md_map & memh->md_map, memh,
             dt_iter->type.contig.buffer, dt_iter->length, &dt_iter->mem_info,
-            distance_dev_map, dev_distance,
-            ucp_ep_config(req->send.ep)->uct_rkey_pack_flags, rkey_buffer);
+            distance_dev_map, dev_distance, uct_rkey_flags, rkey_buffer);
 
     if (packed_rkey_size < 0) {
         ucs_error("failed to pack remote key: %s",
