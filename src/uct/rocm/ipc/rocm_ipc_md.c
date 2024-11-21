@@ -24,28 +24,21 @@ static ucs_config_field_t uct_rocm_ipc_md_config_table[] = {
 
 static ucs_status_t uct_rocm_ipc_md_query(uct_md_h md, uct_md_attr_v2_t *md_attr)
 {
-    md_attr->rkey_packed_size       = sizeof(uct_rocm_ipc_key_t);
-    md_attr->flags                  = UCT_MD_FLAG_REG | UCT_MD_FLAG_NEED_RKEY;
-    md_attr->reg_mem_types          = UCS_BIT(UCS_MEMORY_TYPE_ROCM);
-    md_attr->reg_nonblock_mem_types = 0;
-    md_attr->cache_mem_types        = UCS_BIT(UCS_MEMORY_TYPE_ROCM);
-    md_attr->alloc_mem_types        = 0;
-    md_attr->access_mem_types       = UCS_BIT(UCS_MEMORY_TYPE_ROCM);
-    md_attr->detect_mem_types       = 0;
-    md_attr->dmabuf_mem_types       = 0;
-    md_attr->max_alloc              = 0;
-    md_attr->max_reg                = ULONG_MAX;
+    uct_md_base_md_query(md_attr);
+    md_attr->rkey_packed_size = sizeof(uct_rocm_ipc_key_t);
+    md_attr->flags            = UCT_MD_FLAG_REG | UCT_MD_FLAG_NEED_RKEY;
+    md_attr->reg_mem_types    = UCS_BIT(UCS_MEMORY_TYPE_ROCM);
+    md_attr->cache_mem_types  = UCS_BIT(UCS_MEMORY_TYPE_ROCM);
+    md_attr->access_mem_types = UCS_BIT(UCS_MEMORY_TYPE_ROCM);
 
     /* TODO: get accurate number */
-    md_attr->reg_cost             = ucs_linear_func_make(9e-9, 0);
-
-    memset(&md_attr->local_cpus, 0xff, sizeof(md_attr->local_cpus));
+    md_attr->reg_cost         = ucs_linear_func_make(9e-9, 0);
     return UCS_OK;
 }
 
 static ucs_status_t
-uct_rocm_ipc_mkey_pack(uct_md_h uct_md, uct_mem_h memh,
-                       const uct_md_mkey_pack_params_t *params,
+uct_rocm_ipc_mkey_pack(uct_md_h uct_md, uct_mem_h memh, void *address,
+                       size_t length, const uct_md_mkey_pack_params_t *params,
                        void *mkey_buffer)
 {
     uct_rocm_ipc_key_t *packed = mkey_buffer;
@@ -67,7 +60,7 @@ static hsa_status_t uct_rocm_ipc_pack_key(void *address, size_t length,
 
     status = uct_rocm_base_get_ptr_info(address, length, &base_ptr, &size,
                                         &mem_type, &agent, NULL);
-    if ((status != HSA_STATUS_SUCCESS) || (size < length) ||
+    if ((status != HSA_STATUS_SUCCESS) ||
         (mem_type == HSA_EXT_POINTER_TYPE_UNKNOWN)) {
         ucs_error("failed to get base ptr for %p/%lx, ROCm returned %p/%lx",
                    address, length, base_ptr, size);
@@ -182,6 +175,7 @@ uct_component_t uct_rocm_ipc_component = {
     .rkey_unpack        = uct_rocm_ipc_rkey_unpack,
     .rkey_ptr           = ucs_empty_function_return_unsupported,
     .rkey_release       = uct_rocm_ipc_rkey_release,
+    .rkey_compare       = uct_base_rkey_compare,
     .name               = "rocm_ipc",
     .md_config          = {
         .name           = "ROCm-IPC memory domain",

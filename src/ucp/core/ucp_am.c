@@ -1,6 +1,7 @@
 /**
 * Copyright (C) Los Alamos National Security, LLC. 2019 ALL RIGHTS RESERVED.
 * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2019. ALL RIGHTS RESERVED.
+* Copyright (C) Advanced Micro Devices, Inc. 2024. ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
 */
@@ -21,10 +22,6 @@
 #include <ucp/dt/dt.h>
 #include <ucp/dt/dt.inl>
 
-#include <ucs/datastruct/array.inl>
-
-
-UCS_ARRAY_IMPL(ucp_am_cbs, unsigned, ucp_am_entry_t, static)
 
 ucs_status_t ucp_am_init(ucp_worker_h worker)
 {
@@ -188,8 +185,11 @@ static ucs_status_t ucp_worker_set_am_handler_common(ucp_worker_h worker,
                                                      uint16_t id,
                                                      unsigned flags)
 {
-    ucs_status_t status;
-    unsigned i, capacity;
+    static const ucp_am_entry_t empty_am_handler = {
+        .cb      = NULL,
+        .context = NULL,
+        .flags   = 0
+    };
 
     UCP_CONTEXT_CHECK_FEATURE_FLAGS(worker->context, UCP_FEATURE_AM,
                                     return UCS_ERR_INVALID_PARAM);
@@ -200,21 +200,12 @@ static ucs_status_t ucp_worker_set_am_handler_common(ucp_worker_h worker,
         return UCS_ERR_INVALID_PARAM;
     }
 
+    /* User handlers may be registered in any order, we need to resize the
+     * lookup array only when new ID is equal or above the current length */
     if (id >= ucs_array_length(&worker->am.cbs)) {
-        status = ucs_array_reserve(ucp_am_cbs, &worker->am.cbs, id + 1);
-        if (status != UCS_OK) {
-            return status;
-        }
-
-        capacity = ucs_array_capacity(&worker->am.cbs);
-
-        for (i = ucs_array_length(&worker->am.cbs); i < capacity; ++i) {
-            ucp_worker_am_init_handler(worker, id, NULL, 0, NULL, NULL);
-        }
-
-        ucs_array_set_length(&worker->am.cbs, capacity);
+        ucs_array_resize(&worker->am.cbs, id + 1, empty_am_handler,
+                         return UCS_ERR_NO_MEMORY);
     }
-
     return UCS_OK;
 }
 
@@ -325,6 +316,17 @@ ucp_am_zcopy_pack_user_header(ucp_request_t *req)
     return UCS_OK;
 }
 
+static ucs_status_t ucp_am_check_id(unsigned am_id)
+{
+    if (ENABLE_PARAMS_CHECK && ucs_unlikely(am_id > UINT16_MAX)) {
+        ucs_error("invalid AM id %u, must be in range [0, %u]",
+                  am_id, UINT16_MAX);
+        return UCS_ERR_INVALID_PARAM;
+    }
+
+    return UCS_OK;
+}
+
 ucs_status_t ucp_worker_set_am_recv_handler(ucp_worker_h worker,
                                             const ucp_am_handler_param_t *param)
 {
@@ -335,6 +337,11 @@ ucs_status_t ucp_worker_set_am_recv_handler(ucp_worker_h worker,
     if (!ucs_test_all_flags(param->field_mask, UCP_AM_HANDLER_PARAM_FIELD_ID |
                                                UCP_AM_HANDLER_PARAM_FIELD_CB)) {
         return UCS_ERR_INVALID_PARAM;
+    }
+
+    status = ucp_am_check_id(param->id);
+    if (status != UCS_OK) {
+        return status;
     }
 
     id    = param->id;
@@ -958,6 +965,11 @@ UCS_PROFILE_FUNC(ucs_status_ptr_t, ucp_am_send_nbx,
                                     return UCS_STATUS_PTR(UCS_ERR_INVALID_PARAM));
     UCP_REQUEST_CHECK_PARAM(param);
 
+    status = ucp_am_check_id(id);
+    if (status != UCS_OK) {
+        return UCS_STATUS_PTR(status);
+    }
+
     UCP_WORKER_THREAD_CS_ENTER_CONDITIONAL(worker);
 
     status = ucp_am_send_nbx_check_header_length(worker, header_length);
@@ -1077,8 +1089,6 @@ UCS_PROFILE_FUNC(ucs_status_ptr_t, ucp_am_recv_data_nbx,
     ucp_context_h context = worker->context;
     ucs_status_ptr_t ret;
     ucp_request_t *req;
-    ucp_datatype_t datatype;
-    ucs_memory_type_t mem_type;
     ucp_rndv_rts_hdr_t *rts;
     ucs_status_t status;
     size_t recv_length, rkey_length;
@@ -1104,13 +1114,10 @@ UCS_PROFILE_FUNC(ucs_status_ptr_t, ucp_am_recv_data_nbx,
     }
 
     desc->flags |= UCP_RECV_DESC_FLAG_RECV_STARTED;
-    datatype     = ucp_request_param_datatype(param);
-    mem_type     = ucp_request_get_memory_type(context, buffer, count, datatype,
-                                               desc->length, param);
 
-    ucs_trace("AM recv %s buffer %p dt 0x%lx count %zu memtype %s",
+    ucs_trace("AM recv %s buffer %p dt 0x%lx count %zu",
               (desc->flags & UCP_RECV_DESC_FLAG_RNDV) ? "rndv" : "eager",
-              buffer, datatype, count, ucs_memory_type_names[mem_type]);
+              buffer, ucp_request_param_datatype(param), count);
 
     if (ucs_unlikely((desc->flags & UCP_RECV_DESC_FLAG_RNDV) &&
                      (count > 0ul))) {
@@ -1119,36 +1126,31 @@ UCS_PROFILE_FUNC(ucs_status_ptr_t, ucp_am_recv_data_nbx,
                                      goto out;});
 
         /* Initialize receive request */
-        req->status        = UCS_OK;
-        req->recv.worker   = worker;
-        req->recv.buffer   = buffer;
-        req->flags         = UCP_REQUEST_FLAG_RECV_AM;
-        req->recv.datatype = datatype;
-        ucp_dt_recv_state_init(&req->recv.state, buffer, datatype, count);
-        req->recv.length   = ucp_dt_length(datatype, count, buffer,
-                                           &req->recv.state);
-        req->recv.mem_type = mem_type;
-        req->recv.op_attr  = param->op_attr_mask;
-        req->recv.am.desc  = desc;
-        rts                = data_desc;
+        req->status       = UCS_OK;
+        req->recv.worker  = worker;
+        req->flags        = UCP_REQUEST_FLAG_RECV_AM;
+        req->recv.op_attr = param->op_attr_mask;
+        req->recv.am.desc = desc;
+        rts               = data_desc;
+
+        status = ucp_datatype_iter_init_unpack(context, buffer, count,
+                                               &req->recv.dt_iter, param);
+        if (ucs_unlikely(status != UCS_OK)) {
+            ret = UCS_STATUS_PTR(status);
+            ucp_request_put_param(param, req);
+            goto out;
+        }
 
 #if ENABLE_DEBUG_DATA
         req->recv.proto_rndv_config = NULL;
 #endif
 
-        status = ucp_recv_request_set_user_memh(req, param);
-        if (status != UCS_OK) {
-            ucp_request_put_param(param, req);
-            ret = UCS_STATUS_PTR(status);
-            goto out;
-        }
-
         ucp_request_set_callback_param(param, recv_am, req, recv.am);
 
         ucs_assert(rts->opcode == UCP_RNDV_RTS_AM);
-        ucs_assertv(req->recv.length >= rts->size,
-                    "rx buffer too small %zu, need %zu", req->recv.length,
-                    rts->size);
+        ucs_assertv(req->recv.dt_iter.length >= rts->size,
+                    "rx buffer too small %zu, need %zu",
+                    req->recv.dt_iter.length, rts->size);
 
         rkey_length = desc->length - sizeof(*rts) -
                       ucp_am_hdr_from_rts(rts)->header_length;
@@ -1370,7 +1372,7 @@ ucp_am_copy_data_fragment(ucp_recv_desc_t *first_rdesc, void *data,
 {
     UCS_PROFILE_NAMED_CALL("am_memcpy_recv", ucs_memcpy_relaxed,
                            UCS_PTR_BYTE_OFFSET(first_rdesc + 1, offset),
-                           data, length);
+                           data, length, UCS_ARCH_MEMCPY_NT_SOURCE, length);
     first_rdesc->am_first.remaining -= length;
 }
 
@@ -1498,7 +1500,7 @@ UCS_PROFILE_FUNC(ucs_status_t, ucp_am_long_first_handler,
                                                first_ftr->super.msg_id));
 
     /* Alloc buffer for the data and its desc, as we know total_size.
-     * Need to allocate a separate rdesc which would be in one contigious chunk
+     * Need to allocate a separate rdesc which would be in one contiguous chunk
      * with data buffer. The layout of assembled message is below:
      *
      * +-------+-----------+--------+---------+---------+----------+
@@ -1527,11 +1529,13 @@ UCS_PROFILE_FUNC(ucs_status_t, ucp_am_long_first_handler,
     /* Copy first fragment and base headers before the data, it will be needed
      * for middle fragments processing. */
     UCS_PROFILE_NAMED_CALL("am_memcpy_recv", ucs_memcpy_relaxed,
-                           first_rdesc + 1, first_ftr, sizeof(*first_ftr));
+                           first_rdesc + 1, first_ftr, sizeof(*first_ftr),
+                           UCS_ARCH_MEMCPY_NT_SOURCE, sizeof(*first_ftr));
     UCS_PROFILE_NAMED_CALL("am_memcpy_recv", ucs_memcpy_relaxed,
                            UCS_PTR_BYTE_OFFSET(first_rdesc + 1,
                                                sizeof(*first_ftr)),
-                           hdr, sizeof(*hdr));
+                           hdr, sizeof(*hdr), UCS_ARCH_MEMCPY_NT_SOURCE,
+                           sizeof(*hdr));
 
     /* Copy user header to the end of message */
     user_hdr = UCS_PTR_BYTE_OFFSET(first_ftr, -user_hdr_length);
@@ -1539,7 +1543,8 @@ UCS_PROFILE_FUNC(ucs_status_t, ucp_am_long_first_handler,
                            UCS_PTR_BYTE_OFFSET(first_rdesc + 1,
                                                first_rdesc->payload_offset +
                                                        first_ftr->total_size),
-                           user_hdr, user_hdr_length);
+                           user_hdr, user_hdr_length,
+                           UCS_ARCH_MEMCPY_NT_SOURCE, user_hdr_length);
 
     /* Copy all already arrived middle fragments to the data buffer */
     ucs_queue_for_each_safe(mid_rdesc, iter, &ep_ext->am.mid_rdesc_q,

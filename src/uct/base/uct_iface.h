@@ -1,5 +1,6 @@
 /**
 * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2021. ALL RIGHTS RESERVED.
+* Copyright (C) Advanced Micro Devices, Inc. 2024. ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
 */
@@ -9,6 +10,7 @@
 
 #include "uct_worker.h"
 
+#include <ucs/arch/cpu.h>
 #include <uct/api/uct.h>
 #include <uct/base/uct_component.h>
 #include <ucs/config/parser.h>
@@ -115,6 +117,40 @@ enum {
         return UCS_ERR_INVALID_PARAM; \
     }
 
+/**
+ * Returns 0 if @a _params field mask does not have the required flags set.
+ */
+#define UCT_PARAMS_CHECK_FIELD_MASK(_params, _required_fields, _err_message, \
+                                    ...) \
+    if (!ucs_test_all_flags((_params)->field_mask, _required_fields)) { \
+        ucs_error(_err_message, ##__VA_ARGS__); \
+        return 0; \
+    }
+
+/**
+ * Returns 0 if @a _params field mask does not have
+ * @ref UCT_EP_IS_CONNECTED_FIELD_DEVICE_ADDR and @ref UCT_EP_IS_CONNECTED_FIELD_IFACE_ADDR
+ * flags set.
+ */
+#define UCT_EP_IS_CONNECTED_CHECK_DEV_IFACE_ADDRS(_params) \
+    UCT_PARAMS_CHECK_FIELD_MASK( \
+            _params, \
+            UCT_EP_IS_CONNECTED_FIELD_DEVICE_ADDR | \
+                    UCT_EP_IS_CONNECTED_FIELD_IFACE_ADDR, \
+            "missing params (field_mask: %lu), both device_addr and " \
+            "iface_addr must be provided.", \
+            params->field_mask)
+
+/**
+ * Returns 0 if @a _params field mask does not have
+ * @ref UCT_EP_IS_CONNECTED_FIELD_DEVICE_ADDR flag set.
+ */
+#define UCT_EP_IS_CONNECTED_CHECK_DEV_ADDR(_params) \
+    UCT_PARAMS_CHECK_FIELD_MASK( \
+            _params, UCT_EP_IS_CONNECTED_FIELD_DEVICE_ADDR, \
+            "missing params (field_mask: %lu), device_addr " \
+            "must be provided.", \
+            params->field_mask)
 
 /**
  * In release mode - do nothing.
@@ -261,6 +297,11 @@ typedef int (*uct_iface_is_reachable_v2_func_t)(
         const uct_iface_is_reachable_params_t *params);
 
 
+/* Check if a remote endpoint is connected */
+typedef int (*uct_ep_is_connected_func_t)(
+        uct_ep_h ep, const uct_ep_is_connected_params_t *params);
+
+
 /* Internal operations, not exposed by the external API */
 typedef struct uct_iface_internal_ops {
     uct_iface_estimate_perf_func_t   iface_estimate_perf;
@@ -269,6 +310,7 @@ typedef struct uct_iface_internal_ops {
     uct_ep_invalidate_func_t         ep_invalidate;
     uct_ep_connect_to_ep_v2_func_t   ep_connect_to_ep_v2;
     uct_iface_is_reachable_v2_func_t iface_is_reachable_v2;
+    uct_ep_is_connected_func_t       ep_is_connected;
 } uct_iface_internal_ops_t;
 
 
@@ -849,6 +891,9 @@ void uct_base_iface_progress_disable(uct_iface_h tl_iface, unsigned flags);
 ucs_status_t
 uct_base_iface_estimate_perf(uct_iface_h iface, uct_perf_attr_t *perf_attr);
 
+int uct_base_ep_is_connected(const uct_ep_h tl_ep,
+                             const uct_ep_is_connected_params_t *params);
+
 int uct_base_iface_is_reachable(const uct_iface_h tl_iface,
                                 const uct_device_addr_t *dev_addr,
                                 const uct_iface_addr_t *iface_addr);
@@ -865,7 +910,11 @@ void uct_iface_get_local_address(uct_iface_local_addr_ns_t *addr_ns,
                                  ucs_sys_namespace_type_t sys_ns_type);
 
 int uct_iface_local_is_reachable(uct_iface_local_addr_ns_t *addr_ns,
-                                 ucs_sys_namespace_type_t sys_ns_type);
+                                 ucs_sys_namespace_type_t sys_ns_type,
+                                 const uct_iface_is_reachable_params_t *params);
+
+void uct_iface_fill_info_str_buf(const uct_iface_is_reachable_params_t *params,
+                                 const char *fmt, ...);
 
 int uct_iface_is_reachable_params_valid(
         const uct_iface_is_reachable_params_t *params, uint64_t flags);
@@ -935,7 +984,7 @@ void uct_invoke_completion(uct_completion_t *comp, ucs_status_t status)
  */
 static UCS_F_ALWAYS_INLINE
 void uct_am_short_fill_data(void *buffer, uint64_t header, const void *payload,
-                            size_t length)
+                            size_t length, ucs_arch_memcpy_hint_t hint)
 {
     /**
      * Helper structure to fill send buffer of short messages for
@@ -949,7 +998,7 @@ void uct_am_short_fill_data(void *buffer, uint64_t header, const void *payload,
     packet->header = header;
     /* suppress false positive diagnostic from uct_mm_ep_am_common_send call */
     /* cppcheck-suppress ctunullpointer */
-    memcpy(packet->payload, payload, length);
+    ucs_memcpy_relaxed(packet->payload, payload, length, hint, length);
 }
 
 

@@ -70,7 +70,7 @@
     UCP_PROTO_AMO_FOR_EACH(_macro, post) \
     UCP_PROTO_AMO_FOR_EACH(_macro, fetch) \
     UCP_PROTO_AMO_FOR_EACH(_macro, cswap) \
-    _macro(ucp_rdmo_append_proxy_proto)
+/*    _macro(ucp_rdmo_append_proxy_proto) */
 
 #define UCP_PROTO_DECL(_proto) extern ucp_proto_t _proto;
 
@@ -81,12 +81,6 @@ UCP_PROTO_FOR_EACH(UCP_PROTO_DECL)
 
 const ucp_proto_t *ucp_protocols[] = {
     UCP_PROTO_FOR_EACH(UCP_PROTO_ENTRY)
-};
-
-const char *ucp_proto_perf_type_names[] = {
-    [UCP_PROTO_PERF_TYPE_SINGLE] = "single",
-    [UCP_PROTO_PERF_TYPE_MULTI]  = "multi",
-    [UCP_PROTO_PERF_TYPE_CPU]    = "cpu"
 };
 
 const char *ucp_operation_names[] = {
@@ -139,34 +133,4 @@ void ucp_proto_default_query(const ucp_proto_query_params_t *params,
     attr->lane_map       = 0;
     ucs_strncpy_safe(attr->desc, params->proto->desc, sizeof(attr->desc));
     ucs_strncpy_safe(attr->config, "", sizeof(attr->config));
-}
-
-void ucp_proto_perf_set(ucs_linear_func_t perf[UCP_PROTO_PERF_TYPE_LAST],
-                        ucs_linear_func_t func)
-{
-    ucp_proto_perf_type_t perf_type;
-
-    UCP_PROTO_PERF_TYPE_FOREACH(perf_type) {
-        perf[perf_type] = func;
-    }
-}
-
-void ucp_proto_perf_copy(ucs_linear_func_t dest[UCP_PROTO_PERF_TYPE_LAST],
-                         const ucs_linear_func_t src[UCP_PROTO_PERF_TYPE_LAST])
-{
-    ucp_proto_perf_type_t perf_type;
-
-    UCP_PROTO_PERF_TYPE_FOREACH(perf_type) {
-        dest[perf_type] = src[perf_type];
-    }
-}
-
-void ucp_proto_perf_add(ucs_linear_func_t perf[UCP_PROTO_PERF_TYPE_LAST],
-                        ucs_linear_func_t func)
-{
-    ucp_proto_perf_type_t perf_type;
-
-    UCP_PROTO_PERF_TYPE_FOREACH(perf_type) {
-        ucs_linear_func_add_inplace(&perf[perf_type], func);
-    }
 }

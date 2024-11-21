@@ -1,5 +1,6 @@
 /**
 * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2019. ALL RIGHTS RESERVED.
+* Copyright (c) Google, LLC, 2024. ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
 */
@@ -29,6 +30,10 @@
 
 #include <uct/ib/ud/base/ud_inl.h>
 
+
+#define UCT_UD_VERBS_IFACE_OVERHEAD 105e-9
+
+
 static UCS_F_NOINLINE void
 uct_ud_verbs_iface_post_recv_always(uct_ud_verbs_iface_t *iface, int max);
 
@@ -36,7 +41,7 @@ static inline void
 uct_ud_verbs_iface_post_recv(uct_ud_verbs_iface_t *iface);
 
 static ucs_config_field_t uct_ud_verbs_iface_config_table[] = {
-  {"UD_", "", NULL,
+  {"UD_", UCT_IB_SEND_OVERHEAD_DEFAULT(UCT_UD_VERBS_IFACE_OVERHEAD), NULL,
    0, UCS_CONFIG_TYPE_TABLE(uct_ud_iface_config_table)},
 
   {NULL}
@@ -389,6 +394,20 @@ uct_ud_verbs_iface_poll_tx(uct_ud_verbs_iface_t *iface, int is_async)
     return 1;
 }
 
+static UCS_F_ALWAYS_INLINE size_t uct_ud_verbs_iface_get_gid_len(void *packet)
+{
+  /* The GRH will contain either an IPv4 or IPv6 header. If the former is
+   * present the header will start at offset 20 in the buffer otherwise it
+   * will start at offset 0. Since the two headers are of fixed size (20 or
+   * 40 bytes) this means we will either see 0x6? at offset 0 (IPv6) or 0x45
+   * at offset 20. The detection is a little tricky for IPv6 given that the
+   * first 20B are undefined for IPv4. To overcome this the first byte of
+   * the posted receive buffer is set to 0xff.
+   */
+  return ((((uint8_t*)packet)[0] & 0xf0) == 0x60) ? UCS_IPV6_ADDR_LEN :
+                                                    UCS_IPV4_ADDR_LEN;
+}
+
 static UCS_F_ALWAYS_INLINE unsigned
 uct_ud_verbs_iface_poll_rx(uct_ud_verbs_iface_t *iface, int is_async)
 {
@@ -409,7 +428,8 @@ uct_ud_verbs_iface_poll_rx(uct_ud_verbs_iface_t *iface, int is_async)
 
     UCT_IB_IFACE_VERBS_FOREACH_RXWQE(&iface->super.super, i, packet, wc, num_wcs) {
         if (!uct_ud_iface_check_grh(&iface->super, packet,
-                                    wc[i].wc_flags & IBV_WC_GRH, wc[i].sl)) {
+                                    wc[i].wc_flags & IBV_WC_GRH,
+                                    uct_ud_verbs_iface_get_gid_len(packet))) {
             ucs_mpool_put_inline((void*)wc[i].wr_id);
             continue;
         }
@@ -535,7 +555,7 @@ uct_ud_verbs_iface_query(uct_iface_h tl_iface, uct_iface_attr_t *iface_attr)
         return status;
     }
 
-    iface_attr->overhead = 105e-9; /* Software overhead */
+    iface_attr->overhead = UCT_UD_VERBS_IFACE_OVERHEAD; /* Software overhead */
 
     return UCS_OK;
 }
@@ -574,6 +594,35 @@ static void *uct_ud_verbs_ep_get_peer_address(uct_ud_ep_t *ud_ep)
     return &ep->peer_address;
 }
 
+int uct_ud_verbs_ep_is_connected(const uct_ep_h tl_ep,
+                                 const uct_ep_is_connected_params_t *params)
+{
+    uct_ud_verbs_ep_t *ep    = ucs_derived_of(tl_ep, uct_ud_verbs_ep_t);
+    uct_ib_iface_t *ib_iface = ucs_derived_of(tl_ep->iface, uct_ib_iface_t);
+    uct_ib_address_t *ib_addr;
+    struct ibv_ah *ah;
+    struct ibv_ah_attr ah_attr;
+    enum ibv_mtu path_mtu;
+    ucs_status_t status;
+
+    if (!uct_ud_ep_is_connected_to_addr(&ep->super, params,
+                                        ep->peer_address.dest_qpn)) {
+        return 0;
+    }
+
+    ib_addr = (uct_ib_address_t*)params->device_addr;
+    uct_ib_iface_fill_ah_attr_from_addr(ib_iface, ib_addr, ep->super.path_index,
+                                        &ah_attr, &path_mtu);
+
+    status = uct_ib_device_get_ah_cached(uct_ib_iface_device(ib_iface),
+                                         &ah_attr, &ah);
+    if (status != UCS_OK) {
+        return 0;
+    }
+
+    return ah == ep->peer_address.ah;
+}
+
 static size_t uct_ud_verbs_get_peer_address_length()
 {
     return sizeof(uct_ud_verbs_ep_peer_address_t);
@@ -607,7 +656,8 @@ static uct_ud_iface_ops_t uct_ud_verbs_iface_ops = {
             .ep_query              = (uct_ep_query_func_t)ucs_empty_function_return_unsupported,
             .ep_invalidate         = uct_ud_ep_invalidate,
             .ep_connect_to_ep_v2   = uct_ud_ep_connect_to_ep_v2,
-            .iface_is_reachable_v2 = uct_ib_iface_is_reachable_v2
+            .iface_is_reachable_v2 = uct_ib_iface_is_reachable_v2,
+            .ep_is_connected       = uct_ud_verbs_ep_is_connected
         },
         .create_cq      = uct_ib_verbs_create_cq,
         .destroy_cq     = uct_ib_verbs_destroy_cq,
@@ -662,7 +712,7 @@ uct_ud_verbs_iface_post_recv_always(uct_ud_verbs_iface_t *iface, int max)
     struct ibv_recv_wr *bad_wr;
     uct_ib_recv_wr_t *wrs;
     unsigned count;
-    int ret;
+    int ret, i;
 
     wrs  = ucs_alloca(sizeof *wrs  * max);
 
@@ -670,6 +720,14 @@ uct_ud_verbs_iface_post_recv_always(uct_ud_verbs_iface_t *iface, int max)
                                         wrs, max);
     if (count == 0) {
         return;
+    }
+
+    /* Set the first byte in the receive buffer grh to a known value not equal to
+     * 0x6?. This should aid in the detection of IPv6 vs IPv4 because the first
+     * byte is undefined in the later and 0x6? in the former. It is unlikely
+     * this byte is touched with IPv4. */
+    for (i = 0; i < count; ++i) {
+        ((uint8_t*)wrs[i].sg.addr)[0] = 0xff;
     }
 
     ret = ibv_post_recv(iface->super.qp, &wrs[0].ibwr, &bad_wr);
@@ -727,7 +785,8 @@ static UCS_CLASS_INIT_FUNC(uct_ud_verbs_iface_t, uct_md_h md, uct_worker_h worke
     UCS_CLASS_CALL_SUPER_INIT(uct_ud_iface_t, &uct_ud_verbs_iface_ops, &uct_ud_verbs_iface_tl_ops, md,
                               worker, params, config, &init_attr);
 
-    self->super.super.config.sl       = uct_ib_iface_config_select_sl(&config->super);
+    self->super.super.config.sl = uct_ib_iface_config_select_sl(&config->super);
+    uct_ib_iface_set_reverse_sl(&self->super.super, &config->super);
 
     memset(&self->tx.wr_inl, 0, sizeof(self->tx.wr_inl));
     self->tx.wr_inl.opcode            = IBV_WR_SEND;

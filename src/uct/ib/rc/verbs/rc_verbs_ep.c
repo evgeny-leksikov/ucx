@@ -118,12 +118,15 @@ uct_rc_verbs_ep_atomic_post(uct_rc_verbs_ep_t *ep, int opcode, uint64_t compare_
                             uint64_t swap, uint64_t remote_addr, uct_rkey_t rkey,
                             uct_rc_iface_send_desc_t *desc, int force_sig)
 {
+    uint32_t ib_rkey = uct_ib_resolve_atomic_rkey(rkey,
+                                                  ep->super.atomic_mr_offset,
+                                                  &remote_addr);
     struct ibv_send_wr wr;
     struct ibv_sge sge;
 
+
     UCT_RC_VERBS_FILL_ATOMIC_WR(wr, wr.opcode, sge, (enum ibv_wr_opcode)opcode,
-                                compare_add, swap, remote_addr,
-                                uct_ib_md_direct_rkey(rkey));
+                                compare_add, swap, remote_addr, ib_rkey);
     UCT_TL_EP_STAT_ATOMIC(&ep->super.super);
     uct_rc_verbs_ep_post_send_desc(ep, &wr, desc, force_sig, INT_MAX);
     uct_rc_ep_enable_flush_remote(&ep->super);
@@ -594,6 +597,30 @@ ucs_status_t uct_rc_verbs_ep_get_address(uct_ep_h tl_ep, uct_ep_addr_t *addr)
         rc_addr->flush_rkey_hi = md->flush_rkey >> 16;
     }
     return UCS_OK;
+}
+
+int uct_rc_verbs_ep_is_connected(const uct_ep_h tl_ep,
+                                 const uct_ep_is_connected_params_t *params)
+{
+    uct_rc_verbs_ep_t *ep = ucs_derived_of(tl_ep, uct_rc_verbs_ep_t);
+    uint32_t addr_qp      = 0;
+    const uct_rc_verbs_ep_addr_t *rc_addr;
+    ucs_status_t status;
+    struct ibv_ah_attr ah_attr;
+    uint32_t qp_num;
+
+    status = uct_ib_query_qp_peer_info(ep->qp, &ah_attr, &qp_num);
+    if (status != UCS_OK) {
+        return 0;
+    }
+
+    if (params->field_mask & UCT_EP_IS_CONNECTED_FIELD_EP_ADDR) {
+        rc_addr = (const uct_rc_verbs_ep_addr_t*)params->ep_addr;
+        addr_qp = uct_ib_unpack_uint24(rc_addr->qp_num);
+    }
+
+    return uct_rc_ep_is_connected(&ep->super, &ah_attr, params, qp_num,
+                                  addr_qp);
 }
 
 ucs_status_t

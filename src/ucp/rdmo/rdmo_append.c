@@ -733,53 +733,54 @@ ucp_rdmo_flush_ack_handler(void *arg, const void *header, size_t header_length,
     return UCS_OK;
 }
 
-static ucs_status_t
-ucp_proto_rdmo_append_proxy_init(const ucp_proto_init_params_t *init_params)
-{
-    ucp_proto_single_init_params_t params        = {
-        .super.super         = *init_params,
-        .super.latency       = 0,
-        .super.overhead      = 0,
-        .super.cfg_thresh    = UCS_MEMUNITS_AUTO,
-        .super.cfg_priority  = 0,
-        .super.min_length    = 0,
-        .super.max_length    = SIZE_MAX,
-        .super.min_iov       = 0,
-        .super.min_frag_offs = UCP_PROTO_COMMON_OFFSET_INVALID,
-        .super.max_frag_offs = UCP_PROTO_COMMON_OFFSET_INVALID, //ucs_offsetof(uct_iface_attr_t, cap.am.max_bcopy),
-        .super.max_iov_offs  = UCP_PROTO_COMMON_OFFSET_INVALID,
-        .super.hdr_size      = 0,
-        .super.send_op       = UCT_EP_OP_ATOMIC_FETCH,
-        .super.memtype_op    = UCT_EP_OP_LAST, //UCT_EP_OP_GET_SHORT,
-        .super.flags         = /*UCP_PROTO_COMMON_INIT_FLAG_SEND_ZCOPY    |*/
-                               UCP_PROTO_COMMON_INIT_FLAG_RECV_ZCOPY    |
-                               UCP_PROTO_COMMON_INIT_FLAG_REMOTE_ACCESS |
-                               /*UCP_PROTO_COMMON_INIT_FLAG_ERR_HANDLING | */
-                               UCP_PROTO_COMMON_INIT_FLAG_SINGLE_FRAG,
-        .super.exclude_map   = 0,
-        .lane_type           = UCP_LANE_TYPE_AMO,
-        .tl_cap_flags        = UCT_IFACE_FLAG_PUT_SHORT |
-                               UCT_IFACE_FLAG_PUT_ZCOPY |
-                               UCT_IFACE_FLAG_ATOMIC_DEVICE
-    };
-
-    if (!(init_params->worker->context->config.features & UCP_FEATURE_RDMO_PROXY)) {
-        return UCS_ERR_UNSUPPORTED;
-    }
-
-//    if  ((init_params->rkey_config_key != NULL) ||
-//         (init_params->rkey_cfg_index  != 0)) {
+//static ucs_status_t
+//ucp_proto_rdmo_append_proxy_init(const ucp_proto_init_params_t *init_params)
+//{
+////    ucp_proto_single_init_params_t params        = {
+////        .super.super         = *init_params,
+////        .super.latency       = 0,
+////        .super.overhead      = 0,
+////        .super.cfg_thresh    = UCS_MEMUNITS_AUTO,
+////        .super.cfg_priority  = 0,
+////        .super.min_length    = 0,
+////        .super.max_length    = SIZE_MAX,
+////        .super.min_iov       = 0,
+////        .super.min_frag_offs = UCP_PROTO_COMMON_OFFSET_INVALID,
+////        .super.max_frag_offs = UCP_PROTO_COMMON_OFFSET_INVALID, //ucs_offsetof(uct_iface_attr_t, cap.am.max_bcopy),
+////        .super.max_iov_offs  = UCP_PROTO_COMMON_OFFSET_INVALID,
+////        .super.hdr_size      = 0,
+////        .super.send_op       = UCT_EP_OP_ATOMIC_FETCH,
+////        .super.memtype_op    = UCT_EP_OP_LAST, //UCT_EP_OP_GET_SHORT,
+////        .super.flags         = /*UCP_PROTO_COMMON_INIT_FLAG_SEND_ZCOPY    |*/
+////                               UCP_PROTO_COMMON_INIT_FLAG_RECV_ZCOPY    |
+////                               UCP_PROTO_COMMON_INIT_FLAG_REMOTE_ACCESS |
+////                               /*UCP_PROTO_COMMON_INIT_FLAG_ERR_HANDLING | */
+////                               UCP_PROTO_COMMON_INIT_FLAG_SINGLE_FRAG,
+////        .super.exclude_map   = 0,
+////        .lane_type           = UCP_LANE_TYPE_AMO,
+////        .tl_cap_flags        = UCT_IFACE_FLAG_PUT_SHORT |
+////                               UCT_IFACE_FLAG_PUT_ZCOPY |
+////                               UCT_IFACE_FLAG_ATOMIC_DEVICE
+////    };
+//
+//    if (!(init_params->worker->context->config.features & UCP_FEATURE_RDMO_PROXY)) {
 //        return UCS_ERR_UNSUPPORTED;
 //    }
-
-    if ((init_params->select_param->dt_class != UCP_DATATYPE_CONTIG) ||
-        !ucp_proto_init_check_op(init_params,
-                                 UCS_BIT(UCP_OP_ID_RDMO_APPEND_PROXY))) {
-        return UCS_ERR_UNSUPPORTED;
-    }
-
-    return ucp_proto_single_init(&params);
-}
+//
+////    if  ((init_params->rkey_config_key != NULL) ||
+////         (init_params->rkey_cfg_index  != 0)) {
+////        return UCS_ERR_UNSUPPORTED;
+////    }
+//
+//    if ((init_params->select_param->dt_class != UCP_DATATYPE_CONTIG) ||
+//        !ucp_proto_init_check_op(init_params,
+//                                 UCS_BIT(UCP_OP_ID_RDMO_APPEND_PROXY))) {
+//        return UCS_ERR_UNSUPPORTED;
+//    }
+//
+////    return ucp_proto_single_init(&params);
+//    return UCS_ERR_NOT_IMPLEMENTED;
+//}
 
 static void
 ucp_proto_rdmo_append_proxy_query(const ucp_proto_query_params_t *params,
@@ -815,7 +816,9 @@ ucp_proto_t ucp_rdmo_append_proxy_proto = {
     .name     = "rdmo/append/proxy",
     .desc     = "TODO",
     .flags    = 0,
-    .init     = ucp_proto_rdmo_append_proxy_init,
+//    .init     = ucp_proto_rdmo_append_proxy_init,
+    .probe    = NULL,
+    .query    = NULL,
     .query    = ucp_proto_rdmo_append_proxy_query,
     .progress = {ucp_proto_rdmo_append_proxy_progress},
     .abort    = ucp_proto_rdmo_append_proxy_abort,

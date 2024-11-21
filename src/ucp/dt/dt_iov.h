@@ -55,7 +55,7 @@ static inline size_t ucp_dt_iov_length(const ucp_dt_iov_t *iov, size_t iovcnt)
  */
 void ucp_dt_iov_gather(ucp_worker_h worker, void *dest, const ucp_dt_iov_t *iov,
                        size_t length, size_t *iov_offset, size_t *iovcnt_offset,
-                       ucs_memory_type_t mem_type);
+                       ucs_memory_type_t mem_type, size_t total_len);
 
 
 /**
@@ -81,7 +81,7 @@ void ucp_dt_iov_gather(ucp_worker_h worker, void *dest, const ucp_dt_iov_t *iov,
 size_t ucp_dt_iov_scatter(ucp_worker_h worker, const ucp_dt_iov_t *iov,
                           size_t iovcnt, const void *src, size_t length,
                           size_t *iov_offset, size_t *iovcnt_offset,
-                          ucs_memory_type_t mem_type);
+                          ucs_memory_type_t mem_type, size_t total_len);
 
 
 /**
@@ -124,12 +124,5 @@ size_t ucp_dt_iov_count_nonempty(const ucp_dt_iov_t *iov, size_t iovcnt);
 ucs_status_t ucp_dt_iov_memtype_check(ucp_context_h context,
                                       const ucp_dt_iov_t *iov, size_t iovcnt,
                                       const ucp_memory_info_t *mem_info);
-
-
-ucs_status_t ucp_dt_iov_memtype_detect(ucp_context_h context,
-                                       const ucp_dt_iov_t *iov, size_t iovcnt,
-                                       const ucp_request_param_t *param,
-                                       uint8_t *sg_count,
-                                       ucp_memory_info_t *mem_info);
 
 #endif

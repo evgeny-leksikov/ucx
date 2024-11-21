@@ -7,7 +7,8 @@
 
 lib_LTLIBRARIES     = libucp.la
 
-libucp_la_CFLAGS   = $(BASE_CFLAGS) $(doca_urom_CFLAGS)
+libucp_la_CFLAGS   = $(BASE_CFLAGS) $(LT_CFLAGS) $(doca_urom_CFLAGS)
+libucp_la_LIBS     =
 libucp_la_CPPFLAGS = $(BASE_CPPFLAGS)
 libucp_la_LDFLAGS  = -ldl -version-info $(SOVERSION)
 libucp_la_LIBADD   = ../ucs/libucs.la ../uct/libuct.la $(doca_urom_LIBS)
@@ -56,6 +57,7 @@ noinst_HEADERS = \
 	proto/proto_debug.h \
 	proto/proto_multi.h \
 	proto/proto_multi.inl \
+	proto/proto_perf.h \
 	proto/proto_select.h \
 	proto/proto_select.inl \
 	proto/proto_single.h \
@@ -122,6 +124,7 @@ libucp_la_SOURCES = \
 	proto/proto_init.c \
 	proto/proto_common.c \
 	proto/proto_debug.c \
+	proto/proto_perf.c \
 	proto/proto_reconfig.c \
 	proto/proto_multi.c \
 	proto/proto_select.c \

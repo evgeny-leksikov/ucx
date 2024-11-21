@@ -5,19 +5,28 @@
 
 if HAVE_GO
 
+EXTRA_DIST = \
+	src \
+	tests
+
 GOOBJDIR=$(abs_top_builddir)/bindings/go/$(objdir)
-GOPATH=$(abs_top_srcdir)/bindings/go/
 CGOCFLAGS=-I$(abs_top_builddir)/src -I$(abs_top_srcdir)/src
-CGOLDFLAGS=-L$(abs_top_builddir)/src/ucp/$(objdir) -lucp \
-           -L$(abs_top_builddir)/src/ucs/$(objdir) -lucs \
-           $(UROM_LDFLAGS) $(UROM_LIBS)
+CGOLDFLAGS=-L$(abs_top_builddir)/src/ucp/$(objdir) -lucp -L$(abs_top_builddir)/src/ucs/$(objdir) -lucs $(UROM_LDFLAGS) $(UROM_LIBS)
+
+if HAVE_CUDA
+CGOLDFLAGS+=$(CUDA_LDFLAGS) $(CUDA_LIBS) $(CUDART_LIBS)
+GOTAGS=cuda
+else
+GOTAGS=
+endif
+
+>>>>>>> upstream/master
 UCX_SOPATH=$(abs_top_builddir)/src/ucp/$(objdir):$(abs_top_builddir)/src/ucs/$(objdir):$(abs_top_builddir)/src/ucm/$(objdir):$(abs_top_builddir)/src/uct/$(objdir)
 GOTMPDIR=$(GOOBJDIR)/tmp
 GOCACHE=$(GOTMPDIR)
 
 export GOTMPDIR
 export GOCACHE
-export GOPATH
 export CGO_CFLAGS=$(CGOCFLAGS)
 export CGO_LDFLAGS=$(CGOLDFLAGS)
 
@@ -33,25 +42,25 @@ clean-local:
 
 test: $(GOTMPDIR)
 	cd $(abs_top_srcdir)/bindings/go/tests ;\
-	$(GO) env -w GO111MODULE=off ; \
-	LD_LIBRARY_PATH=$(UCX_SOPATH):${LD_LIBRARY_PATH} $(GO) test -v
+	LD_LIBRARY_PATH=$(UCX_SOPATH):${LD_LIBRARY_PATH} $(GO) test -v --tags=$(GOTAGS)
 
 bench: $(GOTMPDIR)
 	cd $(abs_top_srcdir)/bindings/go/tests ;\
-	$(GO) env -w GO111MODULE=off ; \
-	LD_LIBRARY_PATH=$(UCX_SOPATH):${LD_LIBRARY_PATH} $(GO) test -v -bench=.
+	LD_LIBRARY_PATH=$(UCX_SOPATH):${LD_LIBRARY_PATH} $(GO) test -v --tags=$(GOTAGS) -bench=.
 
 goperftest: $(GOTMPDIR)
-	$(GO) env -w GO111MODULE=off ; \
 	cd $(abs_top_srcdir)/bindings/go/src/examples/perftest ;\
-	$(GO) build -o ${GOTMPDIR}/goperftest
+	$(GO) build --tags=$(GOTAGS) -o ${GOTMPDIR}/goperftest
 
-run-perftest:
+run-perftest: goperftest
 	cd $(abs_top_srcdir)/bindings/go/src/examples/perftest ;\
 	LD_LIBRARY_PATH=$(UCX_SOPATH):${LD_LIBRARY_PATH} ${GOTMPDIR}/goperftest ${ARGS}
 
-install-exec-hook:
+install-exec-hook: goperftest
 	$(INSTALL) ${GOTMPDIR}/goperftest $(DESTDIR)$(bindir)
+
+uninstall-hook:
+	$(RM) $(DESTDIR)$(bindir)/goperftest
 
 all: goperftest build
 

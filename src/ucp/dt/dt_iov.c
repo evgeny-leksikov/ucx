@@ -1,5 +1,6 @@
 /**
  * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2015. ALL RIGHTS RESERVED.
+ * Copyright (C) Advanced Micro Devices, Inc. 2024. ALL RIGHTS RESERVED.
  *
  * See file LICENSE for terms.
  */
@@ -24,7 +25,7 @@
 
 void ucp_dt_iov_gather(ucp_worker_h worker, void *dest, const ucp_dt_iov_t *iov,
                        size_t length, size_t *iov_offset, size_t *iovcnt_offset,
-                       ucs_memory_type_t mem_type)
+                       ucs_memory_type_t mem_type, size_t total_len)
 {
     size_t length_it = 0;
     size_t item_len, item_reminder, item_len_to_copy;
@@ -39,7 +40,7 @@ void ucp_dt_iov_gather(ucp_worker_h worker, void *dest, const ucp_dt_iov_t *iov,
         ucp_dt_contig_pack(worker, UCS_PTR_BYTE_OFFSET(dest, length_it),
                            UCS_PTR_BYTE_OFFSET(iov[*iovcnt_offset].buffer,
                                                *iov_offset),
-                           item_len_to_copy, mem_type);
+                           item_len_to_copy, mem_type, total_len);
         length_it += item_len_to_copy;
 
         ucs_assert(length_it <= length);
@@ -55,7 +56,7 @@ void ucp_dt_iov_gather(ucp_worker_h worker, void *dest, const ucp_dt_iov_t *iov,
 size_t ucp_dt_iov_scatter(ucp_worker_h worker, const ucp_dt_iov_t *iov,
                           size_t iovcnt, const void *src, size_t length,
                           size_t *iov_offset, size_t *iovcnt_offset,
-                          ucs_memory_type_t mem_type)
+                          ucs_memory_type_t mem_type, size_t total_len)
 {
     size_t length_it = 0;
     size_t item_len, item_len_to_copy;
@@ -70,7 +71,7 @@ size_t ucp_dt_iov_scatter(ucp_worker_h worker, const ucp_dt_iov_t *iov,
                              UCS_PTR_BYTE_OFFSET(iov[*iovcnt_offset].buffer,
                                                  *iov_offset),
                              UCS_PTR_BYTE_OFFSET(src, length_it),
-                             item_len_to_copy, mem_type);
+                             item_len_to_copy, mem_type, total_len);
         length_it += item_len_to_copy;
 
         ucs_assert(length_it <= length);
@@ -142,29 +143,6 @@ ucs_status_t ucp_dt_iov_memtype_check(ucp_context_h context,
                       ucs_topo_sys_device_get_name(mem_info->sys_dev), iovcnt);
             return UCS_ERR_INVALID_PARAM;
         }
-    }
-
-    return UCS_OK;
-}
-
-ucs_status_t ucp_dt_iov_memtype_detect(ucp_context_h context,
-                                       const ucp_dt_iov_t *iov, size_t iovcnt,
-                                       const ucp_request_param_t *param,
-                                       uint8_t *sg_count,
-                                       ucp_memory_info_t *mem_info)
-{
-    if (ucs_unlikely(iovcnt == 0)) {
-        ucp_memory_info_set_host(mem_info);
-        *sg_count = 1;
-        return UCS_OK;
-    }
-
-    ucp_memory_detect_param(context, iov->buffer, iov->length, param, mem_info);
-
-    *sg_count = ucs_min(iovcnt, (size_t)UINT8_MAX);
-
-    if (ENABLE_PARAMS_CHECK) {
-        return ucp_dt_iov_memtype_check(context, iov + 1, iovcnt - 1, mem_info);
     }
 
     return UCS_OK;

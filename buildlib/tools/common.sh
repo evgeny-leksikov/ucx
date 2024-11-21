@@ -4,8 +4,8 @@ WORKSPACE=${WORKSPACE:=$PWD}
 # build in local directory which goes away when docker exits
 ucx_build_dir=$HOME/${BUILD_ID}/build
 ucx_inst=$ucx_build_dir/install
-CUDA_MODULE="dev/cuda11.4"
-GDRCOPY_MODULE="dev/gdrcopy2.3_cuda11.4"
+CUDA_MODULE="dev/cuda12.2.2"
+GDRCOPY_MODULE="dev/gdrcopy2.3.1-1_cuda12.2.2"
 JDK_MODULE="dev/jdk"
 MVN_MODULE="dev/mvn"
 XPMEM_MODULE="dev/xpmem-90a95a4"
@@ -21,7 +21,7 @@ FUSE3_MODULE="dev/fuse-3.10.5"
 #
 num_cpus=$(lscpu -p | grep -v '^#' | wc -l)
 [ -z $num_cpus ] && num_cpus=1
-parallel_jobs=4
+parallel_jobs=${parallel_jobs:-4}
 [ $parallel_jobs -gt $num_cpus ] && parallel_jobs=$num_cpus
 num_pinned_threads=$(nproc)
 [ $parallel_jobs -gt $num_pinned_threads ] && parallel_jobs=$num_pinned_threads
@@ -137,31 +137,6 @@ module_unload() {
 }
 
 #
-# try load cuda modules if nvidia driver is installed
-#
-try_load_cuda_env() {
-	num_gpus=0
-	have_cuda=no
-	have_gdrcopy=no
-	if [ -f "/proc/driver/nvidia/version" ]; then
-		have_cuda=yes
-		have_gdrcopy=yes
-		module_load $CUDA_MODULE    || have_cuda=no
-		module_load $GDRCOPY_MODULE || have_gdrcopy=no
-		num_gpus=$(nvidia-smi -L | wc -l)
-		export CUDA_VISIBLE_DEVICES=$(($worker%$num_gpus))
-	fi
-}
-
-#
-# Alwasy succeeds
-#
-unload_cuda_env() {
-	module_unload $CUDA_MODULE
-	module_unload $GDRCOPY_MODULE
-}
-
-#
 # Get list IB devices
 #
 get_ib_devices() {
@@ -193,6 +168,7 @@ get_ifaddr() {
 }
 
 get_rdma_device_ip_addr() {
+	device=$1
 	if [ ! -r /dev/infiniband/rdma_cm  ]
 	then
 		return
@@ -210,6 +186,11 @@ get_rdma_device_ip_addr() {
 		port=$(echo "${line}" | awk '{print $3}')
 		netif=$(echo "${line}" | awk '{print $5}')
 		node_guid=`cat /sys/class/infiniband/${ibdev}/node_guid`
+
+		if [ -n "${device}" ] && [ "${device}" != "${ibdev}:${port}" ]
+		then
+			continue
+		fi
 
 		# skip devices that do not have proper gid (representors)
 		if [ -e "/sys/class/infiniband/${ibdev}/ports/${port}/gids/0" ] && \
@@ -248,6 +229,22 @@ get_non_rdma_ip_addr() {
 #
 get_active_ib_devices() {
 	get_ib_devices PORT_ACTIVE
+}
+
+#
+# Filter in BlueField IB devices from the device list
+#
+get_ib_bf_devices() {
+	ib_devices=$@
+	for ibdev_port in $ib_devices
+	do
+		ibdev=${ibdev_port%:*}
+		port=${ibdev_port#*:}
+		if ibv_devinfo -d $ibdev -i $port | grep -q 'vendor_part_id:\s*41692'
+		then
+			echo "$ibdev_port"
+		fi
+	done
 }
 
 #

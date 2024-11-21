@@ -9,6 +9,7 @@ extern "C" {
 #include <ucs/debug/memtrack_int.h>
 #include <ucs/datastruct/string_buffer.h>
 #include <ucs/datastruct/string_set.h>
+#include <ucs/sys/compiler.h>
 #include <ucs/sys/string.h>
 }
 
@@ -63,9 +64,10 @@ UCS_TEST_F(test_string, common_prefix_len) {
 }
 
 UCS_TEST_F(test_string, path) {
-    char path[PATH_MAX];
-    ucs_path_get_common_parent("/sys/dev/one", "/sys/dev/two", path);
-    EXPECT_STREQ("/sys/dev", path);
+    std::string path(PATH_MAX, '\0');
+
+    ucs_path_get_common_parent("/sys/dev/one", "/sys/dev/two", &path[0]);
+    EXPECT_STREQ("/sys/dev", path.c_str());
 
     EXPECT_EQ(4, ucs_path_calc_distance("/root/foo/bar", "/root/charlie/fox"));
     EXPECT_EQ(2, ucs_path_calc_distance("/a/b/c/d", "/a/b/c/e"));
@@ -257,8 +259,8 @@ void test_string_buffer::test_fixed(ucs_string_buffer_t *strb, size_t capacity)
     ucs_string_buffer_appendf(strb, "%s", "mrmeeseeks");
     ucs_string_buffer_appendf(strb, "%s", "lookatme");
 
-    EXPECT_LE(ucs_string_buffer_length(strb), capacity - 1);
-    EXPECT_EQ(std::string("immrmeeseeksloo"), ucs_string_buffer_cstr(strb));
+    EXPECT_EQ(ucs_string_buffer_length(strb), capacity - 1);
+    EXPECT_EQ(std::string("immrmeeseekslook"), ucs_string_buffer_cstr(strb));
 }
 
 UCS_TEST_F(test_string_buffer, fixed_static) {

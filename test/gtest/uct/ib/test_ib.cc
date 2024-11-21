@@ -8,7 +8,7 @@
 #ifdef HAVE_MLX5_DV
 extern "C" {
 #include <uct/ib/mlx5/ib_mlx5.h>
-#include <uct/ib/rc/accel/rc_mlx5_common.h>
+#include <uct/ib/mlx5/rc/rc_mlx5_common.h>
 }
 #endif
 
@@ -29,6 +29,7 @@ void test_uct_ib::create_connected_entities() {
 void test_uct_ib::init() {
     uct_test::init();
     create_connected_entities();
+    check_skip_test();
     test_uct_ib::m_ib_am_handler_counter = 0;
 }
 
@@ -150,13 +151,17 @@ public:
     }
 
     void test_fill_ah_attr(uint64_t subnet_prefix) {
-        uct_ib_iface_t *iface     = ucs_derived_of(m_e1->iface(), uct_ib_iface_t);
-        static const uint16_t lid = 0x1ee7;
+        uct_ib_iface_t *iface      = ucs_derived_of(m_e1->iface(),
+                                                    uct_ib_iface_t);
+        static const uint16_t lid  = 0x1ee7;
+        const int config_is_global = ib_config()->is_global ||
+                                     /* compatibility UCT_IB_ADDRESS_TYPE_GLOBAL */
+                                     (ib_config()->addr_type == 2);
         union ibv_gid gid;
         struct ibv_ah_attr ah_attr;
 
         ASSERT_EQ(iface->config.force_global_addr,
-                  ib_config()->is_global || uct_ib_iface_is_roce(iface));
+                  config_is_global || uct_ib_iface_is_roce(iface));
 
         gid.global.subnet_prefix = subnet_prefix ?: iface->gid_info.gid.global.subnet_prefix;
         gid.global.interface_id  = 0xdeadbeef;
@@ -168,7 +173,7 @@ public:
         if (uct_ib_iface_is_roce(iface)) {
             /* in case of roce, should be global */
             EXPECT_TRUE(ah_attr.is_global);
-        } else if (ib_config()->is_global) {
+        } else if (config_is_global) {
             /* in case of global address is forced - ah_attr should use GRH */
             EXPECT_TRUE(ah_attr.is_global);
         } else if (iface->gid_info.gid.global.subnet_prefix == gid.global.subnet_prefix) {
@@ -355,6 +360,7 @@ public:
         union ibv_gid gid;
         uct_ib_md_config_t *md_config =
             ucs_derived_of(m_md_config, uct_ib_md_config_t);
+        ucs_config_allow_list_t dummy_subnet_list;
         ucs::handle<uct_md_h> uct_md;
         uct_ib_iface_t dummy_ib_iface;
         uct_ib_md_t *ib_md;
@@ -372,11 +378,14 @@ public:
 
         ASSERT_EQ(&ib_md->dev, uct_ib_iface_device(&dummy_ib_iface));
 
+        dummy_subnet_list.mode = UCS_CONFIG_ALLOW_LIST_ALLOW_ALL;
+
         /* uct_ib_iface_init_roce_gid_info() requires only the port from the
          * ib_iface so we can use a dummy one here.
          * this function will set the gid_index in the dummy ib_iface. */
         status = uct_ib_iface_init_roce_gid_info(&dummy_ib_iface,
-                                                 md_config->ext.gid_index);
+                                                 md_config->ext.gid_index,
+                                                 &dummy_subnet_list);
         ASSERT_UCS_OK(status);
 
         gid_index = dummy_ib_iface.gid_info.gid_index;
@@ -388,7 +397,7 @@ public:
         }
 
         /* check if the gid is valid to use */
-        if (uct_ib_device_is_gid_raw_empty(gid.raw)) {
+        if (!uct_ib_device_is_gid_valid(&gid)) {
             UCS_TEST_SKIP_R(device_str.str() + " is empty");
         }
 
@@ -400,7 +409,7 @@ public:
     }
 };
 
-UCS_TEST_P(test_uct_ib_gid_idx, non_default_gid_idx, "GID_INDEX=1") {
+UCS_TEST_P(test_uct_ib_gid_idx, non_default_gid_idx, "IB_GID_INDEX=1") {
     send_recv_short();
 }
 
@@ -436,9 +445,19 @@ protected:
 };
 
 UCS_TEST_P(test_uct_ib_sl, check_ib_sl_config) {
+    const char *max_avail_sl_str = getenv("GTEST_MAX_IB_SL");
+    uint8_t sl, max_avail_sl;
+
+    if (max_avail_sl_str == NULL) {
+        max_avail_sl = UCT_IB_SL_NUM;
+    } else {
+        max_avail_sl = std::min(strtoul(max_avail_sl_str, NULL, 0),
+                                static_cast<unsigned long>(UCT_IB_SL_NUM));
+    }
+
     // go over all SLs, check UCTs could be initialized on a specific SL
     // and able to send/recv traffic
-    for (uint8_t sl = 0; sl < UCT_IB_SL_NUM; ++sl)  {
+    for (sl = 0; sl < max_avail_sl; ++sl) {
         if (!has_transport("rc_verbs") && !has_transport("ud_verbs")) {
             // if AR is configured on the given SL, set AR_ENABLE to "y",
             // otherwise - to "n" in order to test that AR_ENABLE parameter
