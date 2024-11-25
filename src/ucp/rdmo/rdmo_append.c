@@ -289,7 +289,11 @@ ucp_rdmo_append_put_data(ucp_ep_h ep,
 #if UCP_RDMO_TEST_PERF_MPOOL_PROXY_BUF
     return UCS_OK;
 #else
-    return UCS_INPROGRESS;
+    if (ret_put == NULL) {
+        return UCS_OK;
+    } else {
+        return UCS_INPROGRESS;
+    }
 #endif /* UCP_RDMO_TEST_PERF_MPOOL_PROXY_BUF */
 }
 
