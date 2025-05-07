@@ -17,6 +17,168 @@
 
 static uct_iface_ops_t uct_srd_iface_tl_ops;
 
+
+void uct_srd_iface_post_send(uct_srd_iface_t *iface, struct ibv_ah *ah,
+                             uint32_t remote_qpn, struct ibv_send_wr *wr,
+                             unsigned send_flags)
+{
+    struct ibv_send_wr *bad_wr;
+    int ret;
+
+    wr->wr.ud.ah         = ah;
+    wr->wr.ud.remote_qpn = remote_qpn;
+    wr->send_flags       = send_flags;
+
+    uct_ib_log_post_send_one(&iface->super, iface->qp, wr, ah, remote_qpn, 2,
+                             uct_srd_dump_packet);
+
+    ret = ibv_post_send(iface->qp, wr, &bad_wr);
+    if (ucs_unlikely(ret != 0)) {
+        ucs_fatal("ibv_post_send(iface=%p) returned %d bad_wr=%p (%m)", iface,
+                  ret, bad_wr);
+    }
+}
+
+static uct_srd_ep_t *
+uct_srd_iface_get_ep(uct_srd_iface_t *iface, uint64_t ep_uuid)
+{
+    khiter_t iter = kh_get(uct_srd_ep_hash, &iface->ep_hash, ep_uuid);
+    if (ucs_unlikely(iter != kh_end(&iface->ep_hash))) {
+        return kh_val(&iface->ep_hash, iter);
+    }
+
+    return NULL;
+}
+
+ucs_status_t uct_srd_iface_add_ep(uct_srd_iface_t *iface, uct_srd_ep_t *ep)
+{
+    int ret;
+    khiter_t iter;
+
+    iter = kh_put(uct_srd_ep_hash, &iface->ep_hash, ep->ep_uuid, &ret);
+    if (ucs_unlikely((ret == UCS_KH_PUT_FAILED) ||
+                     (ret == UCS_KH_PUT_KEY_PRESENT))) {
+        ucs_error("iface=%p ep=%p ep_uuid=%"PRIx64" add ep to hash err=%d",
+                  iface, ep, ep->ep_uuid, ret);
+        return UCS_ERR_IO_ERROR;
+    }
+
+    kh_value(&iface->ep_hash, iter) = ep;
+    return UCS_OK;
+}
+
+void uct_srd_iface_remove_ep(uct_srd_iface_t *iface, uct_srd_ep_t *ep)
+{
+    khiter_t iter;
+
+    iter = kh_get(uct_srd_ep_hash, &iface->ep_hash, ep->ep_uuid);
+    if (iter == kh_end(&iface->ep_hash)) {
+        ucs_error("iface=%p ep=%p ep_uuid=%"PRIx64" not found in ep hash",
+                  iface, ep, ep->ep_uuid);
+        return;
+    }
+
+    kh_del(uct_srd_ep_hash, &iface->ep_hash, iter);
+}
+
+/* Request the remote interface to create the address handler */
+ucs_status_t uct_srd_iface_ctl_add(uct_srd_iface_t *iface,
+                                   uct_srd_ctl_id_t ctl_id, uint64_t ep_uuid,
+                                   struct ibv_ah *ah, uint32_t remote_qpn)
+{
+    ucs_status_t status;
+    uct_srd_ctl_op_t *ctl_op;
+    uct_srd_ctl_hdr_t *hdr;
+
+    /* Construct a control operation to be queued */
+    ctl_op = ucs_malloc(sizeof(*ctl_op) + sizeof(*hdr) + iface->super.addr_size,
+                        "uct_srd_ctl_op_t");
+    if (ctl_op == NULL) {
+        ucs_error("iface=%p ctl_id=%d ep_uuid=%" PRIx64 " ah=%p remote_qpn=%u "
+                  "failed to allocate ctl_op",
+                  iface, ctl_id, ep_uuid, ah, remote_qpn);
+        return UCS_ERR_NO_MEMORY;
+    }
+
+    ctl_op->ah         = ah;
+    ctl_op->remote_qpn = remote_qpn;
+
+    hdr          = (uct_srd_ctl_hdr_t*)(ctl_op + 1);
+    hdr->id      = ctl_id;
+    hdr->ep_uuid = ep_uuid;
+    uct_ib_pack_uint24(hdr->qpn, iface->qp->qp_num);
+
+    if (ctl_id == UCT_SRD_CTL_ID_REQ) {
+        status = uct_ib_iface_get_device_address(&iface->super.super.super,
+                                                 (uct_device_addr_t*)(hdr + 1));
+        if (status != UCS_OK) {
+            ucs_error("iface=%p ctl_id=%d ep_uuid=%" PRIx64
+                      " ah=%p remote_qpn=%u failed to get device address %s",
+                      iface, ctl_id, ep_uuid, ah, remote_qpn,
+                      ucs_status_string(status));
+            ucs_free(ctl_op);
+            return status;
+        }
+    }
+
+    ucs_queue_push(&iface->tx.ctl_queue, &ctl_op->queue);
+    return UCS_OK;
+}
+
+static ucs_status_t
+uct_srd_iface_ctl_op_send(uct_srd_iface_t *iface, uct_srd_ctl_op_t *ctl_op)
+{
+    uct_srd_ctl_hdr_t *hdr = (uct_srd_ctl_hdr_t*)(ctl_op + 1);
+    uct_srd_send_op_t *send_op;
+
+    if (iface->tx.available <= 0) {
+        return UCS_ERR_NO_RESOURCE;
+    }
+
+    /* Post the request, no action required on TX completion */
+    send_op = ucs_mpool_get(&iface->tx.send_op_mp);
+    if (send_op == NULL) {
+        ucs_error("iface=%p send_op allocationd failed for ctl op send", iface);
+        return UCS_ERR_NO_MEMORY;
+    }
+
+    send_op->comp_cb = (uct_srd_send_op_comp_t)ucs_empty_function;
+    send_op->ep      = NULL;
+
+    iface->tx.sge[0].addr   = (uintptr_t)hdr;
+    iface->tx.sge[0].length = sizeof(*hdr);
+    if (hdr->id == UCT_SRD_CTL_ID_REQ) {
+        iface->tx.sge[0].length += iface->super.addr_size;
+    }
+
+    iface->tx.wr_inl.wr_id   = (uintptr_t)send_op;
+    iface->tx.wr_inl.num_sge = 1;
+
+    uct_srd_iface_post_send(iface, ctl_op->ah, ctl_op->remote_qpn,
+                            &iface->tx.wr_inl, IBV_SEND_INLINE);
+    iface->tx.available--;
+    ucs_list_add_tail(&iface->tx.outstanding_list, &send_op->list);
+    return UCS_OK;
+}
+
+void uct_srd_iface_ctl_op_progress(uct_srd_iface_t *iface)
+{
+    ucs_status_t status;
+    uct_srd_ctl_op_t *ctl_op;
+
+    while (!ucs_queue_is_empty(&iface->tx.ctl_queue)) {
+        ctl_op = ucs_queue_head_elem_non_empty(&iface->tx.ctl_queue,
+                                               uct_srd_ctl_op_t, queue);
+        status = uct_srd_iface_ctl_op_send(iface, ctl_op);
+        if (status != UCS_OK) {
+            break;
+        }
+
+        ucs_queue_pull_non_empty(&iface->tx.ctl_queue);
+        ucs_free(ctl_op);
+    }
+}
+
 ucs_status_t
 uct_srd_iface_get_address(uct_iface_h tl_iface, uct_iface_addr_t *iface_addr)
 {
@@ -28,9 +190,40 @@ uct_srd_iface_get_address(uct_iface_h tl_iface, uct_iface_addr_t *iface_addr)
     return UCS_OK;
 }
 
+static void uct_srd_iface_handle_failure(uct_ib_iface_t *ib_iface, void *arg,
+                                         ucs_status_t ep_status)
+{
+    uct_srd_iface_t *iface     = ucs_derived_of(&ib_iface->super, uct_srd_iface_t);
+    struct ibv_wc *wc          = arg;
+    uct_srd_send_op_t *send_op = (uct_srd_send_op_t*)wc->wr_id;
+    uct_srd_ep_t *ep           = send_op->ep;
+    ucs_log_level_t log_lvl    = UCS_LOG_LEVEL_FATAL;
+    ucs_status_t status;
+
+    if (ep == NULL) {
+        ucs_debug("iface=%p wc=%p wr_id=%p failure in tx cqe without ep",
+                  iface, wc, send_op);
+        return;
+    }
+
+    /* Keep pending but purge all outstanding */
+    uct_srd_ep_send_op_purge(ep);
+
+    if (ep->flags & UCT_SRD_EP_FLAG_ERR_HANDLER_INVOKED) {
+        return;
+    }
+
+    ep->flags |= UCT_SRD_EP_FLAG_ERR_HANDLER_INVOKED;
+    status  = uct_iface_handle_ep_err(&iface->super.super.super,
+                                      &ep->super.super, ep_status);
+    log_lvl = uct_base_iface_failure_log_level(&ib_iface->super, status,
+                                               ep_status);
+    UCT_IB_IFACE_VERBS_COMPLETION_LOG(log_lvl, "send", &iface->super, 0, wc);
+}
+
 static uct_ib_iface_ops_t uct_srd_iface_ops = {
     .super = {
-        .iface_estimate_perf   = uct_base_iface_estimate_perf,
+        .iface_estimate_perf   = uct_ib_iface_estimate_perf,
         .iface_vfs_refresh     = (uct_iface_vfs_refresh_func_t)
             ucs_empty_function,
         .ep_query              = (uct_ep_query_func_t)
@@ -40,12 +233,12 @@ static uct_ib_iface_ops_t uct_srd_iface_ops = {
         .ep_connect_to_ep_v2   = (uct_ep_connect_to_ep_v2_func_t)
             ucs_empty_function_return_unsupported,
         .iface_is_reachable_v2 = uct_ib_iface_is_reachable_v2,
+        .ep_is_connected       = uct_srd_ep_is_connected
     },
     .create_cq      = uct_ib_verbs_create_cq,
     .destroy_cq     = uct_ib_verbs_destroy_cq,
     .event_cq       = (uct_ib_iface_event_cq_func_t)ucs_empty_function,
-    .handle_failure = (uct_ib_iface_handle_failure_func_t)
-            ucs_empty_function_do_assert
+    .handle_failure = uct_srd_iface_handle_failure
 };
 
 static ucs_status_t
@@ -53,7 +246,7 @@ uct_srd_iface_create_qp(uct_srd_iface_t *iface,
                         const uct_srd_iface_config_t *config,
                         struct efadv_device_attr *efa_attr)
 {
-#ifdef HAVE_DECL_EFADV_DEVICE_ATTR_CAPS_RDMA_READ
+#ifdef HAVE_EFA_RMA
     struct efadv_qp_init_attr efa_qp_init_attr = {0};
     struct ibv_qp_init_attr_ex qp_init_attr    = {0};
 #else
@@ -80,13 +273,17 @@ uct_srd_iface_create_qp(uct_srd_iface_t *iface,
     qp_init_attr.cap.max_inline_data = ucs_min(config->super.tx.min_inline,
                                                md->super.dev.max_inline_data);
 
-#ifdef HAVE_DECL_EFADV_DEVICE_ATTR_CAPS_RDMA_READ
+#ifdef HAVE_EFA_RMA
     qp_init_attr.pd             = pd;
     qp_init_attr.comp_mask      = IBV_QP_INIT_ATTR_PD |
                                   IBV_QP_INIT_ATTR_SEND_OPS_FLAGS;
     qp_init_attr.send_ops_flags = IBV_QP_EX_WITH_SEND;
     if (uct_ib_efadv_has_rdma_read(efa_attr)) {
         qp_init_attr.send_ops_flags |= IBV_QP_EX_WITH_RDMA_READ;
+    }
+
+    if (uct_ib_efadv_has_rdma_write(efa_attr)) {
+        qp_init_attr.send_ops_flags |= IBV_QP_EX_WITH_RDMA_WRITE;
     }
 
     efa_qp_init_attr.driver_qp_type = EFADV_QP_DRIVER_TYPE_SRD;
@@ -111,11 +308,19 @@ uct_srd_iface_create_qp(uct_srd_iface_t *iface,
         return UCS_ERR_IO_ERROR;
     }
 
+    if (uct_ib_efadv_has_rdma_read(efa_attr) ||
+        uct_ib_efadv_has_rdma_write(efa_attr)) {
+        iface->config.max_rdma_zcopy = efa_attr->max_rdma_size;
+        iface->config.max_rdma_bcopy = ucs_min(iface->super.config.seg_size,
+                                               efa_attr->max_rdma_size);
+    } else {
+        iface->config.max_rdma_zcopy = 0;
+        iface->config.max_rdma_bcopy = 0;
+    }
+
     iface->config.max_send_sge  = qp_init_attr.cap.max_send_sge;
-    iface->config.max_recv_sge  = qp_init_attr.cap.max_recv_sge;
-    iface->config.max_get_zcopy = efa_attr->max_rdma_size;
-    iface->config.max_get_bcopy = ucs_min(iface->super.config.seg_size,
-                                          efa_attr->max_rdma_size);
+    /* efa provider in rmda-core uses max_sge_rd for RDMA_READ and RDMA_WRITE */
+    iface->config.max_rdma_sge  = IBV_DEV_ATTR(&md->super.dev, max_sge_rd);
     iface->config.max_inline    = qp_init_attr.cap.max_inline_data;
     iface->config.tx_qp_len     = qp_init_attr.cap.max_send_wr;
     iface->tx.available         = qp_init_attr.cap.max_send_wr;
@@ -179,8 +384,22 @@ static void uct_srd_iface_send_op_purge(uct_srd_iface_t *iface)
 
     while (!ucs_list_is_empty(&iface->tx.outstanding_list)) {
         send_op = ucs_list_extract_head(&iface->tx.outstanding_list,
-                                        uct_srd_send_op_t, list);
+                                        uct_srd_send_op_t,
+                                        list);
+
+        ucs_assertv(send_op->ep == NULL, "send_op_ep=%p", send_op->ep);
         ucs_mpool_put(send_op);
+    }
+}
+
+static void uct_srd_iface_ctl_op_purge(uct_srd_iface_t *iface)
+{
+    uct_srd_ctl_op_t *ctl_op;
+
+    while (!ucs_queue_is_empty(&iface->tx.ctl_queue)) {
+        ctl_op = ucs_queue_pull_elem_non_empty(&iface->tx.ctl_queue,
+                                               uct_srd_ctl_op_t, queue);
+        ucs_free(ctl_op);
     }
 }
 
@@ -273,6 +492,7 @@ static UCS_CLASS_INIT_FUNC(uct_srd_iface_t, uct_md_h md, uct_worker_h worker,
     }
 
     ucs_arbiter_init(&self->tx.pending_q);
+    ucs_queue_head_init(&self->tx.ctl_queue);
     ucs_list_head_init(&self->tx.outstanding_list);
 
     status = uct_srd_iface_create_qp(self, config, &efa_attr);
@@ -287,7 +507,6 @@ static UCS_CLASS_INIT_FUNC(uct_srd_iface_t, uct_md_h md, uct_worker_h worker,
     mp_params.alignment       = UCT_SRD_SEND_OP_ALIGN;
     mp_params.elems_per_chunk = 128;
     mp_params.ops             = &uct_srd_send_op_mpool_ops;
-    mp_params.max_elems       = self->tx.available;
 
     status = ucs_mpool_init(&mp_params, &self->tx.send_op_mp);
     if (status != UCS_OK) {
@@ -308,6 +527,7 @@ static UCS_CLASS_INIT_FUNC(uct_srd_iface_t, uct_md_h md, uct_worker_h worker,
     }
 
     kh_init_inplace(uct_srd_rx_ctx_hash, &self->rx.ctx_hash);
+    kh_init_inplace(uct_srd_ep_hash, &self->ep_hash);
 
     status = uct_ib_iface_recv_mpool_init(&self->super, &config->super, params,
                                           "srd_recv_desc", &self->rx.mp);
@@ -318,6 +538,9 @@ static UCS_CLASS_INIT_FUNC(uct_srd_iface_t, uct_md_h md, uct_worker_h worker,
     uct_ud_send_wr_init(&self->tx.wr_inl, self->tx.sge, 1);
     uct_ud_send_wr_init(&self->tx.wr_desc, self->tx.sge, 0);
 
+    self->tx.in_pending   = 0;
+    self->tx.outstanding  = 0;
+    self->flags           = 0;
     self->super.config.sl = uct_ib_iface_config_select_sl(&config->super);
 
     while (self->rx.available >= self->super.config.rx_max_batch) {
@@ -358,11 +581,13 @@ static UCS_CLASS_CLEANUP_FUNC(uct_srd_iface_t)
     uct_base_iface_progress_disable(&self->super.super.super,
                                     UCT_PROGRESS_SEND | UCT_PROGRESS_RECV);
     uct_srd_iface_send_op_purge(self);
+    uct_srd_iface_ctl_op_purge(self);
     ucs_arbiter_cleanup(&self->tx.pending_q);
     uct_ib_destroy_qp(self->qp);
     kh_foreach_value(&self->rx.ctx_hash, ctx, {
         uct_iface_rx_ctx_cleanup(ctx);
     });
+    kh_destroy_inplace(uct_srd_ep_hash, &self->ep_hash);
     kh_destroy_inplace(uct_srd_rx_ctx_hash, &self->rx.ctx_hash);
     ucs_mpool_cleanup(&self->rx.mp, 0);
     ucs_mpool_cleanup(&self->tx.send_op_mp, 1);
@@ -396,6 +621,7 @@ uct_srd_iface_poll_tx(uct_srd_iface_t *iface)
     struct ibv_wc wc[num_wcs];
     ucs_status_t status;
     int i;
+    uct_srd_send_op_t *send_op;
 
     status = uct_ib_poll_cq(iface->super.cq[UCT_IB_DIR_TX], &num_wcs, wc);
     if (status != UCS_OK) {
@@ -403,12 +629,20 @@ uct_srd_iface_poll_tx(uct_srd_iface_t *iface)
     }
 
     for (i = 0; i < num_wcs; i++) {
+        send_op = (uct_srd_send_op_t*)wc[i].wr_id;
+
         if (ucs_unlikely(wc[i].status != IBV_WC_SUCCESS)) {
-            UCT_IB_IFACE_VERBS_COMPLETION_ERR("send", &iface->super, i, wc);
-            continue;
+            status = uct_ib_wc_to_ucs_status(wc[i].status);
+            iface->super.ops->handle_failure(&iface->super, &wc[i], status);
+
+            /*
+             * Purging send_op in failure handler could have released the
+             * EP fencing.
+             */
+            uct_srd_iface_pending_ctl_progress(iface);
         }
 
-        uct_srd_ep_send_op_completion((uct_srd_send_op_t*)wc[i].wr_id);
+        uct_srd_ep_send_op_completion(send_op);
     }
 
     iface->tx.available += num_wcs;
@@ -517,6 +751,72 @@ err:
     ucs_mpool_put(desc);
 }
 
+static void uct_srd_iface_process_ctl(uct_srd_iface_t *iface,
+                                      uct_srd_ctl_hdr_t *ctl, unsigned length,
+                                      uct_srd_recv_desc_t *desc)
+{
+    uct_ib_address_t *ib_addr = (uct_ib_address_t*)(ctl + 1);
+    uint32_t qpn              = uct_ib_unpack_uint24(ctl->qpn);
+    struct ibv_ah_attr ah_attr;
+    enum ibv_mtu path_mtu;
+    ucs_status_t status;
+    struct ibv_ah *ah;
+    uct_srd_ep_t *ep;
+
+    if (ctl->id == UCT_SRD_CTL_ID_RESP) {
+        ucs_assertv(sizeof(*ctl) == length,
+                    "resp size expected=%zu received=%u", sizeof(*ctl), length);
+
+        ep = uct_srd_iface_get_ep(iface, ctl->ep_uuid);
+        if (ep != NULL) {
+            ep->flags |= UCT_SRD_EP_FLAG_AH_ADDED;
+            ucs_arbiter_group_schedule(&iface->tx.pending_q,
+                                       &ep->pending_group);
+            uct_srd_iface_pending_ctl_progress(iface);
+        } else {
+            ucs_debug("iface=%p id=%u ep_uuid=%"PRIx64" qpn=%u received ctl "
+                      "response without a local endpoint",
+                      iface, ctl->id, ctl->ep_uuid, qpn);
+        }
+
+        goto out;
+    }
+
+    ucs_assertv(ctl->id == UCT_SRD_CTL_ID_REQ, "iface=%p got %s (id=%u)", iface,
+                uct_srd_ctl_id_to_string(ctl->id), ctl->id);
+    ucs_assertv((sizeof(*ctl) + iface->super.addr_size) == length,
+                "req size mismatch expected=%zu received=%u",
+                sizeof(*ctl) + iface->super.addr_size, length);
+
+    /* TODO do we need an actual non-zero path index ? */
+    status = uct_ib_iface_fill_ah_attr_from_addr(&iface->super, ib_addr, 0,
+                                                 &ah_attr, &path_mtu);
+    if (status != UCS_OK) {
+        goto out;
+    }
+
+    status = uct_ib_iface_create_ah(&iface->super, &ah_attr, "SRD AH", &ah);
+    if (status != UCS_OK) {
+        ucs_error("iface=%p id=%u ep_uuid=%"PRIx64" qpn=%u failed to create ah"
+                  "status=%s",
+                  iface, ctl->id, ctl->ep_uuid, qpn, ucs_status_string(status));
+        goto out;
+    }
+
+    status = uct_srd_iface_ctl_add(iface, UCT_SRD_CTL_ID_RESP, ctl->ep_uuid, ah,
+                                   qpn);
+    if (status != UCS_OK) {
+        ucs_error("iface=%p id=%u ep_uuid=%"PRIx64" qpn=%u failed to add "
+                  "ctl response status=%s",
+                  iface, ctl->id, ctl->ep_uuid, qpn, ucs_status_string(status));
+        goto out;
+    }
+
+out:
+    ucs_mpool_put(desc);
+    return;
+}
+
 static UCS_F_ALWAYS_INLINE unsigned
 uct_srd_iface_poll_rx(uct_srd_iface_t *iface)
 {
@@ -535,8 +835,13 @@ uct_srd_iface_poll_rx(uct_srd_iface_t *iface)
     UCT_IB_IFACE_VERBS_FOREACH_RXWQE(&iface->super, i, packet, wc, num_wcs) {
         uct_ib_log_recv_completion(&iface->super, &wc[i], packet,
                                    wc[i].byte_len, uct_srd_dump_packet);
-        uct_srd_iface_process_rx(iface, (uct_srd_hdr_t*)packet, wc[i].byte_len,
-                                 (uct_srd_recv_desc_t*)wc[i].wr_id);
+        if (ucs_likely(*(uint8_t*)packet < UCT_AM_ID_MAX)) {
+            uct_srd_iface_process_rx(iface, packet, wc[i].byte_len,
+                                     (uct_srd_recv_desc_t*)wc[i].wr_id);
+        } else {
+            uct_srd_iface_process_ctl(iface, packet, wc[i].byte_len,
+                                      (uct_srd_recv_desc_t*)wc[i].wr_id);
+        }
     }
 
     iface->rx.available += num_wcs;
@@ -559,6 +864,8 @@ static unsigned uct_srd_iface_progress(uct_iface_h tl_iface)
         count = uct_srd_iface_poll_tx(iface);
     }
 
+    /* Poll RX might schedule CTL_RESP, or TX might have resources */
+    uct_srd_iface_pending_ctl_progress(iface);
     return count;
 }
 
@@ -566,32 +873,43 @@ ucs_status_t
 uct_srd_iface_query(uct_iface_h tl_iface, uct_iface_attr_t *iface_attr)
 {
     uct_srd_iface_t *iface = ucs_derived_of(tl_iface, uct_srd_iface_t);
+    uct_ib_md_t *ib_md     = uct_ib_iface_md(&iface->super);
     size_t active_mtu      = uct_ib_mtu_value(
             uct_ib_iface_port_attr(&iface->super)->active_mtu);
     ucs_status_t status;
+    struct efadv_device_attr efa_attr;
+    int ret;
 
     /* Common parameters */
     status = uct_ib_iface_query(&iface->super,
                                 UCT_IB_DETH_LEN + sizeof(uct_srd_hdr_t),
                                 iface_attr);
+    if (status != UCS_OK) {
+        return status;
+    }
 
     /* General attributes */
     iface_attr->cap.am.align_mtu        = active_mtu;
     iface_attr->cap.get.align_mtu       = active_mtu;
+    iface_attr->cap.put.align_mtu       = active_mtu;
     iface_attr->cap.am.opt_zcopy_align  = UCS_SYS_PCI_MAX_PAYLOAD;
     iface_attr->cap.get.opt_zcopy_align = UCS_SYS_PCI_MAX_PAYLOAD;
+    iface_attr->cap.put.opt_zcopy_align = UCS_SYS_PCI_MAX_PAYLOAD;
 
-    iface_attr->cap.flags = UCT_IFACE_FLAG_AM_BCOPY | UCT_IFACE_FLAG_AM_ZCOPY |
-                            UCT_IFACE_FLAG_CONNECT_TO_IFACE |
-                            UCT_IFACE_FLAG_PENDING | UCT_IFACE_FLAG_EP_CHECK |
-                            UCT_IFACE_FLAG_CB_SYNC |
-                            UCT_IFACE_FLAG_ERRHANDLE_PEER_FAILURE;
+    iface_attr->cap.flags      = UCT_IFACE_FLAG_CONNECT_TO_IFACE |
+                                 UCT_IFACE_FLAG_PENDING |
+                                 UCT_IFACE_FLAG_CB_SYNC |
+                                 UCT_IFACE_FLAG_ERRHANDLE_PEER_FAILURE |
+                                 UCT_IFACE_FLAG_INTER_NODE |
+                                 UCT_IFACE_FLAG_AM_BCOPY |
+                                 UCT_IFACE_FLAG_AM_SHORT |
+                                 UCT_IFACE_FLAG_AM_ZCOPY;
     iface_attr->iface_addr_len = sizeof(uct_srd_iface_addr_t);
     iface_attr->ep_addr_len    = 0;
     iface_attr->max_conn_priv  = 0;
 
-    iface_attr->latency.c += 30e-9;
-    iface_attr->overhead   = 105e-9;
+    iface_attr->latency.c += 20e-9;
+    iface_attr->overhead   = 75e-9;
 
     /* AM */
     iface_attr->cap.am.max_bcopy = iface->super.config.seg_size -
@@ -605,14 +923,73 @@ uct_srd_iface_query(uct_iface_h tl_iface, uct_iface_attr_t *iface_attr)
     iface_attr->cap.am.max_short = uct_ib_iface_hdr_size(
             iface->config.max_inline, sizeof(uct_srd_hdr_t));
 
-    /* GET */
-    iface_attr->cap.get.max_bcopy = iface->config.max_get_bcopy;
-    iface_attr->cap.get.max_zcopy = iface->config.max_get_zcopy;
-    iface_attr->cap.get.max_iov   = iface->config.max_send_sge;
-    iface_attr->cap.get.min_zcopy =
-            iface->super.config.max_inl_cqe[UCT_IB_DIR_TX] + 1;
+    ret = efadv_query_device(ib_md->pd->context, &efa_attr, sizeof(efa_attr));
+    if (ret != 0) {
+        return UCS_ERR_IO_ERROR;
+    }
+
+    if (uct_ib_efadv_has_rdma_read(&efa_attr)) {
+        iface_attr->cap.get.max_bcopy = iface->config.max_rdma_bcopy;
+        iface_attr->cap.get.max_zcopy = iface->config.max_rdma_zcopy;
+        iface_attr->cap.get.max_iov   = iface->config.max_rdma_sge;
+        iface_attr->cap.get.min_zcopy = 0;
+
+        iface_attr->cap.flags |= UCT_IFACE_FLAG_GET_BCOPY |
+                                 UCT_IFACE_FLAG_GET_ZCOPY;
+    }
+
+    if (uct_ib_efadv_has_rdma_write(&efa_attr)) {
+        iface_attr->cap.put.max_bcopy = iface->config.max_rdma_bcopy;
+        iface_attr->cap.put.max_zcopy = iface->config.max_rdma_zcopy;
+        iface_attr->cap.put.max_iov   = iface->config.max_rdma_sge;
+        iface_attr->cap.put.min_zcopy = 0;
+
+        iface_attr->cap.flags |= UCT_IFACE_FLAG_PUT_BCOPY |
+                                 UCT_IFACE_FLAG_PUT_ZCOPY;
+    }
 
     return status;
+}
+
+static ucs_status_t uct_srd_iface_flush(uct_iface_h tl_iface, unsigned flags,
+                                        uct_completion_t *comp)
+{
+    uct_srd_iface_t *iface = ucs_derived_of(tl_iface, uct_srd_iface_t);
+    uct_srd_ep_t *ep;
+    unsigned count;
+    ucs_status_t status;
+
+    if (comp != NULL) {
+        return UCS_ERR_UNSUPPORTED;
+    }
+
+    count = 0;
+    kh_foreach_value(&iface->ep_hash, ep, {
+        status = uct_ep_flush(&ep->super.super, 0, NULL);
+        if ((status == UCS_ERR_NO_RESOURCE) || (status == UCS_INPROGRESS)) {
+            count++;
+        } else if (status != UCS_OK) {
+            return status;
+        }
+    });
+
+    if (count != 0) {
+        UCT_TL_IFACE_STAT_FLUSH_WAIT(&iface->super.super);
+        return UCS_INPROGRESS;
+    }
+
+    UCT_TL_IFACE_STAT_FLUSH(&iface->super.super);
+    return UCS_OK;
+}
+
+static ucs_status_t uct_srd_iface_fence(uct_iface_h tl_iface, unsigned flags)
+{
+    uct_srd_iface_t *iface = ucs_derived_of(tl_iface, uct_srd_iface_t);
+
+    iface->flags |= UCT_SRD_IFACE_FENCE;
+
+    UCT_TL_IFACE_STAT_FENCE(&iface->super.super);
+    return UCS_OK;
 }
 
 static ucs_status_t
@@ -640,9 +1017,9 @@ uct_srd_query_tl_devices(uct_md_h md, uct_tl_device_resource_t **tl_devices_p,
 }
 
 static uct_iface_ops_t uct_srd_iface_tl_ops = {
-    .ep_flush                 = (uct_ep_flush_func_t)
-        ucs_empty_function_return_unsupported,
-    .ep_fence                 = (uct_ep_fence_func_t)
+    .ep_flush                 = uct_srd_ep_flush,
+    .ep_fence                 = uct_srd_ep_fence,
+    .ep_check                 = (uct_ep_check_func_t)
         ucs_empty_function_return_unsupported,
     .ep_create                = UCS_CLASS_NEW_FUNC_NAME(uct_srd_ep_t),
     .ep_get_address           = (uct_ep_get_address_func_t)
@@ -652,17 +1029,16 @@ static uct_iface_ops_t uct_srd_iface_tl_ops = {
     .ep_destroy               = UCS_CLASS_DELETE_FUNC_NAME(uct_srd_ep_t),
     .ep_am_bcopy              = uct_srd_ep_am_bcopy,
     .ep_am_zcopy              = uct_srd_ep_am_zcopy,
+    .ep_put_zcopy             = uct_srd_ep_put_zcopy,
+    .ep_put_bcopy             = uct_srd_ep_put_bcopy,
     .ep_get_zcopy             = uct_srd_ep_get_zcopy,
     .ep_get_bcopy             = uct_srd_ep_get_bcopy,
     .ep_am_short              = uct_srd_ep_am_short,
     .ep_am_short_iov          = uct_srd_ep_am_short_iov,
-    .ep_pending_add           = (uct_ep_pending_add_func_t)
-        ucs_empty_function_return_unsupported,
-    .ep_pending_purge         = (uct_ep_pending_purge_func_t)
-        ucs_empty_function_return_unsupported,
-    .iface_flush              = uct_base_iface_flush,
-    .iface_fence              = (uct_iface_fence_func_t)
-        ucs_empty_function_return_unsupported,
+    .ep_pending_add           = uct_srd_ep_pending_add,
+    .ep_pending_purge         = uct_srd_ep_pending_purge,
+    .iface_flush              = uct_srd_iface_flush,
+    .iface_fence              = uct_srd_iface_fence,
     .iface_progress_enable    = uct_base_iface_progress_enable,
     .iface_progress_disable   = uct_base_iface_progress_disable,
     .iface_progress           = uct_srd_iface_progress,

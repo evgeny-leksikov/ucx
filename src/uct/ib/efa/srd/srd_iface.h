@@ -40,14 +40,24 @@ typedef struct uct_srd_rx_ctx {
 
 KHASH_MAP_INIT_INT64(uct_srd_rx_ctx_hash, uct_srd_rx_ctx_t*);
 
+KHASH_MAP_INIT_INT64(uct_srd_ep_hash, uct_srd_ep_t*);
+
+
+enum {
+    UCT_SRD_IFACE_FENCE = UCS_BIT(0) /* Fence requested when set */
+};
+
 
 typedef struct uct_srd_iface {
     uct_ib_iface_t                   super;
     struct ibv_qp                    *qp;
-#ifdef HAVE_DECL_EFADV_DEVICE_ATTR_CAPS_RDMA_READ
+#ifdef HAVE_EFA_RMA
     struct ibv_qp_ex                 *qp_ex;
 #endif
     UCS_STATS_NODE_DECLARE(stats);
+    khash_t(uct_srd_ep_hash)         ep_hash;
+
+    unsigned                         flags;
 
     struct {
         /* Pre-posted receive buffers */
@@ -60,6 +70,9 @@ typedef struct uct_srd_iface {
 
     struct {
         int32_t                      available;
+        int                          in_pending;
+        /* Number of endpoint operations in progress including flush */
+        int                          outstanding;
         ucs_arbiter_t                pending_q;
         struct ibv_sge               sge[UCT_IB_MAX_IOV];
         struct ibv_send_wr           wr_inl;
@@ -67,6 +80,11 @@ typedef struct uct_srd_iface {
         ucs_mpool_t                  send_op_mp;
         ucs_mpool_t                  send_desc_mp;
         uct_srd_am_short_hdr_t       am_inl_hdr;
+
+        /* Pending control messages */
+        ucs_queue_head_t             ctl_queue;
+
+        /* Send operations without an endpoint, order does not matter here */
         ucs_list_link_t              outstanding_list;
     } tx;
 
@@ -74,9 +92,9 @@ typedef struct uct_srd_iface {
         unsigned                     tx_qp_len;
         unsigned                     max_inline;
         size_t                       max_send_sge;
-        size_t                       max_recv_sge;
-        size_t                       max_get_zcopy;
-        size_t                       max_get_bcopy;
+        size_t                       max_rdma_sge;
+        size_t                       max_rdma_zcopy;
+        size_t                       max_rdma_bcopy;
     } config;
 } uct_srd_iface_t;
 
@@ -108,45 +126,62 @@ typedef struct uct_srd_iface {
                          (_iface)->super.config.seg_size, \
                          "am_zcopy_header_and_data");
 
-#define UCT_SRD_CHECK_AM_BCOPY(_iface, _id, _data_len) \
-    UCT_CHECK_AM_ID(_id); \
-    UCT_SRD_CHECK_AM_LEN(_iface, _id, _data_len, \
-                         (_iface)->super.config.seg_size, "am_bcopy");
+
+void uct_srd_iface_post_send(uct_srd_iface_t *iface, struct ibv_ah *ah,
+                             uint32_t dest_qpn, struct ibv_send_wr *wr,
+                             unsigned send_flags);
+
+ucs_status_t uct_srd_iface_add_ep(uct_srd_iface_t *iface, uct_srd_ep_t *ep);
+
+void uct_srd_iface_remove_ep(uct_srd_iface_t *iface, uct_srd_ep_t *ep);
+
+ucs_status_t uct_srd_iface_ctl_add(uct_srd_iface_t *iface, uct_srd_ctl_id_t id,
+                                   uint64_t ep_uuid, struct ibv_ah *ah,
+                                   uint32_t dest_qpn);
+
+void uct_srd_iface_ctl_op_progress(uct_srd_iface_t *iface);
 
 
 static UCS_F_ALWAYS_INLINE int
 uct_srd_iface_can_tx(const uct_srd_iface_t *iface)
 {
-    return iface->tx.available > 0;
+    return (iface->tx.available > 0) &&
+           (!(iface->flags & UCT_SRD_IFACE_FENCE) ||
+            (iface->tx.outstanding == 0));
 }
 
-
-static UCS_F_ALWAYS_INLINE uct_srd_send_op_t *
-uct_srd_iface_get_send_op(uct_srd_iface_t *iface)
-{
-    if (ucs_unlikely(!uct_srd_iface_can_tx(iface))) {
-        return NULL;
-    }
-
-    return ucs_mpool_get(&iface->tx.send_op_mp);
-}
 
 static UCS_F_ALWAYS_INLINE uct_srd_send_desc_t *
 uct_srd_iface_get_send_desc(uct_srd_iface_t *iface)
 {
     uct_srd_send_desc_t *send_desc;
 
-    if (ucs_unlikely(!uct_srd_iface_can_tx(iface))) {
-        return NULL;
-    }
-
     send_desc = ucs_mpool_get(&iface->tx.send_desc_mp);
-    if (ucs_unlikely(send_desc == NULL)) {
-        return NULL;
+    if (ucs_likely(send_desc != NULL)) {
+        VALGRIND_MAKE_MEM_DEFINED(&send_desc->lkey, sizeof(send_desc->lkey));
     }
 
-    VALGRIND_MAKE_MEM_DEFINED(&send_desc->lkey, sizeof(send_desc->lkey));
     return send_desc;
+}
+
+
+static UCS_F_ALWAYS_INLINE void
+uct_srd_iface_check_pending(uct_srd_iface_t *iface, ucs_arbiter_group_t *group)
+{
+    ucs_assertv(iface->tx.in_pending || ucs_arbiter_group_is_empty(group),
+                "iface=%p in_pending=%d arb_group_empty=%d tx_avail=%d "
+                "outstanding=%d",
+                iface, iface->tx.in_pending, ucs_arbiter_group_is_empty(group),
+                iface->tx.available, iface->tx.outstanding);
+}
+
+
+static UCS_F_ALWAYS_INLINE void
+uct_srd_iface_pending_ctl_progress(uct_srd_iface_t *iface)
+{
+    /* Give priority to control message */
+    uct_srd_iface_ctl_op_progress(iface);
+    ucs_arbiter_dispatch(&iface->tx.pending_q, 1, uct_srd_ep_do_pending, NULL);
 }
 
 END_C_DECLS
