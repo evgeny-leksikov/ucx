@@ -254,4 +254,6 @@ ucs_status_t uct_rc_mlx5_iface_arm(uct_iface_h tl_iface, unsigned events);
 void uct_rc_mlx5_iface_handle_failure(uct_ib_iface_t *ib_iface, void *arg,
                                       ucs_status_t ep_status);
 
+ucs_status_t uct_rc_mlx5_base_ep_query(uct_ep_h tl_ep, uct_ep_attr_t *ep_attr);
+
 #endif

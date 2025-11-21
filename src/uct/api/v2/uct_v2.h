@@ -272,7 +272,11 @@ enum uct_ep_attr_field {
     /** Enables @ref uct_ep_attr::local_address */
     UCT_EP_ATTR_FIELD_LOCAL_SOCKADDR  = UCS_BIT(0),
     /** Enables @ref uct_ep_attr::remote_address */
-    UCT_EP_ATTR_FIELD_REMOTE_SOCKADDR = UCS_BIT(1)
+    UCT_EP_ATTR_FIELD_REMOTE_SOCKADDR = UCS_BIT(1),
+    /** Enables @ref uct_ep_attr::tx_psn */
+    UCT_EP_ATTR_FIELD_TX_PSN          = UCS_BIT(2),
+    /** Enables @ref uct_ep_attr::rx_psn */
+    UCT_EP_ATTR_FIELD_RX_PSN          = UCS_BIT(3)
 };
 
 
@@ -413,6 +417,18 @@ struct uct_ep_attr {
      * Remote sockaddr the endpoint is connected to.
      */
     struct sockaddr_storage remote_address;
+
+    /**
+     * Current transmit Packet Sequence Number (PSN) of the endpoint.
+     * Set if @ref UCT_EP_ATTR_FIELD_TX_PSN is present in @ref field_mask.
+     */
+    uint32_t                tx_psn;
+
+    /**
+     * Current receive Packet Sequence Number (PSN) expected by the endpoint.
+     * Set if @ref UCT_EP_ATTR_FIELD_RX_PSN is present in @ref field_mask.
+     */
+    uint32_t                rx_psn;
 };
 
 

@@ -24,6 +24,12 @@
 #include "rc_mlx5.inl"
 
 
+ucs_status_t uct_rc_mlx5_base_ep_query(uct_ep_h tl_ep, uct_ep_attr_t *ep_attr)
+{
+    return UCS_ERR_NOT_IMPLEMENTED;
+}
+
+
 static ucs_status_t UCS_F_ALWAYS_INLINE uct_rc_mlx5_base_ep_put_short_inline(
         uct_ep_h tl_ep, const void *buffer, unsigned length,
         uint64_t remote_addr, uct_rkey_t rkey)

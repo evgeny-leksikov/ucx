@@ -317,6 +317,26 @@ UCS_TEST_SKIP_COND_P(test_uct_peer_failure, two_pairs_send,
 {
     set_am_handlers();
 
+    /* Query and log initial PSNs for both endpoints */
+    {
+        uct_ep_attr_t attr0 = {};
+        uct_ep_attr_t attr1 = {};
+        ucs_status_t  status;
+
+        attr0.field_mask = UCT_EP_ATTR_FIELD_TX_PSN | UCT_EP_ATTR_FIELD_RX_PSN;
+        attr1.field_mask = UCT_EP_ATTR_FIELD_TX_PSN | UCT_EP_ATTR_FIELD_RX_PSN;
+
+        status = uct_ep_query(m_sender->ep(0), &attr0);
+        ASSERT_UCS_OK(status);
+        status = uct_ep_query(m_sender->ep(1), &attr1);
+        ASSERT_UCS_OK(status);
+
+        UCS_TEST_MESSAGE << "Initial EP0 PSN tx=" << attr0.tx_psn
+                         << " rx=" << attr0.rx_psn;
+        UCS_TEST_MESSAGE << "Initial EP1 PSN tx=" << attr1.tx_psn
+                         << " rx=" << attr1.rx_psn;
+    }
+
     /* queue sends on 1st pair */
     for (size_t i = 0; i < m_tx_window; ++i) {
         send_am(0);
@@ -329,6 +349,26 @@ UCS_TEST_SKIP_COND_P(test_uct_peer_failure, two_pairs_send,
         send_am(0);
         send_recv_am(1);
         flush();
+    }
+
+    /* Query and log PSNs after error handling and progress */
+    {
+        uct_ep_attr_t attr0 = {};
+        uct_ep_attr_t attr1 = {};
+        ucs_status_t  status;
+
+        attr0.field_mask = UCT_EP_ATTR_FIELD_TX_PSN | UCT_EP_ATTR_FIELD_RX_PSN;
+        attr1.field_mask = UCT_EP_ATTR_FIELD_TX_PSN | UCT_EP_ATTR_FIELD_RX_PSN;
+
+        status = uct_ep_query(m_sender->ep(0), &attr0);
+        ASSERT_UCS_OK(status);
+        status = uct_ep_query(m_sender->ep(1), &attr1);
+        ASSERT_UCS_OK(status);
+
+        UCS_TEST_MESSAGE << "Post-flush EP0 PSN tx=" << attr0.tx_psn
+                         << " rx=" << attr0.rx_psn;
+        UCS_TEST_MESSAGE << "Post-flush EP1 PSN tx=" << attr1.tx_psn
+                         << " rx=" << attr1.rx_psn;
     }
 
     /* test flushing one operations */
