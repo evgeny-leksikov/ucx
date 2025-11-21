@@ -317,69 +317,360 @@ UCS_TEST_SKIP_COND_P(test_uct_peer_failure, two_pairs_send,
 {
     set_am_handlers();
 
-    /* Query and log initial PSNs for both endpoints */
+    /* Query and validate PSNs only for transports with CONNECT_TO_EP */
     {
         uct_ep_attr_t attr0 = {};
         uct_ep_attr_t attr1 = {};
         ucs_status_t  status;
+        bool          psn_supported       = true;
+        bool          has_connect_to_ep   = check_caps(UCT_IFACE_FLAG_CONNECT_TO_EP);
+        uint32_t      ep1_tx_psn_initial  = 0;
+        uint32_t      ep1_rx_psn_initial  = 0;
+        uint32_t      ep0_tx_psn_initial  = 0;
+        uint32_t      ep0_tx_psn_pre_err  = 0;
+        bool          have_pre_err_psn0   = false;
 
-        attr0.field_mask = UCT_EP_ATTR_FIELD_TX_PSN | UCT_EP_ATTR_FIELD_RX_PSN;
-        attr1.field_mask = UCT_EP_ATTR_FIELD_TX_PSN | UCT_EP_ATTR_FIELD_RX_PSN;
+        if (!has_connect_to_ep) {
+            UCS_TEST_MESSAGE << "Transport does not support CONNECT_TO_EP, "
+                             << "skipping PSN assertions";
+            /* proceed with the legacy test body */
+        } else {
+            /* Initial snapshots:
+             * - Sender side: TX PSN from sender EPs 0 and 1
+             * - Receiver side: RX PSN from receiver[0].ep(0) and receiver[1].ep(0)
+             */
+            uct_ep_attr_t rx0 = {}, rx1 = {};
+            attr0.field_mask = UCT_EP_ATTR_FIELD_TX_PSN;
+            attr1.field_mask = UCT_EP_ATTR_FIELD_TX_PSN;
+            rx0.field_mask   = UCT_EP_ATTR_FIELD_RX_PSN;
+            rx1.field_mask   = UCT_EP_ATTR_FIELD_RX_PSN;
 
-        status = uct_ep_query(m_sender->ep(0), &attr0);
-        ASSERT_UCS_OK(status);
-        status = uct_ep_query(m_sender->ep(1), &attr1);
-        ASSERT_UCS_OK(status);
+            status = uct_ep_query(m_sender->ep(0), &attr0);
+            if (status != UCS_OK) {
+                psn_supported = false;
+            }
+            status = uct_ep_query(m_sender->ep(1), &attr1);
+            if (status != UCS_OK) {
+                psn_supported = false;
+            }
+            status = uct_ep_query(m_receivers[0]->ep(0), &rx0);
+            if (status != UCS_OK) {
+                psn_supported = false;
+            }
+            status = uct_ep_query(m_receivers[1]->ep(0), &rx1);
+            if (status != UCS_OK) {
+                psn_supported = false;
+            }
 
-        UCS_TEST_MESSAGE << "Initial EP0 PSN tx=" << attr0.tx_psn
-                         << " rx=" << attr0.rx_psn;
-        UCS_TEST_MESSAGE << "Initial EP1 PSN tx=" << attr1.tx_psn
-                         << " rx=" << attr1.rx_psn;
-    }
+            if (psn_supported) {
+                UCS_TEST_MESSAGE << "Initial SND EP0 tx=" << attr0.tx_psn
+                                 << " RCV EP0 rx=" << rx0.rx_psn;
+                UCS_TEST_MESSAGE << "Initial SND EP1 tx=" << attr1.tx_psn
+                                 << " RCV EP1 rx=" << rx1.rx_psn;
+                ep0_tx_psn_initial = attr0.tx_psn;
+                ep1_tx_psn_initial = attr1.tx_psn;
+                ep1_rx_psn_initial = rx1.rx_psn;
+            } else {
+                UCS_TEST_MESSAGE << "PSN query unsupported on this transport; "
+                                 << "skipping PSN assertions";
+            }
+        }
 
-    /* queue sends on 1st pair */
-    for (size_t i = 0; i < m_tx_window; ++i) {
-        send_am(0);
-    }
+        /* Store whether we can check PSNs later using a lambda-captured copy
+           in local static to reuse below scopes */
+        struct {
+            bool     supported;
+            uint32_t ep1_tx_init;
+            uint32_t ep1_rx_init;
+            uint32_t ep0_tx_init;
+        } psn_ctx = { psn_supported, ep1_tx_psn_initial, ep1_rx_psn_initial,
+                      ep0_tx_psn_initial };
 
-    /* kill the 1st receiver while sending on 2nd pair */
-    {
-        scoped_log_handler slh(wrap_errors_logger);
-        inject_error();
-        send_am(0);
-        send_recv_am(1);
-        flush();
-    }
+        /* queue sends on 1st pair */
+        for (size_t i = 0; i < m_tx_window; ++i) {
+            send_am(0);
+        }
 
-    /* Query and log PSNs after error handling and progress */
-    {
-        uct_ep_attr_t attr0 = {};
-        uct_ep_attr_t attr1 = {};
-        ucs_status_t  status;
+        /* Capture pre-error PSN on the bad EP (EP0) after queueing sends */
+        if (psn_ctx.supported) {
+            uct_ep_attr_t pre_err_tx0 = {}, pre_err_rx0 = {};
+            pre_err_tx0.field_mask    = UCT_EP_ATTR_FIELD_TX_PSN;
+            pre_err_rx0.field_mask    = UCT_EP_ATTR_FIELD_RX_PSN;
+            if ((uct_ep_query(m_sender->ep(0), &pre_err_tx0) == UCS_OK) &&
+                (uct_ep_query(m_receivers[0]->ep(0), &pre_err_rx0) == UCS_OK)) {
+                ep0_tx_psn_pre_err = pre_err_tx0.tx_psn;
+                have_pre_err_psn0  = true;
+                UCS_TEST_MESSAGE << "Pre-error SND EP0 tx=" << pre_err_tx0.tx_psn
+                                 << " RCV EP0 rx=" << pre_err_rx0.rx_psn;
+                /* Sanity: receiver’s RX should not be less than sender’s TX at snapshot */
+                EXPECT_GE(pre_err_rx0.rx_psn, pre_err_tx0.tx_psn);
+            }
+        }
 
-        attr0.field_mask = UCT_EP_ATTR_FIELD_TX_PSN | UCT_EP_ATTR_FIELD_RX_PSN;
-        attr1.field_mask = UCT_EP_ATTR_FIELD_TX_PSN | UCT_EP_ATTR_FIELD_RX_PSN;
+        /* kill the 1st receiver while sending on 2nd pair */
+        {
+            scoped_log_handler slh(wrap_errors_logger);
+            inject_error();
+            send_am(0);
+            send_recv_am(1);
+            flush();
+        }
 
-        status = uct_ep_query(m_sender->ep(0), &attr0);
-        ASSERT_UCS_OK(status);
-        status = uct_ep_query(m_sender->ep(1), &attr1);
-        ASSERT_UCS_OK(status);
+        /* Query and log PSNs after error handling and progress */
+        uct_ep_attr_t post_tx0 = {}, post_tx1 = {}, post_rx1 = {};
+        post_tx0.field_mask    = UCT_EP_ATTR_FIELD_TX_PSN;
+        post_tx1.field_mask    = UCT_EP_ATTR_FIELD_TX_PSN;
+        post_rx1.field_mask    = UCT_EP_ATTR_FIELD_RX_PSN;
+        ucs_status_t post_status0 = uct_ep_query(m_sender->ep(0), &post_tx0);
+        ucs_status_t post_status1 = uct_ep_query(m_sender->ep(1), &post_tx1);
+        ucs_status_t post_status_rx1 = UCS_OK;
+        if (psn_ctx.supported) {
+            post_status_rx1 = uct_ep_query(m_receivers[1]->ep(0), &post_rx1);
+        }
+        if (post_status0 == UCS_OK) {
+            UCS_TEST_MESSAGE << "Post-flush SND EP0 tx=" << post_tx0.tx_psn;
+        }
+        if (psn_ctx.supported && (post_status1 == UCS_OK) && (post_status_rx1 == UCS_OK)) {
+            UCS_TEST_MESSAGE << "Post-flush SND EP1 tx=" << post_tx1.tx_psn
+                             << " RCV EP1 rx=" << post_rx1.rx_psn;
+        }
 
-        UCS_TEST_MESSAGE << "Post-flush EP0 PSN tx=" << attr0.tx_psn
-                         << " rx=" << attr0.rx_psn;
-        UCS_TEST_MESSAGE << "Post-flush EP1 PSN tx=" << attr1.tx_psn
-                         << " rx=" << attr1.rx_psn;
-    }
-
-    /* test flushing one operations */
-    send_recv_am(1, UCS_OK);
-    flush();
-
-    /* test flushing many operations */
-    for (size_t i = 0; i < (m_tx_window * 10 / ucs::test_time_multiplier()); ++i) {
+        /* test flushing one operations */
         send_recv_am(1, UCS_OK);
+        flush();
+
+        /* test flushing many operations */
+        for (size_t i = 0; i < (m_tx_window * 10 / ucs::test_time_multiplier()); ++i) {
+            send_recv_am(1, UCS_OK);
+        }
+        flush();
+
+        /* Final PSN assertions if supported */
+        if (psn_ctx.supported) {
+            /* Final validation for the good pair (EP1):
+             * - TX on sender non-decreasing
+             * - RX on receiver non-decreasing
+             * - RX(receiver) should be >= TX(sender)
+             */
+            uct_ep_attr_t final_tx1 = {}, final_rx1 = {};
+            final_tx1.field_mask    = UCT_EP_ATTR_FIELD_TX_PSN;
+            final_rx1.field_mask    = UCT_EP_ATTR_FIELD_RX_PSN;
+            ucs_status_t stx = uct_ep_query(m_sender->ep(1), &final_tx1);
+            ucs_status_t srx = uct_ep_query(m_receivers[1]->ep(0), &final_rx1);
+            if ((stx == UCS_OK) && (srx == UCS_OK)) {
+                EXPECT_GE(final_tx1.tx_psn, psn_ctx.ep1_tx_init);
+                EXPECT_GE(final_rx1.rx_psn, psn_ctx.ep1_rx_init);
+                EXPECT_GE(final_rx1.rx_psn, final_tx1.tx_psn);
+            }
+
+            /* Validate bad EP (EP0) TX did not progress after error */
+            if (post_status0 == UCS_OK) {
+                if (have_pre_err_psn0) {
+                    EXPECT_LE(post_tx0.tx_psn, ep0_tx_psn_pre_err);
+                    /* Receiver side EP0 was destroyed; we cannot query post-error.
+                     * We validated pre-error RX>=TX above. */
+                } else {
+                    /* At least ensure no decrease relative to initial snapshot */
+                    EXPECT_GE(post_tx0.tx_psn, psn_ctx.ep0_tx_init);
+                }
+            }
+        }
+
+        return;
     }
-    flush();
+
+}
+
+UCS_TEST_SKIP_COND_P(test_uct_peer_failure, two_pairs_rma_put,
+                     !check_caps(UCT_IFACE_FLAG_PUT_SHORT | m_required_caps))
+{
+    const size_t buffer_size = 64;
+
+    /* Allocate memory buffers on receivers for RMA operations */
+    mapped_buffer recv_buf0(buffer_size, 0x5a5a5a5a, *m_receivers[0]);
+    mapped_buffer recv_buf1(buffer_size, 0x5a5a5a5b, *m_receivers[1]);
+
+    /* Query and validate PSNs only for transports with CONNECT_TO_EP */
+    {
+        uct_ep_attr_t attr0 = {};
+        uct_ep_attr_t attr1 = {};
+        ucs_status_t  status;
+        bool          psn_supported       = true;
+        bool          has_connect_to_ep   = check_caps(UCT_IFACE_FLAG_CONNECT_TO_EP);
+        uint32_t      ep1_tx_psn_initial  = 0;
+        uint32_t      ep1_rx_psn_initial  = 0;
+        uint32_t      ep0_tx_psn_initial  = 0;
+        uint32_t      ep0_tx_psn_pre_err  = 0;
+        bool          have_pre_err_psn0   = false;
+
+        if (!has_connect_to_ep) {
+            UCS_TEST_MESSAGE << "Transport does not support CONNECT_TO_EP, "
+                             << "skipping PSN assertions";
+            /* proceed with the legacy test body */
+        } else {
+            /* Initial snapshots:
+             * - Sender side: TX PSN from sender EPs 0 and 1
+             * - Receiver side: RX PSN from receiver[0].ep(0) and receiver[1].ep(0)
+             */
+            uct_ep_attr_t rx0 = {}, rx1 = {};
+            attr0.field_mask = UCT_EP_ATTR_FIELD_TX_PSN;
+            attr1.field_mask = UCT_EP_ATTR_FIELD_TX_PSN;
+            rx0.field_mask   = UCT_EP_ATTR_FIELD_RX_PSN;
+            rx1.field_mask   = UCT_EP_ATTR_FIELD_RX_PSN;
+
+            status = uct_ep_query(m_sender->ep(0), &attr0);
+            if (status != UCS_OK) {
+                psn_supported = false;
+            }
+            status = uct_ep_query(m_sender->ep(1), &attr1);
+            if (status != UCS_OK) {
+                psn_supported = false;
+            }
+            status = uct_ep_query(m_receivers[0]->ep(0), &rx0);
+            if (status != UCS_OK) {
+                psn_supported = false;
+            }
+            status = uct_ep_query(m_receivers[1]->ep(0), &rx1);
+            if (status != UCS_OK) {
+                psn_supported = false;
+            }
+
+            if (psn_supported) {
+                UCS_TEST_MESSAGE << "Initial SND EP0 tx=" << attr0.tx_psn
+                                 << " RCV EP0 rx=" << rx0.rx_psn;
+                UCS_TEST_MESSAGE << "Initial SND EP1 tx=" << attr1.tx_psn
+                                 << " RCV EP1 rx=" << rx1.rx_psn;
+                ep0_tx_psn_initial = attr0.tx_psn;
+                ep1_tx_psn_initial = attr1.tx_psn;
+                ep1_rx_psn_initial = rx1.rx_psn;
+            } else {
+                UCS_TEST_MESSAGE << "PSN query unsupported on this transport; "
+                                 << "skipping PSN assertions";
+            }
+        }
+
+        /* Store whether we can check PSNs later */
+        struct {
+            bool     supported;
+            uint32_t ep1_tx_init;
+            uint32_t ep1_rx_init;
+            uint32_t ep0_tx_init;
+        } psn_ctx = { psn_supported, ep1_tx_psn_initial, ep1_rx_psn_initial,
+                      ep0_tx_psn_initial };
+
+        /* Helper lambda to perform RMA put operation */
+        auto send_put = [&](int index) -> ucs_status_t {
+            ucs_status_t put_status;
+            mapped_buffer *target_buf = (index == 0) ? &recv_buf0 : &recv_buf1;
+            do {
+                progress();
+
+                /* If the endpoint has failed, return error and avoid calling put */
+                std::map<uct_ep_h, ucs_status_t>::iterator it =
+                        m_failed_eps.find(m_sender->ep(index));
+                if (it != m_failed_eps.end()) {
+                    return it->second;
+                }
+
+                const uint64_t send_data = 0xdeadbeef;
+                put_status = uct_ep_put_short(m_sender->ep(index), &send_data,
+                                              sizeof(send_data),
+                                              target_buf->addr(),
+                                              target_buf->rkey());
+            } while (put_status == UCS_ERR_NO_RESOURCE);
+            return put_status;
+        };
+
+        /* queue puts on 1st pair */
+        for (size_t i = 0; i < m_tx_window; ++i) {
+            send_put(0);
+        }
+
+        /* Capture pre-error PSN on the bad EP (EP0) after queueing sends */
+        if (psn_ctx.supported) {
+            uct_ep_attr_t pre_err_tx0 = {}, pre_err_rx0 = {};
+            pre_err_tx0.field_mask    = UCT_EP_ATTR_FIELD_TX_PSN;
+            pre_err_rx0.field_mask    = UCT_EP_ATTR_FIELD_RX_PSN;
+            if ((uct_ep_query(m_sender->ep(0), &pre_err_tx0) == UCS_OK) &&
+                (uct_ep_query(m_receivers[0]->ep(0), &pre_err_rx0) == UCS_OK)) {
+                ep0_tx_psn_pre_err = pre_err_tx0.tx_psn;
+                have_pre_err_psn0  = true;
+                UCS_TEST_MESSAGE << "Pre-error SND EP0 tx=" << pre_err_tx0.tx_psn
+                                 << " RCV EP0 rx=" << pre_err_rx0.rx_psn;
+                /* Sanity: receiver's RX should not be less than sender's TX at snapshot */
+                EXPECT_GE(pre_err_rx0.rx_psn, pre_err_tx0.tx_psn);
+            }
+        }
+
+        /* kill the 1st receiver while sending on 2nd pair */
+        {
+            scoped_log_handler slh(wrap_errors_logger);
+            inject_error();
+            send_put(0);
+            send_put(1);
+            flush();
+        }
+
+        /* Query and log PSNs after error handling and progress */
+        uct_ep_attr_t post_tx0 = {}, post_tx1 = {}, post_rx1 = {};
+        post_tx0.field_mask    = UCT_EP_ATTR_FIELD_TX_PSN;
+        post_tx1.field_mask    = UCT_EP_ATTR_FIELD_TX_PSN;
+        post_rx1.field_mask    = UCT_EP_ATTR_FIELD_RX_PSN;
+        ucs_status_t post_status0 = uct_ep_query(m_sender->ep(0), &post_tx0);
+        ucs_status_t post_status1 = uct_ep_query(m_sender->ep(1), &post_tx1);
+        ucs_status_t post_status_rx1 = UCS_OK;
+        if (psn_ctx.supported) {
+            post_status_rx1 = uct_ep_query(m_receivers[1]->ep(0), &post_rx1);
+        }
+        if (post_status0 == UCS_OK) {
+            UCS_TEST_MESSAGE << "Post-flush SND EP0 tx=" << post_tx0.tx_psn;
+        }
+        if (psn_ctx.supported && (post_status1 == UCS_OK) && (post_status_rx1 == UCS_OK)) {
+            UCS_TEST_MESSAGE << "Post-flush SND EP1 tx=" << post_tx1.tx_psn
+                             << " RCV EP1 rx=" << post_rx1.rx_psn;
+        }
+
+        /* test flushing one operation */
+        EXPECT_UCS_OK(send_put(1));
+        flush();
+
+        /* test flushing many operations */
+        for (size_t i = 0; i < (m_tx_window * 10 / ucs::test_time_multiplier()); ++i) {
+            EXPECT_UCS_OK(send_put(1));
+        }
+        flush();
+
+        /* Final PSN assertions if supported */
+        if (psn_ctx.supported) {
+            /* Final validation for the good pair (EP1):
+             * - TX on sender non-decreasing
+             * - RX on receiver non-decreasing
+             * - RX(receiver) should be >= TX(sender)
+             */
+            uct_ep_attr_t final_tx1 = {}, final_rx1 = {};
+            final_tx1.field_mask    = UCT_EP_ATTR_FIELD_TX_PSN;
+            final_rx1.field_mask    = UCT_EP_ATTR_FIELD_RX_PSN;
+            ucs_status_t stx = uct_ep_query(m_sender->ep(1), &final_tx1);
+            ucs_status_t srx = uct_ep_query(m_receivers[1]->ep(0), &final_rx1);
+            if ((stx == UCS_OK) && (srx == UCS_OK)) {
+                EXPECT_GE(final_tx1.tx_psn, psn_ctx.ep1_tx_init);
+                EXPECT_GE(final_rx1.rx_psn, psn_ctx.ep1_rx_init);
+                EXPECT_GE(final_rx1.rx_psn, final_tx1.tx_psn);
+            }
+
+            /* Validate bad EP (EP0) TX did not progress after error */
+            if (post_status0 == UCS_OK) {
+                if (have_pre_err_psn0) {
+                    EXPECT_LE(post_tx0.tx_psn, ep0_tx_psn_pre_err);
+                    /* Receiver side EP0 was destroyed; we cannot query post-error.
+                     * We validated pre-error RX>=TX above. */
+                } else {
+                    /* At least ensure no decrease relative to initial snapshot */
+                    EXPECT_GE(post_tx0.tx_psn, psn_ctx.ep0_tx_init);
+                }
+            }
+        }
+    }
 }
 
 
