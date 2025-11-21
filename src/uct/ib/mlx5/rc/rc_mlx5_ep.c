@@ -26,7 +26,55 @@
 
 ucs_status_t uct_rc_mlx5_base_ep_query(uct_ep_h tl_ep, uct_ep_attr_t *ep_attr)
 {
-    return UCS_ERR_NOT_IMPLEMENTED;
+    UCT_RC_MLX5_BASE_EP_DECL(tl_ep, iface, ep);
+    uct_ib_mlx5_qp_t *qp = &ep->tx.wq.super;
+    ucs_status_t status  = UCS_OK;
+    char in[UCT_IB_MLX5DV_ST_SZ_BYTES(query_qp_in)]   = {};
+    char out[UCT_IB_MLX5DV_ST_SZ_BYTES(query_qp_out)] = {};
+    void *qpc;
+    int ret;
+
+    (void)iface;
+
+    if (!(ep_attr->field_mask &
+          (UCT_EP_ATTR_FIELD_TX_PSN | UCT_EP_ATTR_FIELD_RX_PSN))) {
+        return UCS_OK;
+    }
+
+    UCT_IB_MLX5DV_SET(query_qp_in, in, opcode, UCT_IB_MLX5_CMD_OP_QUERY_QP);
+    UCT_IB_MLX5DV_SET(query_qp_in, in, qpn, qp->qp_num);
+
+    switch (qp->type) {
+    case UCT_IB_MLX5_OBJ_TYPE_VERBS:
+        ret = mlx5dv_devx_qp_query(qp->verbs.qp, in, sizeof(in), out,
+                                   sizeof(out));
+        if (ret) {
+            return UCS_ERR_IO_ERROR;
+        }
+        break;
+    case UCT_IB_MLX5_OBJ_TYPE_DEVX:
+        ret = mlx5dv_devx_obj_query(qp->devx.obj, in, sizeof(in), out,
+                                    sizeof(out));
+        if (ret) {
+            return UCS_ERR_IO_ERROR;
+        }
+        break;
+    case UCT_IB_MLX5_OBJ_TYPE_NULL:
+    case UCT_IB_MLX5_OBJ_TYPE_LAST:
+        return UCS_ERR_UNSUPPORTED;
+    }
+
+    qpc = UCT_IB_MLX5DV_ADDR_OF(query_qp_out, out, qpc);
+
+    if (ep_attr->field_mask & UCT_EP_ATTR_FIELD_TX_PSN) {
+        ep_attr->tx_psn = UCT_IB_MLX5DV_GET(qpc, qpc, last_acked_psn);
+    }
+
+    if (ep_attr->field_mask & UCT_EP_ATTR_FIELD_RX_PSN) {
+        ep_attr->rx_psn = UCT_IB_MLX5DV_GET(qpc, qpc, next_rcv_psn) - 1;
+    }
+
+    return status;
 }
 
 
