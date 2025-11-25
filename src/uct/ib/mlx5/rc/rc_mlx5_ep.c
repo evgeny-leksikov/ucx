@@ -36,9 +36,9 @@ ucs_status_t uct_rc_mlx5_base_ep_query(uct_ep_h tl_ep, uct_ep_attr_t *ep_attr)
 
     (void)iface;
 
-    if (!(ep_attr->field_mask &
-          (UCT_EP_ATTR_FIELD_TX_PSN | UCT_EP_ATTR_FIELD_RX_PSN))) {
-        return UCS_OK;
+    if (ep_attr->field_mask & (UCT_EP_ATTR_FIELD_LOCAL_SOCKADDR |
+                               UCT_EP_ATTR_FIELD_REMOTE_SOCKADDR)) {
+        return UCS_ERR_UNSUPPORTED;
     }
 
     UCT_IB_MLX5DV_SET(query_qp_in, in, opcode, UCT_IB_MLX5_CMD_OP_QUERY_QP);
