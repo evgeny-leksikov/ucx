@@ -137,11 +137,6 @@ static inline ucp_lane_index_t ucp_ep_num_lanes(ucp_ep_h ep)
     return ucp_ep_config(ep)->key.num_lanes;
 }
 
-static inline int ucp_ep_is_alive(ucp_ep_h ep)
-{
-    return !(ep->ext->failed_lanes == UCS_MASK(ucp_ep_num_lanes(ep)));
-}
-
 static inline int ucp_ep_is_lane_p2p(ucp_ep_h ep, ucp_lane_index_t lane)
 {
     return !!(ucp_ep_config(ep)->p2p_lanes & UCS_BIT(lane));
@@ -292,6 +287,12 @@ static UCS_F_ALWAYS_INLINE int
 ucp_ep_config_err_mode_eq(ucp_ep_h ep, ucp_err_handling_mode_t err_mode)
 {
     return ucp_ep_config(ep)->key.err_mode == err_mode;
+}
+
+static inline int ucp_ep_is_alive(ucp_ep_h ep)
+{
+    return (ep->ext->failed_lanes != UCS_MASK(ucp_ep_num_lanes(ep))) ||
+           (ucp_ep_has_cm_lane(ep) && (ep->ext->failed_lanes & UCS_BIT(ucp_ep_get_cm_lane(ep))));
 }
 
 #endif
