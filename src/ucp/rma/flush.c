@@ -384,6 +384,7 @@ static void ucp_ep_flush_request_rewind(ucp_request_t *req)
 {
     ucp_lane_map_t lanes = ucp_ep_get_alive_lanes(req->send.ep);
 
+    req->send.flush.uct_flags       = req->send.flush.uct_flags_orig;
     req->status                     = UCS_OK;
     req->send.flush.sw_started      = 0;
     req->send.flush.sw_done         = 0;
@@ -509,6 +510,7 @@ ucs_status_ptr_t ucp_ep_flush_internal(ucp_ep_h ep, unsigned req_flags,
     req->flags                      = req_flags;
     req->send.flushed_cb            = flushed_cb;
     req->send.flush.uct_flags       = uct_flags;
+    req->send.flush.uct_flags_orig  = uct_flags;
     req->send.uct.func              = ucp_ep_flush_progress_pending;
     req->send.state.uct_comp.func   = ucp_ep_flush_completion;
 

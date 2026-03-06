@@ -1559,7 +1559,8 @@ ucp_request_t* ucp_ep_cm_close_request_get(ucp_ep_h ep, const ucp_request_param_
     request->status  = UCS_OK;
     request->flags   = 0;
     request->send.ep = ep;
-    request->send.flush.uct_flags = UCT_FLUSH_FLAG_LOCAL;
+    request->send.flush.uct_flags      =
+    request->send.flush.uct_flags_orig = UCT_FLUSH_FLAG_LOCAL;
 
     ucp_request_set_send_callback_param(param, request, send);
 

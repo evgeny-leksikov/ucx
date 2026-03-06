@@ -347,6 +347,7 @@ struct ucp_request {
 
                 struct {
                     unsigned           uct_flags; /* Flags to pass to @ref uct_ep_flush */
+                    unsigned           uct_flags_orig; /* Original flags to pass to @ref uct_ep_flush, used for rewind */
                     uint32_t           cmpl_sn;   /* Sequence number of the remote completion
                                                      this request is waiting for */
                     uint8_t            sw_started;

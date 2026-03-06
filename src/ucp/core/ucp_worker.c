@@ -137,7 +137,6 @@ static ucs_mpool_ops_t ucp_rkey_mpool_ops = {
 KHASH_IMPL(ucp_worker_discard_uct_ep_hash, uct_ep_h, ucp_request_t*, 1,
            ucp_worker_discard_uct_ep_hash_key, kh_int64_hash_equal);
 
-
 static ucs_status_t ucp_worker_wakeup_ctl_fd(ucp_worker_h worker,
                                              ucp_worker_event_fd_op_t op,
                                              int event_fd)
@@ -2871,8 +2870,10 @@ static unsigned ucp_worker_discard_uct_ep_destroy_progress(void *arg)
     iter = kh_get(ucp_worker_discard_uct_ep_hash, &worker->discard_uct_ep_hash,
                   uct_ep);
     if (iter == kh_end(&worker->discard_uct_ep_hash)) {
-        ucs_fatal("no %p UCT EP in the %p worker hash of discarded UCT EPs",
-                  uct_ep, worker);
+        /* Already handled (e.g. by ucp_ep_cleanup_lanes via
+         * ucp_worker_discard_uct_ep_force_complete); just consume the callback */
+        UCS_ASYNC_UNBLOCK(&worker->async);
+        return 1;
     }
 
     ucp_ep_unprogress_uct_ep(ucp_ep, uct_ep, rsc_index);
