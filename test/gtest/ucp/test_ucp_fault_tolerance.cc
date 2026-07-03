@@ -674,7 +674,7 @@ UCS_TEST_P(test_ucp_fault_tolerance, target_failure, "MAX_EAGER_LANES=8",
     do_test(FAILURE_SIDE_TARGET);
 }
 
-/* Verify that recovering an RC p2p lane goes through the UD-aux uct_ep_check
+/* Verify that recovering an RC p2p lane goes through the aux uct_ep_check
  * probe gate: against a live peer the lane must recover, and at least one
  * recovery probe must have been armed in the process. */
 UCS_TEST_P(test_ucp_fault_tolerance, probe_gated_recovery, "MAX_EAGER_LANES=8",
@@ -694,5 +694,5 @@ UCS_TEST_P(test_ucp_fault_tolerance, probe_gated_recovery, "MAX_EAGER_LANES=8",
     do_test(FAILURE_SIDE_TARGET);
 
     EXPECT_GT(ucp_wireup_ep_recovery_probe_count, probes_before)
-            << "RC p2p lane recovery completed without arming a UD probe";
+            << "RC p2p lane recovery completed without arming an aux probe";
 }

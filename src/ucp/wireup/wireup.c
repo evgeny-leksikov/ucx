@@ -981,7 +981,7 @@ void ucp_wireup_process_ack(ucp_worker_h worker, ucp_ep_h ep,
     ucp_wireup_remote_connected(ep);
 }
 
-/* Add to @a tl_bitmap the auxiliary (UD) resources living on the same physical
+/* Add to @a tl_bitmap the auxiliary resources living on the same physical
  * device as each provided p2p lane, so the packed LANES_ADDR addresses also
  * carry the local aux iface address. The receiver uses it to bind a fresh aux
  * ep and probe the route (uct_ep_check) before connecting the recovered RC
@@ -1005,6 +1005,7 @@ ucp_wireup_augment_aux_tls(ucp_ep_h ep, ucp_lane_map_t lane_map,
             if (UCS_STATIC_BITMAP_GET(*tl_bitmap, aux_rsc)) {
                 continue;
             }
+
             if (context->tl_rscs[aux_rsc].dev_index !=
                 context->tl_rscs[lane_rsc].dev_index) {
                 continue;

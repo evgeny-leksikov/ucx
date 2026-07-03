@@ -396,7 +396,7 @@ static ucs_status_t ucp_wireup_ep_check(uct_ep_h uct_ep, unsigned flags,
 }
 
 
-/* Number of recovery probes armed (uct_ep_check on a UD aux ep). Test hook
+/* Number of recovery probes armed (uct_ep_check on an aux ep). Test hook
  * for verifying that lane recovery goes through the probe gate. */
 uint64_t ucp_wireup_ep_recovery_probe_count = 0;
 
@@ -425,7 +425,7 @@ ucp_wireup_ep_arm_recovery_probe(ucp_wireup_ep_t *wireup_ep, uct_ep_h aux_ep,
     ucs_assert(wireup_ep->aux_ep == NULL);
     ucs_assert(!wireup_ep->recovery_probe_in_flight);
 
-    /* Take ownership of the aux UD ep for the probe lifetime; the wireup_ep
+    /* Take ownership of the aux ep for the probe lifetime; the wireup_ep
      * destructor (or the success path) tears it down. */
     wireup_ep->aux_ep        = aux_ep;
     wireup_ep->aux_rsc_index = aux_rsc_index;

@@ -1959,7 +1959,7 @@ ucp_ep_recovery_rebuild_iface_lane(
     return UCS_OK;
 }
 
-/* Locate the peer auxiliary (UD) iface address that lives on the same peer-side
+/* Locate the peer auxiliary iface address that lives on the same peer-side
  * device as the failed RC lane (inside remote_address). Match: find the peer RC
  * address entry for this lane, then pick another entry on the same sys_dev that
  * carries an iface_addr (the aux). Returns NULL if none. */
@@ -1991,8 +1991,8 @@ ucp_ep_recovery_find_peer_aux(ucp_ep_h ep, ucp_lane_index_t lane,
     return NULL;
 }
 
-/* Create a local UD aux ep on the same device as the failed RC lane, targeting
- * the peer UD iface address @a peer_ae. Used to probe (uct_ep_check) the route
+/* Create a local aux ep on the same device as the failed RC lane, targeting
+ * the peer aux iface address @a peer_ae. Used to probe (uct_ep_check) the route
  * before reconnecting the RC lane. */
 static ucs_status_t
 ucp_ep_recovery_create_aux(ucp_ep_h ep, ucp_lane_index_t lane,
@@ -2020,7 +2020,7 @@ ucp_ep_recovery_create_aux(ucp_ep_h ep, ucp_lane_index_t lane,
 
         /* Same criterion as normal wireup aux-lane selection
          * (ucp_wireup_fill_aux_criteria): any transport usable as an
-         * auxiliary (UD). ep_check is assumed to be implemented there. */
+         * auxiliary. ep_check is assumed to be implemented there. */
         if (!(context->tl_rscs[aux_rsc].flags & UCP_TL_RSC_FLAG_AUX)) {
             continue;
         }
@@ -2034,7 +2034,7 @@ ucp_ep_recovery_create_aux(ucp_ep_h ep, ucp_lane_index_t lane,
         uct_ep_params.iface_addr = peer_ae->iface_addr;
         status = uct_ep_create(&uct_ep_params, aux_ep_p);
         if (status != UCS_OK) {
-            ucs_debug("ep %p lane %d: aux UD ep_create rsc=%d failed: %s", ep,
+            ucs_debug("ep %p lane %d: aux ep_create rsc=%d failed: %s", ep,
                       lane, aux_rsc, ucs_status_string(status));
             continue;
         }
@@ -2047,9 +2047,9 @@ ucp_ep_recovery_create_aux(ucp_ep_h ep, ucp_lane_index_t lane,
     return UCS_ERR_NO_RESOURCE;
 }
 
-/* Rebuild one p2p (CONNECT_TO_EP) lane with a UD route probe gate:
+/* Rebuild one p2p (CONNECT_TO_EP) lane with a route probe gate:
  * find peer ep_addr -> install empty wireup proxy -> ensure fresh iface-only
- * inner UCT EP -> arm a UD uct_ep_check probe and wait for it -> only on probe
+ * inner UCT EP -> arm an aux uct_ep_check probe and wait for it -> only on probe
  * success connect_to_ep_v2 against peer ep_addr, destroy the aux, mark ready.
  * Returns UCS_INPROGRESS while the probe is pending so the lane stays failed
  * and is retried on the next recovery round. */
@@ -2060,7 +2060,7 @@ ucp_ep_recovery_rebuild_p2p_lane(
 {
     const ucp_address_entry_t *address_entry;
     const ucp_address_entry_ep_addr_t *ep_entry;
-    const ucp_address_entry_t *peer_ud_ae;
+    const ucp_address_entry_t *peer_aux_ae;
     ucp_wireup_ep_t *wireup_ep;
     uct_ep_h aux_ep;
     ucp_rsc_index_t aux_rsc_index;
@@ -2103,7 +2103,7 @@ ucp_ep_recovery_rebuild_p2p_lane(
     wireup_ep = ucp_wireup_ep(ucp_ep_get_lane(ep, lane));
     ucs_assert(wireup_ep != NULL);
 
-    /* Probe gate: confirm the route via a UD aux uct_ep_check before
+    /* Probe gate: confirm the route via an aux uct_ep_check before
      * connecting the fresh RC QP, so we don't churn reconnecting RC over a
      * broken route. */
     if (!(wireup_ep->recovery_probe_done &&
@@ -2112,9 +2112,9 @@ ucp_ep_recovery_rebuild_p2p_lane(
             return UCS_INPROGRESS; /* wait for the probe completion */
         }
 
-        peer_ud_ae = ucp_ep_recovery_find_peer_aux(ep, lane, remote_address);
-        if (peer_ud_ae == NULL) {
-            ucs_debug("ep %p: no peer UD addr for p2p lane %d yet", ep, lane);
+        peer_aux_ae = ucp_ep_recovery_find_peer_aux(ep, lane, remote_address);
+        if (peer_aux_ae == NULL) {
+            ucs_debug("ep %p: no peer aux addr for p2p lane %d yet", ep, lane);
             return UCS_INPROGRESS;
         }
 
@@ -2125,7 +2125,7 @@ ucp_ep_recovery_rebuild_p2p_lane(
             wireup_ep->aux_rsc_index = UCP_NULL_RESOURCE;
         }
 
-        status = ucp_ep_recovery_create_aux(ep, lane, peer_ud_ae, &aux_ep,
+        status = ucp_ep_recovery_create_aux(ep, lane, peer_aux_ae, &aux_ep,
                                             &aux_rsc_index);
         if (status != UCS_OK) {
             ucs_debug("ep %p: cannot create aux for p2p lane %d: %s", ep, lane,
@@ -2133,7 +2133,6 @@ ucp_ep_recovery_rebuild_p2p_lane(
             return UCS_INPROGRESS;
         }
 
-        wireup_ep->flags |= UCP_WIREUP_EP_FLAG_FAILED_PROBING;
         status = ucp_wireup_ep_arm_recovery_probe(wireup_ep, aux_ep,
                                                   aux_rsc_index);
         if (status != UCS_OK) {
@@ -2164,7 +2163,6 @@ ucp_ep_recovery_rebuild_p2p_lane(
     ucp_wireup_update_flags(ep, UCS_BIT(lane),
                             UCP_WIREUP_EP_FLAG_READY |
                             UCP_WIREUP_EP_FLAG_REMOTE_CONNECTED);
-    wireup_ep->flags &= ~UCP_WIREUP_EP_FLAG_FAILED_PROBING;
     ucs_debug("ep %p: recovered p2p-lane[%d] via rsc[%d]", ep, lane,
               ucp_ep_get_rsc_index(ep, lane));
     return UCS_OK;
