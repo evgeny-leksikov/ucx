@@ -685,7 +685,7 @@ UCS_TEST_P(test_ucp_fault_tolerance, probe_gated_recovery, "MAX_EAGER_LANES=8",
     }
     /* The probe gate is only used to recover RC p2p lanes; other transports
      * rebuild without a probe. */
-    if (!has_any_transport({"rc_x", "rc_v"})) {
+    if (!has_any_transport({"rc_x", "rc_v", "rc_mlx5", "rc_verbs", "ib"})) {
         UCS_TEST_SKIP_R("probe gate applies to RC p2p lanes only");
     }
 
@@ -708,7 +708,7 @@ UCS_TEST_P(test_ucp_fault_tolerance, broken_route, "MAX_EAGER_LANES=8",
     if (get_variant_value() != TEST_OP_AM) {
         UCS_TEST_SKIP_R("pure AM variant only");
     }
-    if (!has_any_transport({"rc_x", "rc_v"})) {
+    if (!has_any_transport({"rc_x", "rc_v", "rc_mlx5", "rc_verbs", "ib"})) {
         UCS_TEST_SKIP_R("probe gate applies to RC p2p lanes only");
     }
 
@@ -753,7 +753,7 @@ UCS_TEST_P(test_ucp_fault_tolerance, teardown_with_outstanding_probe,
     if (get_variant_value() != TEST_OP_AM) {
         UCS_TEST_SKIP_R("pure AM variant only");
     }
-    if (!has_any_transport({"rc_x", "rc_v"})) {
+    if (!has_any_transport({"rc_x", "rc_v", "rc_mlx5", "rc_verbs", "ib"})) {
         UCS_TEST_SKIP_R("probe gate applies to RC p2p lanes only");
     }
 
