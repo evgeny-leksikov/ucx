@@ -985,8 +985,11 @@ void ucp_wireup_process_ack(ucp_worker_h worker, ucp_ep_h ep,
  * device as each provided p2p lane, so the packed LANES_ADDR addresses also
  * carry the local aux iface address. The receiver uses it to bind a fresh aux
  * ep and probe the route (uct_ep_check) before connecting the recovered RC
- * lane, without an extra wireup round-trip. Aux transports are identified the
- * same way as normal wireup aux-lane selection (UCP_TL_RSC_FLAG_AUX). */
+ * lane, without an extra wireup round-trip. Aux transports are selected by
+ * iface capability (same-device, CONNECT_TO_IFACE + EP_CHECK), the same way
+ * normal wireup picks the aux lane, rather than by the UCP_TL_RSC_FLAG_AUX
+ * config flag (which is only set for transports enabled aux-only in UCX_TLS,
+ * so it misses UD when UD is a primary transport, e.g. shm,ib). */
 static void
 ucp_wireup_augment_aux_tls(ucp_ep_h ep, ucp_lane_map_t lane_map,
                            ucp_tl_bitmap_t *tl_bitmap)
@@ -994,6 +997,7 @@ ucp_wireup_augment_aux_tls(ucp_ep_h ep, ucp_lane_map_t lane_map,
     ucp_context_h context = ep->worker->context;
     ucp_rsc_index_t lane_rsc, aux_rsc;
     ucp_lane_index_t lane;
+    uint64_t iface_flags;
 
     ucs_for_each_bit(lane, lane_map) {
         lane_rsc = ucp_ep_get_rsc_index(ep, lane);
@@ -1011,7 +1015,17 @@ ucp_wireup_augment_aux_tls(ucp_ep_h ep, ucp_lane_map_t lane_map,
                 continue;
             }
 
-            if (context->tl_rscs[aux_rsc].flags & UCP_TL_RSC_FLAG_AUX) {
+            /* Pack every same-device connectionless iface that supports
+             * uct_ep_check (CONNECT_TO_IFACE + EP_CHECK) as a probe aux,
+             * selected by iface capability rather than the UCP_TL_RSC_FLAG_AUX
+             * config flag. The receiver picks the entry it can reach
+             * (ucp_ep_recovery_find_peer_aux/create_aux), so packing several UD
+             * transports for the device is safe. */
+            iface_flags = ucp_worker_iface_get_attr(ep->worker,
+                                                    aux_rsc)->cap.flags;
+            if (ucs_test_all_flags(iface_flags,
+                                   UCT_IFACE_FLAG_CONNECT_TO_IFACE |
+                                   UCT_IFACE_FLAG_EP_CHECK)) {
                 UCS_STATIC_BITMAP_SET(tl_bitmap, aux_rsc);
             }
         }

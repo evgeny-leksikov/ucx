@@ -1960,18 +1960,63 @@ ucp_ep_recovery_rebuild_iface_lane(
     return UCS_OK;
 }
 
+/* Whether the local resource @a rsc can serve as a recovery probe aux for the
+ * RC lane on resource @a lane_rsc and reach the peer aux entry @a peer_ae:
+ * it must live on the same physical device as the failed RC lane, expose a
+ * connectionless iface (UCT_IFACE_FLAG_CONNECT_TO_IFACE) that implements the
+ * route probe (UCT_IFACE_FLAG_EP_CHECK), and be reachable to @a peer_ae. The
+ * selection is by actual UCT iface capability, mirroring how normal wireup
+ * picks the aux lane (ucp_wireup_fill_aux_criteria), instead of gating on the
+ * UCP_TL_RSC_FLAG_AUX config flag - which is only set for transports enabled
+ * aux-only in UCX_TLS and therefore misses UD when it is a primary transport
+ * (e.g. shm,ib). Reachability guarantees the chosen local aux transport is
+ * compatible with the peer aux entry (a device may expose several UD
+ * transports, e.g. ud_verbs and ud_mlx5, that are not mutually connectable). */
+static int
+ucp_ep_recovery_aux_rsc_reachable(ucp_worker_h worker, ucp_rsc_index_t lane_rsc,
+                                  ucp_rsc_index_t rsc,
+                                  const ucp_address_entry_t *peer_ae)
+{
+    ucp_context_h context = worker->context;
+    uint64_t iface_flags;
+
+    if (context->tl_rscs[rsc].dev_index !=
+        context->tl_rscs[lane_rsc].dev_index) {
+        return 0;
+    }
+
+    iface_flags = ucp_worker_iface_get_attr(worker, rsc)->cap.flags;
+    if (!ucs_test_all_flags(iface_flags, UCT_IFACE_FLAG_CONNECT_TO_IFACE |
+                                         UCT_IFACE_FLAG_EP_CHECK)) {
+        return 0;
+    }
+
+    return uct_iface_is_reachable(ucp_worker_iface(worker, rsc)->iface,
+                                  peer_ae->dev_addr, peer_ae->iface_addr);
+}
+
 /* Locate the peer auxiliary iface address that lives on the same peer-side
  * device as the failed RC lane (inside remote_address). Match: find the peer RC
  * address entry for this lane, then pick another entry on the same sys_dev that
- * carries an iface_addr (the aux). Returns NULL if none. */
+ * carries an iface_addr (the aux) and that is reachable from a local same-device
+ * aux iface, so create_aux can build a matching local ep. Returns NULL if
+ * none. */
 static const ucp_address_entry_t *
 ucp_ep_recovery_find_peer_aux(ucp_ep_h ep, ucp_lane_index_t lane,
                               const ucp_unpacked_address_t *remote_address)
 {
+    ucp_worker_h worker      = ep->worker;
+    ucp_context_h context    = worker->context;
+    ucp_rsc_index_t lane_rsc = ucp_ep_get_rsc_index(ep, lane);
     const ucp_address_entry_t *rc_entry;
     const ucp_address_entry_ep_addr_t *unused;
     const ucp_address_entry_t *ae;
+    ucp_rsc_index_t rsc;
     ucs_status_t status;
+
+    if (lane_rsc == UCP_NULL_RESOURCE) {
+        return NULL;
+    }
 
     status = ucp_wireup_find_remote_p2p_addr(ep, lane, remote_address,
                                              &rc_entry, &unused);
@@ -1986,7 +2031,14 @@ ucp_ep_recovery_find_peer_aux(ucp_ep_h ep, ucp_lane_index_t lane,
         if (ae->sys_dev != rc_entry->sys_dev) {
             continue;
         }
-        return ae;
+
+        /* Only pick a peer aux entry we can actually reach from a local
+         * same-device aux iface, so create_aux can build a matching local ep. */
+        for (rsc = 0; rsc < context->num_tls; ++rsc) {
+            if (ucp_ep_recovery_aux_rsc_reachable(worker, lane_rsc, rsc, ae)) {
+                return ae;
+            }
+        }
     }
 
     return NULL;
@@ -2014,15 +2066,14 @@ ucp_ep_recovery_create_aux(ucp_ep_h ep, ucp_lane_index_t lane,
     }
 
     for (aux_rsc = 0; aux_rsc < context->num_tls; ++aux_rsc) {
-        if (context->tl_rscs[aux_rsc].dev_index !=
-            context->tl_rscs[lane_rsc].dev_index) {
-            continue;
-        }
-
-        /* Same criterion as normal wireup aux-lane selection
-         * (ucp_wireup_fill_aux_criteria): any transport usable as an
-         * auxiliary. ep_check is assumed to be implemented there. */
-        if (!(context->tl_rscs[aux_rsc].flags & UCP_TL_RSC_FLAG_AUX)) {
+        /* Select the probe aux by iface capability + reachability to the peer
+         * aux entry rather than the UCP_TL_RSC_FLAG_AUX config flag: a
+         * same-device, connectionless (CONNECT_TO_IFACE) iface that supports
+         * uct_ep_check (EP_CHECK) and can reach peer_ae. Reachability ensures
+         * the local aux transport is compatible with the peer aux entry; on
+         * uct_ep_create failure we fall through to the next candidate. */
+        if (!ucp_ep_recovery_aux_rsc_reachable(worker, lane_rsc, aux_rsc,
+                                               peer_ae)) {
             continue;
         }
 
