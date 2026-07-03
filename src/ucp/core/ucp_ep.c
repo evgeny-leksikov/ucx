@@ -2052,6 +2052,11 @@ ucp_ep_recovery_create_aux(ucp_ep_h ep, ucp_lane_index_t lane,
  * verifying that lane recovery goes through the probe gate. */
 uint64_t ucp_ep_recovery_probe_count = 0;
 
+/* Test hook: when non-zero, recovery probes are completed synchronously as
+ * failed without issuing the real uct_ep_check(), simulating a persistently
+ * broken route so the probe gate keeps holding off RC reconnection. */
+int ucp_ep_recovery_probe_test_force_fail = 0;
+
 static UCS_F_ALWAYS_INLINE int
 ucp_ep_recovery_probe_in_flight(const ucp_ep_recovery_probe_t *probe)
 {
@@ -2116,7 +2121,11 @@ ucp_ep_recovery_arm_probe(ucp_ep_h ep, ucp_lane_index_t lane, uct_ep_h aux_ep)
     ++ucp_ep_recovery_probe_count;
 
     ucp_ep_refcount_add(ep, probe);
-    status = uct_ep_check(aux_ep, 0, &probe->comp);
+    if (ucs_unlikely(ucp_ep_recovery_probe_test_force_fail)) {
+        status = UCS_ERR_UNREACHABLE; /* test hook: simulate a broken route */
+    } else {
+        status = uct_ep_check(aux_ep, 0, &probe->comp);
+    }
     if (status != UCS_INPROGRESS) {
         /* Completed synchronously; the completion was not invoked, so record
          * the result and release the reference here. */

@@ -696,3 +696,116 @@ UCS_TEST_P(test_ucp_fault_tolerance, probe_gated_recovery, "MAX_EAGER_LANES=8",
     EXPECT_GT(ucp_ep_recovery_probe_count, probes_before)
             << "RC p2p lane recovery completed without arming an aux probe";
 }
+
+/* Broken route: fail the initiator's RC p2p lanes and keep the route down
+ * (every probe fails) so the probe gate never opens. The recovery loop must
+ * keep re-arming probes (probe count grows across rounds) while no RC lane is
+ * reconnected (a lane stays FAILED) - i.e. the gate holds RC reconnection off
+ * on a dead route instead of churning connect attempts over it. */
+UCS_TEST_P(test_ucp_fault_tolerance, broken_route, "MAX_EAGER_LANES=8",
+           "RECOVERY_RETRIES=1000")
+{
+    if (get_variant_value() != TEST_OP_AM) {
+        UCS_TEST_SKIP_R("pure AM variant only");
+    }
+    if (!has_any_transport({"rc_x", "rc_v"})) {
+        UCS_TEST_SKIP_R("probe gate applies to RC p2p lanes only");
+    }
+
+    /* Keep the route down: every probe fails, so the gate never opens. */
+    ucp_ep_recovery_probe_test_force_fail = 1;
+
+    /* Inject failures on the initiator's RC AM lanes (all but one live lane),
+     * which marks them FAILED and kicks off probe-gated recovery. */
+    test_am_with_injected_failure(FAILURE_SIDE_INITIATOR, TEST_OP_AM);
+
+    ucp_ep_h ep = sender().ep(0, INJECTED_EP_INDEX);
+    if (ucp_ep_get_failed_lanes(ep) == 0) {
+        ucp_ep_recovery_probe_test_force_fail = 0;
+        UCS_TEST_SKIP_R("no RC p2p lane was marked failed");
+    }
+
+    const uint64_t probes_before = ucp_ep_recovery_probe_count;
+    const ucs_time_t deadline    = ucs_get_time() + ucs_time_from_sec(3.0);
+    while (ucs_get_time() < deadline) {
+        short_progress_loop();
+    }
+
+    ucp_ep_recovery_probe_test_force_fail = 0;
+
+    /* Probes must have been re-armed across several recovery rounds ... */
+    EXPECT_GT(ucp_ep_recovery_probe_count, probes_before + 1)
+            << "probe was not re-armed across recovery rounds on a dead route";
+    /* ... while no RC lane was reconnected over the dead route (some lane stays
+     * FAILED because its probe never succeeded). */
+    EXPECT_NE(0, ucp_ep_get_failed_lanes(ep))
+            << "RC lane reconnected over a route whose probe never succeeded";
+}
+
+/* Teardown with an outstanding probe: drive recovery until an aux probe is in
+ * flight, then force-close the EP. The in-flight probe holds an EP 'probe'
+ * reference that defers ucp_ep_destroy_base until the aux discard drain fires
+ * the probe completion, so teardown must stay clean (no leak / UAF / assertion)
+ * - this is the former use-after-free path. */
+UCS_TEST_P(test_ucp_fault_tolerance, teardown_with_outstanding_probe,
+           "MAX_EAGER_LANES=8", "RECOVERY_RETRIES=1000")
+{
+    if (get_variant_value() != TEST_OP_AM) {
+        UCS_TEST_SKIP_R("pure AM variant only");
+    }
+    if (!has_any_transport({"rc_x", "rc_v"})) {
+        UCS_TEST_SKIP_R("probe gate applies to RC p2p lanes only");
+    }
+
+    /* Kick off probe-gated recovery on the initiator's RC AM lanes. */
+    test_am_with_injected_failure(FAILURE_SIDE_INITIATOR, TEST_OP_AM);
+
+    ucp_ep_h ep = sender().ep(0, INJECTED_EP_INDEX);
+    if (ucp_ep_get_failed_lanes(ep) == 0) {
+        UCS_TEST_SKIP_R("no RC p2p lane was marked failed");
+    }
+
+    /* Drive recovery until some lane has an aux probe in flight (comp.count is
+     * non-zero once uct_ep_check() has been posted but not yet completed).
+     * A freshly armed probe stays in flight until a later progress delivers the
+     * check completion, so polling right after each progress catches it. */
+    bool probe_in_flight      = false;
+    const ucs_time_t deadline = ucs_get_time() + ucs_time_from_sec(10.0);
+    while (!probe_in_flight && (ucs_get_time() < deadline)) {
+        ucp_worker_progress(receiver().worker());
+        ucp_worker_progress(sender().worker());
+
+        ucp_ep_recovery_arg_t *arg = ep->ext->recovery_arg;
+        if (arg == NULL) {
+            continue;
+        }
+
+        for (ucp_lane_index_t l = 0; l < ucp_ep_num_lanes(ep); ++l) {
+            if (arg->probe[l].comp.count != 0) {
+                probe_in_flight = true;
+                break;
+            }
+        }
+    }
+
+    ASSERT_TRUE(probe_in_flight)
+            << "could not catch an aux probe in flight to exercise teardown";
+
+    /* Force-close the EP with the probe still in flight; the discard drain must
+     * complete the probe and only then destroy the EP. */
+    void *creq = sender().disconnect_nb(0, INJECTED_EP_INDEX,
+                                        UCP_EP_CLOSE_FLAG_FORCE);
+    if (UCS_PTR_IS_PTR(creq)) {
+        const ucs_time_t close_deadline = ucs_get_time() +
+                                          ucs_time_from_sec(5.0);
+        while (!is_request_completed(creq) &&
+               (ucs_get_time() < close_deadline)) {
+            short_progress_loop();
+        }
+        EXPECT_TRUE(is_request_completed(creq)) << "force-close did not complete";
+    }
+
+    /* Reaching here without an assertion/crash means the deferred destroy and
+     * discard-hash drain handled the outstanding probe cleanly. */
+    short_progress_loop();
+}

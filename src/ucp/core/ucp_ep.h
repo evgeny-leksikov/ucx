@@ -518,6 +518,10 @@ typedef struct ucp_ep_recovery_arg {
 extern uint64_t ucp_ep_recovery_probe_count;
 
 
+/* Test hook: force recovery probes to fail (simulate a broken route). */
+extern int ucp_ep_recovery_probe_test_force_fail;
+
+
 /**
  * Endpoint extension
  */
