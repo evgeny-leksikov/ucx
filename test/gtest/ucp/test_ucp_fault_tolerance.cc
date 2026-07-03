@@ -689,10 +689,10 @@ UCS_TEST_P(test_ucp_fault_tolerance, probe_gated_recovery, "MAX_EAGER_LANES=8",
         UCS_TEST_SKIP_R("probe gate applies to RC p2p lanes only");
     }
 
-    const uint64_t probes_before = ucp_wireup_ep_recovery_probe_count;
+    const uint64_t probes_before = ucp_ep_recovery_probe_count;
 
     do_test(FAILURE_SIDE_TARGET);
 
-    EXPECT_GT(ucp_wireup_ep_recovery_probe_count, probes_before)
+    EXPECT_GT(ucp_ep_recovery_probe_count, probes_before)
             << "RC p2p lane recovery completed without arming an aux probe";
 }

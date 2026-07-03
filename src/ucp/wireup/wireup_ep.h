@@ -57,13 +57,6 @@ struct ucp_wireup_ep {
     unsigned                  ep_init_flags; /**< UCP wireup EP init flags */
     /**< TLs which are available on client side resolved device */
     ucp_tl_bitmap_t           cm_resolve_tl_bitmap;
-    /* Recovery probe state for a recovery proxy. A uct_ep_check probe is
-     * armed on aux_ep; ucp_ep_recovery_rebuild_p2p_lane() consumes the result
-     * on a later recovery tick. */
-    uct_completion_t          recovery_comp;
-    ucs_status_t              recovery_probe_status;
-    uint8_t                   recovery_probe_in_flight;
-    uint8_t                   recovery_probe_done;
 };
 
 
@@ -105,23 +98,6 @@ void ucp_wireup_ep_pending_queue_purge(uct_ep_h uct_ep,
 
 void ucp_wireup_ep_set_aux(ucp_wireup_ep_t *wireup_ep, uct_ep_h uct_ep,
                            ucp_rsc_index_t rsc_index, int is_p2p);
-
-/**
- * Bind a freshly-created aux EP to a recovery proxy and arm a uct_ep_check
- * probe on it. Ownership of @a aux_ep transfers to the wireup_ep. On probe
- * completion @a wireup_ep->recovery_probe_done is set and the recovery tick
- * connects the fresh inner RC EP.
- *
- * @return UCS_OK if the probe completed synchronously (peer already known
- *         alive), UCS_INPROGRESS when it will complete asynchronously, or an
- *         error from uct_ep_check.
- */
-ucs_status_t
-ucp_wireup_ep_arm_recovery_probe(ucp_wireup_ep_t *wireup_ep, uct_ep_h aux_ep,
-                                 ucp_rsc_index_t aux_rsc_index);
-
-/* Test hook: total number of recovery probes armed since process start. */
-extern uint64_t ucp_wireup_ep_recovery_probe_count;
 
 void ucp_wireup_ep_discard_aux_ep(ucp_wireup_ep_t *wireup_ep,
                                   unsigned ep_flush_flags,

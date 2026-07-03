@@ -530,6 +530,7 @@ void ucp_ep_destroy_base(ucp_ep_h ep)
     ucp_ep_refcount_assert(ep, create, ==, 0);
     ucp_ep_refcount_assert(ep, flush, ==, 0);
     ucp_ep_refcount_assert(ep, discard, ==, 0);
+    ucp_ep_refcount_assert(ep, probe, ==, 0);
     ucs_assert(ucs_hlist_is_empty(&ep->ext->proto_reqs));
 
     if (!(ep->flags & UCP_EP_FLAG_INTERNAL)) {
@@ -1355,7 +1356,7 @@ static void ucp_ep_check_lanes(ucp_ep_h ep)
 {
 #if UCS_ENABLE_ASSERT
     uint8_t num_inprog       = ep->refcounts.discard + ep->refcounts.flush +
-                               ep->refcounts.create;
+                               ep->refcounts.create + ep->refcounts.probe;
     uint8_t num_failed_tl_ep = 0;
     ucp_lane_index_t lane;
     uct_ep_h uct_ep;
@@ -2047,6 +2048,86 @@ ucp_ep_recovery_create_aux(ucp_ep_h ep, ucp_lane_index_t lane,
     return UCS_ERR_NO_RESOURCE;
 }
 
+/* Number of recovery probes armed (uct_ep_check on an aux ep). Test hook for
+ * verifying that lane recovery goes through the probe gate. */
+uint64_t ucp_ep_recovery_probe_count = 0;
+
+static UCS_F_ALWAYS_INLINE int
+ucp_ep_recovery_probe_in_flight(const ucp_ep_recovery_probe_t *probe)
+{
+    return probe->comp.count != 0;
+}
+
+/* Is any p2p lane still waiting for its aux probe to complete? While true, a
+ * recovery round is a wait (not a retry), so retries_left is not advanced. */
+static int ucp_ep_recovery_any_probe_in_flight(ucp_ep_h ep)
+{
+    ucp_ep_recovery_arg_t *arg = ep->ext->recovery_arg;
+    ucp_lane_index_t lane;
+
+    if (arg == NULL) {
+        return 0;
+    }
+
+    for (lane = 0; lane < ucp_ep_num_lanes(ep); ++lane) {
+        if (ucp_ep_recovery_probe_in_flight(&arg->probe[lane])) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+/* uct_ep_check completion for a recovery probe. The outcome stays in comp
+ * (count == 0, status OK/err) and is consumed by the next recovery_progress
+ * tick via ucp_ep_recovery_rebuild_p2p_lane(). Strictly side-effect-free: it
+ * only drops the EP 'probe' reference, so it is safe even when it fires during
+ * worker teardown (e.g. from the discard-hash cleanup). */
+static void ucp_ep_recovery_probe_comp(uct_completion_t *self)
+{
+    ucp_ep_recovery_probe_t *probe = ucs_container_of(self,
+                                                      ucp_ep_recovery_probe_t,
+                                                      comp);
+    ucp_ep_h ep = probe->ep;
+
+    ucs_debug("ep %p: recovery probe lane %d done: %s", ep, probe->lane,
+              ucs_status_string(self->status));
+    ucp_ep_refcount_remove(ep, probe); /* may destroy the EP */
+}
+
+/* Arm an aux uct_ep_check probe for @a lane on @a aux_ep. The completion lives
+ * in the EP-lifetime recovery_arg, and an EP 'probe' reference is held for the
+ * probe duration so the completion always lands on live memory (across
+ * ucp_wireup_ep_t teardown and EP close). */
+static ucs_status_t
+ucp_ep_recovery_arm_probe(ucp_ep_h ep, ucp_lane_index_t lane, uct_ep_h aux_ep)
+{
+    ucp_ep_recovery_probe_t *probe = &ep->ext->recovery_arg->probe[lane];
+    ucs_status_t status;
+
+    ucs_assert(aux_ep != NULL);
+    ucs_assert(!ucp_ep_recovery_probe_in_flight(probe));
+
+    probe->ep          = ep;
+    probe->lane        = lane;
+    probe->comp.func   = ucp_ep_recovery_probe_comp;
+    probe->comp.count  = 1;
+    probe->comp.status = UCS_OK;
+    ++ucp_ep_recovery_probe_count;
+
+    ucp_ep_refcount_add(ep, probe);
+    status = uct_ep_check(aux_ep, 0, &probe->comp);
+    if (status != UCS_INPROGRESS) {
+        /* Completed synchronously; the completion was not invoked, so record
+         * the result and release the reference here. */
+        probe->comp.status = status;
+        probe->comp.count  = 0;
+        ucp_ep_refcount_remove(ep, probe);
+    }
+
+    return status;
+}
+
 /* Rebuild one p2p (CONNECT_TO_EP) lane with a route probe gate:
  * find peer ep_addr -> install empty wireup proxy -> ensure fresh iface-only
  * inner UCT EP -> arm an aux uct_ep_check probe and wait for it -> only on probe
@@ -2062,6 +2143,7 @@ ucp_ep_recovery_rebuild_p2p_lane(
     const ucp_address_entry_ep_addr_t *ep_entry;
     const ucp_address_entry_t *peer_aux_ae;
     ucp_wireup_ep_t *wireup_ep;
+    ucp_ep_recovery_probe_t *probe;
     uct_ep_h aux_ep;
     ucp_rsc_index_t aux_rsc_index;
     ucp_lane_index_t remote_lane;
@@ -2074,6 +2156,20 @@ ucp_ep_recovery_rebuild_p2p_lane(
     if ((lane_ep != NULL) && !ucp_is_uct_ep_failed(lane_ep) &&
         !ucp_wireup_ep_test(lane_ep)) {
         return UCS_OK;
+    }
+
+    /* The probe state lives in the EP-lifetime recovery_arg. This rebuild can be
+     * driven directly by an inbound LANES_ADDR message
+     * (ucp_wireup_process_lanes_addr_{request,reply}) after recovery has already
+     * given up (retries exhausted with live lanes remaining) and freed
+     * recovery_arg, while the lane's FAILED bit is still set. In that state we
+     * are no longer recovering this lane, so skip the rebuild instead of
+     * dereferencing a NULL recovery_arg (and do not revive recovery, which would
+     * livelock against a peer that keeps re-requesting). */
+    if (ep->ext->recovery_arg == NULL) {
+        ucs_debug("ep %p: skip rebuild of p2p lane %d, recovery not active", ep,
+                  lane);
+        return UCS_ERR_CANCELED;
     }
 
     /* Symmetric assumption: the peer's lane index mirrors ours.
@@ -2102,13 +2198,16 @@ ucp_ep_recovery_rebuild_p2p_lane(
 
     wireup_ep = ucp_wireup_ep(ucp_ep_get_lane(ep, lane));
     ucs_assert(wireup_ep != NULL);
+    probe = &ep->ext->recovery_arg->probe[lane];
 
-    /* Probe gate: confirm the route via an aux uct_ep_check before
-     * connecting the fresh RC QP, so we don't churn reconnecting RC over a
-     * broken route. */
-    if (!(wireup_ep->recovery_probe_done &&
-          (wireup_ep->recovery_probe_status == UCS_OK))) {
-        if (wireup_ep->recovery_probe_in_flight) {
+    /* Probe gate: confirm the route via an aux uct_ep_check before connecting
+     * the fresh RC QP, so we don't churn reconnecting RC over a broken route.
+     * The probe state lives in the EP-lifetime recovery_arg: comp.func != NULL
+     * once armed, comp.count != 0 while pending, comp.status holds the outcome. */
+    if (!((probe->comp.func != NULL) &&
+          !ucp_ep_recovery_probe_in_flight(probe) &&
+          (probe->comp.status == UCS_OK))) {
+        if (ucp_ep_recovery_probe_in_flight(probe)) {
             return UCS_INPROGRESS; /* wait for the probe completion */
         }
 
@@ -2133,8 +2232,12 @@ ucp_ep_recovery_rebuild_p2p_lane(
             return UCS_INPROGRESS;
         }
 
-        status = ucp_wireup_ep_arm_recovery_probe(wireup_ep, aux_ep,
-                                                  aux_rsc_index);
+        /* The wireup proxy owns the aux ep for teardown; the probe completion
+         * lives in recovery_arg. */
+        wireup_ep->aux_ep        = aux_ep;
+        wireup_ep->aux_rsc_index = aux_rsc_index;
+
+        status = ucp_ep_recovery_arm_probe(ep, lane, aux_ep);
         if (status != UCS_OK) {
             /* INPROGRESS (async) or a synchronous error: retry next round. */
             return UCS_INPROGRESS;
@@ -2148,8 +2251,8 @@ ucp_ep_recovery_rebuild_p2p_lane(
     if (status != UCS_OK) {
         ucs_diag("ep %p: connect_to_ep_v2 failed for recovery p2p lane %d: %s",
                  ep, lane, ucs_status_string(status));
-        /* Re-validate the route on the next round. */
-        wireup_ep->recovery_probe_done = 0;
+        /* Re-validate the route on the next round: un-arm so the gate re-probes. */
+        probe->comp.func = NULL;
         return status;
     }
 
@@ -2358,6 +2461,15 @@ int ucp_ep_recovery_progress(ucp_ep_h ep)
          * assertion. */
         ucs_free(ep->ext->recovery_arg);
         ep->ext->recovery_arg = NULL;
+        goto done;
+    }
+
+    /* A probe still in flight is a wait, not a retry: keep recovery_arg and do
+     * not advance retries_left or re-issue the address request. This keeps
+     * retries_left > 0 (asserted above) and ensures the exhaust free below runs
+     * only when no probe is in flight, so it never strands a probe completion. */
+    if (ucp_ep_recovery_any_probe_in_flight(ep)) {
+        ret = 1;
         goto done;
     }
 

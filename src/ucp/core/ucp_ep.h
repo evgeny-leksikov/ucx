@@ -492,11 +492,30 @@ typedef struct {
 } ucp_ep_flush_state_t;
 
 
+/* Per-lane recovery probe: an aux uct_ep_check() completion whose result gates
+ * reconnecting the fresh RC QP. It lives in ucp_ep_recovery_arg_t (EP lifetime)
+ * so it survives ucp_wireup_ep_t teardown, and each in-flight probe holds an EP
+ * 'probe' reference so the completion always lands on live memory. All state is
+ * derived from comp: func != NULL once armed, count != 0 while pending, status
+ * is OK/error once count == 0. */
+typedef struct ucp_ep_recovery_probe {
+    uct_completion_t  comp;   /* Chained onto the aux uct_ep_check() */
+    ucp_ep_h          ep;     /* Owner, for the completion callback */
+    ucp_lane_index_t  lane;   /* p2p lane being probed */
+} ucp_ep_recovery_probe_t;
+
+
 /* Per-EP recovery retry state. */
 typedef struct ucp_ep_recovery_arg {
     /* number of retries left before giving up */
-    unsigned    retries_left;
+    unsigned                retries_left;
+    /* per p2p lane probe state, indexed by lane */
+    ucp_ep_recovery_probe_t probe[UCP_MAX_LANES];
 } ucp_ep_recovery_arg_t;
+
+
+/* Test hook: total number of recovery probes armed since process start. */
+extern uint64_t ucp_ep_recovery_probe_count;
 
 
 /**
@@ -598,6 +617,8 @@ typedef struct ucp_ep {
         /* How many UCT EP discarding operations are in-progress scheduled for
          * the EP */
         unsigned                      discard;
+        /* How many recovery aux probes are in-progress on the EP */
+        unsigned                      probe;
     } refcounts;
 #endif
 
