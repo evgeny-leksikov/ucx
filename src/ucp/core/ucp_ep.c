@@ -1959,13 +1959,13 @@ ucp_ep_recovery_rebuild_iface_lane(
     return UCS_OK;
 }
 
-/* Locate the peer UD iface address that lives on the same peer-side device as
- * the failed RC lane (inside remote_address). Match: find the peer RC address
- * entry for this lane, then pick another entry on the same sys_dev that carries
- * an iface_addr (the UD aux). Returns NULL if none. */
+/* Locate the peer auxiliary (UD) iface address that lives on the same peer-side
+ * device as the failed RC lane (inside remote_address). Match: find the peer RC
+ * address entry for this lane, then pick another entry on the same sys_dev that
+ * carries an iface_addr (the aux). Returns NULL if none. */
 static const ucp_address_entry_t *
-ucp_ep_recovery_find_peer_ud(ucp_ep_h ep, ucp_lane_index_t lane,
-                             const ucp_unpacked_address_t *remote_address)
+ucp_ep_recovery_find_peer_aux(ucp_ep_h ep, ucp_lane_index_t lane,
+                              const ucp_unpacked_address_t *remote_address)
 {
     const ucp_address_entry_t *rc_entry;
     const ucp_address_entry_ep_addr_t *unused;
@@ -2004,7 +2004,6 @@ ucp_ep_recovery_create_aux(ucp_ep_h ep, ucp_lane_index_t lane,
     ucp_context_h context    = worker->context;
     ucp_rsc_index_t lane_rsc = ucp_ep_get_rsc_index(ep, lane);
     ucp_rsc_index_t aux_rsc;
-    const uct_tl_resource_desc_t *tl;
     ucp_worker_iface_t *wiface;
     uct_ep_params_t uct_ep_params;
     ucs_status_t status;
@@ -2019,9 +2018,10 @@ ucp_ep_recovery_create_aux(ucp_ep_h ep, ucp_lane_index_t lane,
             continue;
         }
 
-        tl = &context->tl_rscs[aux_rsc].tl_rsc;
-        if ((strcmp(tl->tl_name, "ud_verbs") != 0) &&
-            (strcmp(tl->tl_name, "ud_mlx5") != 0)) {
+        /* Same criterion as normal wireup aux-lane selection
+         * (ucp_wireup_fill_aux_criteria): any transport usable as an
+         * auxiliary (UD). ep_check is assumed to be implemented there. */
+        if (!(context->tl_rscs[aux_rsc].flags & UCP_TL_RSC_FLAG_AUX)) {
             continue;
         }
 
@@ -2112,7 +2112,7 @@ ucp_ep_recovery_rebuild_p2p_lane(
             return UCS_INPROGRESS; /* wait for the probe completion */
         }
 
-        peer_ud_ae = ucp_ep_recovery_find_peer_ud(ep, lane, remote_address);
+        peer_ud_ae = ucp_ep_recovery_find_peer_aux(ep, lane, remote_address);
         if (peer_ud_ae == NULL) {
             ucs_debug("ep %p: no peer UD addr for p2p lane %d yet", ep, lane);
             return UCS_INPROGRESS;
