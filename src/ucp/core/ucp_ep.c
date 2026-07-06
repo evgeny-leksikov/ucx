@@ -1998,9 +1998,9 @@ ucp_ep_recovery_aux_rsc_reachable(ucp_worker_h worker, ucp_rsc_index_t lane_rsc,
 /* Locate the peer auxiliary iface address that lives on the same peer-side
  * device as the failed RC lane (inside remote_address). Match: find the peer RC
  * address entry for this lane, then pick another entry on the same sys_dev that
- * carries an iface_addr (the aux) and that is reachable from a local same-device
- * aux iface, so create_aux can build a matching local ep. Returns NULL if
- * none. */
+ * carries an iface_addr (the aux) and that is reachable from a local
+ * same-device aux iface, so create_aux can build a matching local ep. Returns
+ * NULL if none. */
 static const ucp_address_entry_t *
 ucp_ep_recovery_find_peer_aux(ucp_ep_h ep, ucp_lane_index_t lane,
                               const ucp_unpacked_address_t *remote_address)
@@ -2033,7 +2033,8 @@ ucp_ep_recovery_find_peer_aux(ucp_ep_h ep, ucp_lane_index_t lane,
         }
 
         /* Only pick a peer aux entry we can actually reach from a local
-         * same-device aux iface, so create_aux can build a matching local ep. */
+         * same-device aux iface, so create_aux can build a matching local
+         * ep. */
         for (rsc = 0; rsc < context->num_tls; ++rsc) {
             if (ucp_ep_recovery_aux_rsc_reachable(worker, lane_rsc, rsc, ae)) {
                 return ae;
@@ -2190,10 +2191,10 @@ ucp_ep_recovery_arm_probe(ucp_ep_h ep, ucp_lane_index_t lane, uct_ep_h aux_ep)
 
 /* Rebuild one p2p (CONNECT_TO_EP) lane with a route probe gate:
  * find peer ep_addr -> install empty wireup proxy -> ensure fresh iface-only
- * inner UCT EP -> arm an aux uct_ep_check probe and wait for it -> only on probe
- * success connect_to_ep_v2 against peer ep_addr, destroy the aux, mark ready.
- * Returns UCS_INPROGRESS while the probe is pending so the lane stays failed
- * and is retried on the next recovery round. */
+ * inner UCT EP -> arm an aux uct_ep_check probe and wait for it -> only on
+ * probe success connect_to_ep_v2 against peer ep_addr, destroy the aux, mark
+ * ready. Returns UCS_INPROGRESS while the probe is pending so the lane stays
+ * failed and is retried on the next recovery round. */
 static ucs_status_t
 ucp_ep_recovery_rebuild_p2p_lane(
         ucp_ep_h ep, ucp_lane_index_t lane,
@@ -2218,14 +2219,14 @@ ucp_ep_recovery_rebuild_p2p_lane(
         return UCS_OK;
     }
 
-    /* The probe state lives in the EP-lifetime recovery_arg. This rebuild can be
-     * driven directly by an inbound LANES_ADDR message
-     * (ucp_wireup_process_lanes_addr_{request,reply}) after recovery has already
-     * given up (retries exhausted with live lanes remaining) and freed
+    /* The probe state lives in the EP-lifetime recovery_arg. This rebuild can
+     * be driven directly by an inbound LANES_ADDR message
+     * (ucp_wireup_process_lanes_addr_{request,reply}) after recovery has
+     * already given up (retries exhausted with live lanes remaining) and freed
      * recovery_arg, while the lane's FAILED bit is still set. In that state we
      * are no longer recovering this lane, so skip the rebuild instead of
-     * dereferencing a NULL recovery_arg (and do not revive recovery, which would
-     * livelock against a peer that keeps re-requesting). */
+     * dereferencing a NULL recovery_arg (and do not revive recovery, which
+     * would livelock against a peer that keeps re-requesting). */
     if (ep->ext->recovery_arg == NULL) {
         ucs_debug("ep %p: skip rebuild of p2p lane %d, recovery not active", ep,
                   lane);
@@ -2263,7 +2264,8 @@ ucp_ep_recovery_rebuild_p2p_lane(
     /* Probe gate: confirm the route via an aux uct_ep_check before connecting
      * the fresh RC QP, so we don't churn reconnecting RC over a broken route.
      * The probe state lives in the EP-lifetime recovery_arg: comp.func != NULL
-     * once armed, comp.count != 0 while pending, comp.status holds the outcome. */
+     * once armed, comp.count != 0 while pending, comp.status holds the
+     * outcome. */
     if (!((probe->comp.func != NULL) &&
           !ucp_ep_recovery_probe_in_flight(probe) &&
           (probe->comp.status == UCS_OK))) {
@@ -2311,7 +2313,8 @@ ucp_ep_recovery_rebuild_p2p_lane(
     if (status != UCS_OK) {
         ucs_diag("ep %p: connect_to_ep_v2 failed for recovery p2p lane %d: %s",
                  ep, lane, ucs_status_string(status));
-        /* Re-validate the route on the next round: un-arm so the gate re-probes. */
+        /* Re-validate the route on the next round: un-arm so the gate
+         * re-probes. */
         probe->comp.func = NULL;
         return status;
     }
@@ -2536,7 +2539,8 @@ int ucp_ep_recovery_progress(ucp_ep_h ep)
     /* A probe still in flight is a wait, not a retry: keep recovery_arg and do
      * not advance retries_left or re-issue the address request. This keeps
      * retries_left > 0 (asserted above) and ensures the exhaust free below runs
-     * only when no probe is in flight, so it never strands a probe completion. */
+     * only when no probe is in flight, so it never strands a probe
+     * completion. */
     if (ucp_ep_recovery_any_probe_in_flight(ep)) {
         ret = 1;
         goto done;
