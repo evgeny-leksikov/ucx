@@ -518,7 +518,7 @@ protected:
 
         test_recovery(op_mask);
     }
-private:
+protected:
     static size_t rma_msg_size() {
         return ucs::limit_buffer_size((100 * UCS_MBYTE) / ucs::test_time_multiplier());
     }
@@ -648,6 +648,10 @@ protected:
     const ucp_request_param_t m_req_empty_param = { 0 };
     std::vector<uint8_t> m_am_rbuf              = std::vector<uint8_t>(am_msg_size());
     volatile bool m_am_received                 = false;
+
+    size_t total_err_count() const {
+        return m_total_err_count;
+    }
 
 private:
     size_t m_initiator_err_count = 0;
@@ -808,4 +812,66 @@ UCS_TEST_P(test_ucp_fault_tolerance, teardown_with_outstanding_probe,
     /* Reaching here without an assertion/crash means the deferred destroy and
      * discard-hash drain handled the outstanding probe cleanly. */
     short_progress_loop();
+}
+
+/* Retries exhausted with live lanes remaining: keep every probe failing and
+ * use a tiny retry budget so recovery on the failed RC p2p lanes is guaranteed
+ * to run out of retries. Because a subset of lanes stays LIVE, exhaustion takes
+ * the "give up on the failed lanes but keep the EP alive" branch, which frees
+ * recovery_arg while leaving those lanes FAILED and the EP not-failed. The next
+ * keepalive tick re-enters recovery_progress with failed lanes set but
+ * recovery_arg == NULL - this used to trip ucs_assert(recovery_arg != NULL).
+ * recovery_progress must tolerate that state (nothing to do until a new event
+ * re-arms recovery) instead of aborting, and the EP must survive on its live
+ * lanes. */
+UCS_TEST_P(test_ucp_fault_tolerance, recovery_retries_exhausted_live_lanes,
+           "MAX_EAGER_LANES=8", "RECOVERY_RETRIES=2", "KEEPALIVE_INTERVAL=0.1s")
+{
+    if (get_variant_value() != TEST_OP_AM) {
+        UCS_TEST_SKIP_R("pure AM variant only");
+    }
+    if (!has_any_transport({"rc_x", "rc_v", "rc_mlx5", "rc_verbs", "ib"})) {
+        UCS_TEST_SKIP_R("probe gate applies to RC p2p lanes only");
+    }
+
+    /* Every probe fails, so a failed lane can never recover and the tiny retry
+     * budget is guaranteed to be exhausted. */
+    ucp_ep_recovery_probe_test_force_fail = 1;
+
+    /* Fail all-but-one of the initiator's RC AM lanes: this leaves at least one
+     * LIVE lane, so retry exhaustion hits the give-up-but-keep-EP branch. */
+    test_am_with_injected_failure(FAILURE_SIDE_INITIATOR, TEST_OP_AM);
+
+    ucp_ep_h ep = sender().ep(0, INJECTED_EP_INDEX);
+    if (ucp_ep_get_failed_lanes(ep) == 0) {
+        ucp_ep_recovery_probe_test_force_fail = 0;
+        UCS_TEST_SKIP_R("no RC p2p lane was marked failed");
+    }
+
+    /* Drive keepalive ticks well past retry exhaustion so recovery_progress
+     * re-enters after recovery_arg was freed. On the buggy code this re-asserts
+     * (recovery_arg == NULL while lanes are still FAILED) and aborts here. */
+    const ucs_time_t deadline = ucs_get_time() + ucs_time_from_sec(3.0);
+    while (ucs_get_time() < deadline) {
+        short_progress_loop();
+    }
+
+    ucp_ep_recovery_probe_test_force_fail = 0;
+
+    /* The EP survived on its live lanes: it was never marked failed (no error
+     * callback), and the lanes we gave up on stay FAILED (never recovered). */
+    EXPECT_EQ(0, total_err_count())
+            << "EP was failed even though live lanes remained";
+    EXPECT_NE(0, ucp_ep_get_failed_lanes(ep))
+            << "failed lanes were cleared without a successful probe";
+
+    /* Data must now flow on the live lanes after give-up. This send used to
+     * hang forever: the given-up failed p2p lanes still held not-ready
+     * wireup_ep proxies (fresh unconnected inner RC + aux) that AM striping
+     * and the teardown flush blocked on. recovery_progress now discards those
+     * proxies on give-up (swapping in the failed_tl stub), so the AM routes
+     * around the failed lanes, completes with UCS_OK, and the EP tears down
+     * cleanly at the end of the test. */
+    EXPECT_EQ(UCS_OK, do_am_send_and_wait(ep, am_msg_size(), true))
+            << "data did not flow on live lanes after recovery give-up";
 }

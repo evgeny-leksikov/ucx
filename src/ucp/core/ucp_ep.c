@@ -2501,7 +2501,16 @@ int ucp_ep_recovery_progress(ucp_ep_h ep)
         goto done;
     }
 
-    ucs_assert(ep->ext->recovery_arg != NULL);
+    if (ep->ext->recovery_arg == NULL) {
+        /* Retries were exhausted on an earlier round while live lanes
+         * remained: the "giving up on failed lanes" path below frees
+         * recovery_arg but leaves those lanes FAILED and keeps the EP alive
+         * on its live lanes. Nothing to do until a new failure event
+         * re-arms recovery via ucp_ep_recovery_arm() (which reallocates
+         * recovery_arg). */
+        goto done;
+    }
+
     ucs_assert(ep->ext->recovery_arg->retries_left > 0);
 
     recovered = ucp_ep_recovery_get_ready_lanes(ep, failed);
@@ -2549,6 +2558,19 @@ int ucp_ep_recovery_progress(ucp_ep_h ep)
     } else {
         ucs_diag("ep %p: recovery retries exhausted, giving up on "
                     "failed lanes 0x%" PRIx64, ep, (uint64_t)failed);
+        /* Tear down the not-ready recovery proxies that
+         * ucp_ep_recovery_rebuild_p2p_lane() left in the failed lane slots
+         * (fresh wireup_ep with an unconnected inner RC + aux that never
+         * became ready because the probe kept failing). Leaving them in place
+         * hangs any later data send or the EP teardown flush forever on the
+         * proxy pending queue. Discarding purges those pending queues and
+         * swaps in the failed_tl stub, so the failed lanes route around
+         * cleanly while the EP keeps operating - and later tears down - on
+         * its live lanes. The lanes stay marked FAILED; recovery re-arms only
+         * on a new failure event (ucp_ep_recovery_arm), so this does not loop.
+         */
+        ucp_ep_discard_lanes(ep, failed, UCS_ERR_ENDPOINT_TIMEOUT,
+                             ep->cfg_index);
     }
 
     ucs_free(ep->ext->recovery_arg);
