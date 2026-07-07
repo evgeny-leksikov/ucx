@@ -3039,15 +3039,16 @@ static ucs_status_t
 ucp_wireup_select_aux_transport_by_seg_size(
         const ucp_wireup_select_context_t *select_ctx,
         const ucp_wireup_select_params_t *select_params,
-        const ucp_wireup_criteria_t *criteria, int show_error,
+        const ucp_wireup_criteria_t *criteria, uint64_t local_dev_bitmap,
+        uint64_t remote_dev_bitmap, int show_error,
         ucp_wireup_select_info_t *select_info)
 {
     ucs_status_t status;
 
     status = ucp_wireup_select_transport(select_ctx, select_params, criteria,
                                          ucp_tl_bitmap_max, UINT64_MAX,
-                                         UINT64_MAX, UINT64_MAX, show_error,
-                                         select_info);
+                                         local_dev_bitmap, remote_dev_bitmap,
+                                         show_error, select_info);
     if (status != UCS_OK) {
         return status;
     }
@@ -3066,6 +3067,8 @@ ucs_status_t
 ucp_wireup_select_aux_transport(ucp_ep_h ep, unsigned ep_init_flags,
                                 ucp_tl_bitmap_t tl_bitmap,
                                 const ucp_unpacked_address_t *remote_address,
+                                uint64_t local_dev_bitmap,
+                                uint64_t remote_dev_bitmap,
                                 ucp_wireup_select_info_t *select_info)
 {
     ucp_wireup_select_context_t select_ctx = {};
@@ -3081,7 +3084,9 @@ ucp_wireup_select_aux_transport(ucp_ep_h ep, unsigned ep_init_flags,
                                  UCP_ADDR_IFACE_FLAG_CB_ASYNC);
     status = ucp_wireup_select_aux_transport_by_seg_size(&select_ctx,
                                                          &select_params,
-                                                         &criteria, 0,
+                                                         &criteria,
+                                                         local_dev_bitmap,
+                                                         remote_dev_bitmap, 0,
                                                          select_info);
     if (status == UCS_OK) {
         return UCS_OK;
@@ -3092,6 +3097,8 @@ ucp_wireup_select_aux_transport(ucp_ep_h ep, unsigned ep_init_flags,
     ucp_wireup_fill_aux_criteria(&criteria, ep_init_flags, 0);
     return ucp_wireup_select_aux_transport_by_seg_size(&select_ctx,
                                                        &select_params,
-                                                       &criteria, 1,
+                                                       &criteria,
+                                                       local_dev_bitmap,
+                                                       remote_dev_bitmap, 1,
                                                        select_info);
 }

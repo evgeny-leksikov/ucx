@@ -1960,105 +1960,38 @@ ucp_ep_recovery_rebuild_iface_lane(
     return UCS_OK;
 }
 
-/* Whether the local resource @a rsc can serve as a recovery probe aux for the
- * RC lane on resource @a lane_rsc and reach the peer aux entry @a peer_ae:
- * it must live on the same physical device as the failed RC lane, expose a
- * connectionless iface (UCT_IFACE_FLAG_CONNECT_TO_IFACE) that implements the
- * route probe (UCT_IFACE_FLAG_EP_CHECK), and be reachable to @a peer_ae. The
- * selection is by actual UCT iface capability, mirroring how normal wireup
- * picks the aux lane (ucp_wireup_fill_aux_criteria), instead of gating on the
- * UCP_TL_RSC_FLAG_AUX config flag - which is only set for transports enabled
- * aux-only in UCX_TLS and therefore misses UD when it is a primary transport
- * (e.g. shm,ib). Reachability guarantees the chosen local aux transport is
- * compatible with the peer aux entry (a device may expose several UD
- * transports, e.g. ud_verbs and ud_mlx5, that are not mutually connectable). */
-static int
-ucp_ep_recovery_aux_rsc_reachable(ucp_worker_h worker, ucp_rsc_index_t lane_rsc,
-                                  ucp_rsc_index_t rsc,
-                                  const ucp_address_entry_t *peer_ae)
-{
-    ucp_context_h context = worker->context;
-    uint64_t iface_flags;
-
-    if (context->tl_rscs[rsc].dev_index !=
-        context->tl_rscs[lane_rsc].dev_index) {
-        return 0;
-    }
-
-    iface_flags = ucp_worker_iface_get_attr(worker, rsc)->cap.flags;
-    if (!ucs_test_all_flags(iface_flags, UCT_IFACE_FLAG_CONNECT_TO_IFACE |
-                                         UCT_IFACE_FLAG_EP_CHECK)) {
-        return 0;
-    }
-
-    return uct_iface_is_reachable(ucp_worker_iface(worker, rsc)->iface,
-                                  peer_ae->dev_addr, peer_ae->iface_addr);
-}
-
-/* Locate the peer auxiliary iface address that lives on the same peer-side
- * device as the failed RC lane (inside remote_address). Match: find the peer RC
- * address entry for this lane, then pick another entry on the same sys_dev that
- * carries an iface_addr (the aux) and that is reachable from a local
- * same-device aux iface, so create_aux can build a matching local ep. Returns
- * NULL if none. */
-static const ucp_address_entry_t *
-ucp_ep_recovery_find_peer_aux(ucp_ep_h ep, ucp_lane_index_t lane,
-                              const ucp_unpacked_address_t *remote_address)
-{
-    ucp_worker_h worker      = ep->worker;
-    ucp_context_h context    = worker->context;
-    ucp_rsc_index_t lane_rsc = ucp_ep_get_rsc_index(ep, lane);
-    const ucp_address_entry_t *rc_entry;
-    const ucp_address_entry_ep_addr_t *unused;
-    const ucp_address_entry_t *ae;
-    ucp_rsc_index_t rsc;
-    ucs_status_t status;
-
-    if (lane_rsc == UCP_NULL_RESOURCE) {
-        return NULL;
-    }
-
-    status = ucp_wireup_find_remote_p2p_addr(ep, lane, remote_address,
-                                             &rc_entry, &unused);
-    if (status != UCS_OK) {
-        return NULL;
-    }
-
-    ucp_unpacked_address_for_each(ae, remote_address) {
-        if ((ae == rc_entry) || (ae->iface_addr == NULL)) {
-            continue;
-        }
-        if (ae->sys_dev != rc_entry->sys_dev) {
-            continue;
-        }
-
-        /* Only pick a peer aux entry we can actually reach from a local
-         * same-device aux iface, so create_aux can build a matching local
-         * ep. */
-        for (rsc = 0; rsc < context->num_tls; ++rsc) {
-            if (ucp_ep_recovery_aux_rsc_reachable(worker, lane_rsc, rsc, ae)) {
-                return ae;
-            }
-        }
-    }
-
-    return NULL;
-}
-
-/* Create a local aux ep on the same device as the failed RC lane, targeting
- * the peer aux iface address @a peer_ae. Used to probe (uct_ep_check) the route
- * before reconnecting the RC lane. */
+/* Select and create a local aux ep on the same device as the failed RC lane,
+ * targeting the matching peer aux iface address, used to probe (uct_ep_check)
+ * the route before reconnecting the RC lane.
+ *
+ * The aux selection is routed through the real wireup selection machinery
+ * (ucp_wireup_select_aux_transport), restricted to the failed RC lane's local
+ * device (local_dev_bitmap) and the failed RC lane's peer device
+ * (remote_dev_bitmap). This applies the same seg-size scoring and reachability
+ * checks as normal wireup aux selection, so the chosen local aux rsc
+ * (select_info.rsc_index) and the peer aux address entry
+ * (select_info.addr_index) agree with what the peer packed into LANES_ADDR and
+ * with how the RC lane's aux was originally established. Constraining BOTH ends
+ * to the failed lane's devices ensures the probe tests the same rail as the
+ * lane being recovered (otherwise it could probe a different, still-up rail and
+ * report a false "alive"). Hand-rolling this by iterating tl_rscs (by dev_index
+ * + capability) diverged from the real path after seg-size aux scoring (#11144)
+ * and tightened reachability (#11575), breaking rc_mlx5 recovery. */
 static ucs_status_t
 ucp_ep_recovery_create_aux(ucp_ep_h ep, ucp_lane_index_t lane,
-                           const ucp_address_entry_t *peer_ae,
-                           uct_ep_h *aux_ep_p,
+                           const ucp_unpacked_address_t *remote_address,
+                           uint64_t remote_dev_bitmap, uct_ep_h *aux_ep_p,
                            ucp_rsc_index_t *aux_rsc_index_p)
 {
     ucp_worker_h worker      = ep->worker;
     ucp_context_h context    = worker->context;
     ucp_rsc_index_t lane_rsc = ucp_ep_get_rsc_index(ep, lane);
-    ucp_rsc_index_t aux_rsc;
+    unsigned ep_init_flags   =
+            ucp_ep_err_mode_init_flags(ucp_ep_config(ep)->key.err_mode);
+    ucp_wireup_select_info_t select_info;
+    const ucp_address_entry_t *peer_ae;
     ucp_worker_iface_t *wiface;
+    uint64_t local_dev_bitmap;
     uct_ep_params_t uct_ep_params;
     ucs_status_t status;
 
@@ -2066,38 +1999,39 @@ ucp_ep_recovery_create_aux(ucp_ep_h ep, ucp_lane_index_t lane,
         return UCS_ERR_NO_RESOURCE;
     }
 
-    for (aux_rsc = 0; aux_rsc < context->num_tls; ++aux_rsc) {
-        /* Select the probe aux by iface capability + reachability to the peer
-         * aux entry rather than the UCP_TL_RSC_FLAG_AUX config flag: a
-         * same-device, connectionless (CONNECT_TO_IFACE) iface that supports
-         * uct_ep_check (EP_CHECK) and can reach peer_ae. Reachability ensures
-         * the local aux transport is compatible with the peer aux entry; on
-         * uct_ep_create failure we fall through to the next candidate. */
-        if (!ucp_ep_recovery_aux_rsc_reachable(worker, lane_rsc, aux_rsc,
-                                               peer_ae)) {
-            continue;
-        }
-
-        wiface                   = ucp_worker_iface(worker, aux_rsc);
-        uct_ep_params.field_mask = UCT_EP_PARAM_FIELD_IFACE    |
-                                   UCT_EP_PARAM_FIELD_DEV_ADDR |
-                                   UCT_EP_PARAM_FIELD_IFACE_ADDR;
-        uct_ep_params.iface      = wiface->iface;
-        uct_ep_params.dev_addr   = peer_ae->dev_addr;
-        uct_ep_params.iface_addr = peer_ae->iface_addr;
-        status = uct_ep_create(&uct_ep_params, aux_ep_p);
-        if (status != UCS_OK) {
-            ucs_debug("ep %p lane %d: aux ep_create rsc=%d failed: %s", ep,
-                      lane, aux_rsc, ucs_status_string(status));
-            continue;
-        }
-
-        *aux_rsc_index_p = aux_rsc;
-        ucp_worker_iface_progress_ep(wiface);
-        return UCS_OK;
+    /* Restrict the local aux to the failed RC lane's device and the peer aux to
+     * the failed RC lane's peer device so the probe tests the same rail as the
+     * lane being recovered. */
+    local_dev_bitmap = UCS_BIT(context->tl_rscs[lane_rsc].dev_index);
+    status = ucp_wireup_select_aux_transport(ep, ep_init_flags,
+                                             ucp_tl_bitmap_max, remote_address,
+                                             local_dev_bitmap, remote_dev_bitmap,
+                                             &select_info);
+    if (status != UCS_OK) {
+        ucs_debug("ep %p lane %d: no aux transport for recovery: %s", ep, lane,
+                  ucs_status_string(status));
+        return status;
     }
 
-    return UCS_ERR_NO_RESOURCE;
+    peer_ae                  = &remote_address->address_list[
+                                       select_info.addr_index];
+    wiface                   = ucp_worker_iface(worker, select_info.rsc_index);
+    uct_ep_params.field_mask = UCT_EP_PARAM_FIELD_IFACE    |
+                               UCT_EP_PARAM_FIELD_DEV_ADDR |
+                               UCT_EP_PARAM_FIELD_IFACE_ADDR;
+    uct_ep_params.iface      = wiface->iface;
+    uct_ep_params.dev_addr   = peer_ae->dev_addr;
+    uct_ep_params.iface_addr = peer_ae->iface_addr;
+    status = uct_ep_create(&uct_ep_params, aux_ep_p);
+    if (status != UCS_OK) {
+        ucs_debug("ep %p lane %d: aux ep_create rsc=%d failed: %s", ep, lane,
+                  select_info.rsc_index, ucs_status_string(status));
+        return status;
+    }
+
+    *aux_rsc_index_p = select_info.rsc_index;
+    ucp_worker_iface_progress_ep(wiface);
+    return UCS_OK;
 }
 
 /* Number of recovery probes armed (uct_ep_check on an aux ep). Test hook for
@@ -2202,7 +2136,6 @@ ucp_ep_recovery_rebuild_p2p_lane(
 {
     const ucp_address_entry_t *address_entry;
     const ucp_address_entry_ep_addr_t *ep_entry;
-    const ucp_address_entry_t *peer_aux_ae;
     ucp_wireup_ep_t *wireup_ep;
     ucp_ep_recovery_probe_t *probe;
     uct_ep_h aux_ep;
@@ -2273,12 +2206,6 @@ ucp_ep_recovery_rebuild_p2p_lane(
             return UCS_INPROGRESS; /* wait for the probe completion */
         }
 
-        peer_aux_ae = ucp_ep_recovery_find_peer_aux(ep, lane, remote_address);
-        if (peer_aux_ae == NULL) {
-            ucs_debug("ep %p: no peer aux addr for p2p lane %d yet", ep, lane);
-            return UCS_INPROGRESS;
-        }
-
         /* Drop a stale aux from a previous (failed) probe before re-arming. */
         if (wireup_ep->aux_ep != NULL) {
             uct_ep_destroy(wireup_ep->aux_ep);
@@ -2286,8 +2213,12 @@ ucp_ep_recovery_rebuild_p2p_lane(
             wireup_ep->aux_rsc_index = UCP_NULL_RESOURCE;
         }
 
-        status = ucp_ep_recovery_create_aux(ep, lane, peer_aux_ae, &aux_ep,
-                                            &aux_rsc_index);
+        /* Select the local aux rsc and matching peer aux address (both from the
+         * real wireup selection machinery, constrained to the failed lane's
+         * local and peer devices) and create the probe aux ep. */
+        status = ucp_ep_recovery_create_aux(ep, lane, remote_address,
+                                            UCS_BIT(address_entry->dev_index),
+                                            &aux_ep, &aux_rsc_index);
         if (status != UCS_OK) {
             ucs_debug("ep %p: cannot create aux for p2p lane %d: %s", ep, lane,
                       ucs_status_string(status));

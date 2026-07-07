@@ -1018,9 +1018,11 @@ ucp_wireup_augment_aux_tls(ucp_ep_h ep, ucp_lane_map_t lane_map,
             /* Pack every same-device connectionless iface that supports
              * uct_ep_check (CONNECT_TO_IFACE + EP_CHECK) as a probe aux,
              * selected by iface capability rather than the UCP_TL_RSC_FLAG_AUX
-             * config flag. The receiver picks the entry it can reach
-             * (ucp_ep_recovery_find_peer_aux/create_aux), so packing several UD
-             * transports for the device is safe. */
+             * config flag. The receiver runs the real aux selection
+             * (ucp_ep_recovery_create_aux -> ucp_wireup_select_aux_transport),
+             * constrained to the failed lane's local and peer devices, and picks
+             * the best-scoring reachable entry among these, so packing several
+             * UD transports per device is safe. */
             iface_flags = ucp_worker_iface_get_attr(ep->worker,
                                                     aux_rsc)->cap.flags;
             if (ucs_test_all_flags(iface_flags,
