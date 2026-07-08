@@ -458,7 +458,7 @@ protected:
         const ucp_lane_map_t failed_lanes =
                 ucp_ep_get_failed_lanes(sender().ep(0, INJECTED_EP_INDEX));
         ASSERT_EQ(0, failed_lanes)
-            << "Failed lanes are not recovered" << std::hex << failed_lanes;
+            << "Failed lanes are not recovered " << std::hex << failed_lanes;
         for (ucp_lane_index_t lane_idx = 0;
              lane_idx < ucp_ep_num_lanes(sender().ep(0, INJECTED_EP_INDEX));) {
             if (ucp_wireup_ep_test(ucp_ep_get_lane(sender().ep(0, INJECTED_EP_INDEX), lane_idx))) {
