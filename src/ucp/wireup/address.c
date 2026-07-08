@@ -403,6 +403,8 @@ ucp_address_gather_devices(ucp_worker_h worker, const ucp_ep_config_key_t *key,
              */
             for (lane = 0; lane < key->num_lanes; ++lane) {
                 if ((key->lanes[lane].rsc_index == rsc_index) &&
+                    !(key->lanes[lane].lane_types &
+                      UCS_BIT(UCP_LANE_TYPE_FAILED)) &&
                     ucp_ep_config_connect_p2p(worker, key, rsc_index)) {
                     dev->tl_addrs_size += !ucp_worker_is_unified_mode(worker);
                     dev->tl_addrs_size += iface_attr->ep_addr_len;
@@ -1386,7 +1388,9 @@ ucp_address_do_pack(ucp_worker_h worker, ucp_ep_h ep, void *buffer, size_t size,
 
                 ucs_for_each_bit(lane, ucp_ep_config(ep)->p2p_lanes) {
                     ucs_assert(lane < UCP_MAX_LANES);
-                    if (ucp_ep_get_rsc_index(ep, lane) != rsc_index) {
+                    if ((ucp_ep_get_rsc_index(ep, lane) != rsc_index) ||
+                        (ucp_ep_config(ep)->key.lanes[lane].lane_types &
+                         UCS_BIT(UCP_LANE_TYPE_FAILED))) {
                         continue;
                     }
 
