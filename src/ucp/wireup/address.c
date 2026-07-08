@@ -364,8 +364,21 @@ static int ucp_address_pack_v1_extra_info(ucp_object_version_t addr_version,
            (pack_flags & UCP_ADDRESS_PACK_FLAG_RELEASE_VER_V1);
 }
 
+/* A lane's ep address can be packed only if it has a live UCT EP. A failed
+ * stub cannot produce an address, so both the size accounting and the packer
+ * must skip it. The check is driven by the actual UCT EP state rather than the
+ * config UCP_LANE_TYPE_FAILED bit, because a lane being recovered keeps that
+ * bit set while already holding a healthy wireup proxy that must be packed.
+ * ep is NULL only for the ep-less length path (CM), which never has failed
+ * lanes, so nothing is skipped there. */
+static int ucp_address_lane_ep_is_failed(ucp_ep_h ep, ucp_lane_index_t lane)
+{
+    return (ep != NULL) && ucp_ep_is_lane_failed_stub(ep, lane);
+}
+
 static ucs_status_t
-ucp_address_gather_devices(ucp_worker_h worker, const ucp_ep_config_key_t *key,
+ucp_address_gather_devices(ucp_worker_h worker, ucp_ep_h ep,
+                           const ucp_ep_config_key_t *key,
                            const ucp_tl_bitmap_t *tl_bitmap, uint64_t flags,
                            ucp_object_version_t addr_version,
                            unsigned max_num_paths,
@@ -402,10 +415,14 @@ ucp_address_gather_devices(ucp_worker_h worker, const ucp_ep_config_key_t *key,
              * entry. The length and flags is packed in non-unified mode only.
              */
             for (lane = 0; lane < key->num_lanes; ++lane) {
+                /* Skip lanes whose UCT EP is a failed stub: ucp_address_do_pack
+                 * cannot read their address and omits them, so they must not be
+                 * accounted for in the packed size either. Lanes marked FAILED
+                 * in the config but already re-armed with a wireup proxy during
+                 * recovery are not failed stubs and are still packed. */
                 if ((key->lanes[lane].rsc_index == rsc_index) &&
-                    !(key->lanes[lane].lane_types &
-                      UCS_BIT(UCP_LANE_TYPE_FAILED)) &&
-                    ucp_ep_config_connect_p2p(worker, key, rsc_index)) {
+                    ucp_ep_config_connect_p2p(worker, key, rsc_index) &&
+                    !ucp_address_lane_ep_is_failed(ep, lane)) {
                     dev->tl_addrs_size += !ucp_worker_is_unified_mode(worker);
                     dev->tl_addrs_size += iface_attr->ep_addr_len;
                     dev->tl_addrs_size += sizeof(uint8_t); /* lane index */
@@ -1388,9 +1405,13 @@ ucp_address_do_pack(ucp_worker_h worker, ucp_ep_h ep, void *buffer, size_t size,
 
                 ucs_for_each_bit(lane, ucp_ep_config(ep)->p2p_lanes) {
                     ucs_assert(lane < UCP_MAX_LANES);
+                    /* Skip a lane whose UCT EP is a failed stub (no address to
+                     * pack). A lane marked FAILED in the config but re-armed
+                     * with a wireup proxy during recovery is not a failed stub
+                     * and is packed so the peer can reconnect it. Must match
+                     * the accounting in ucp_address_gather_devices. */
                     if ((ucp_ep_get_rsc_index(ep, lane) != rsc_index) ||
-                        (ucp_ep_config(ep)->key.lanes[lane].lane_types &
-                         UCS_BIT(UCP_LANE_TYPE_FAILED))) {
+                        ucp_address_lane_ep_is_failed(ep, lane)) {
                         continue;
                     }
 
@@ -1518,7 +1539,7 @@ ucp_address_length(ucp_worker_h worker, const ucp_ep_config_key_t *key,
     ssize_t size;
 
     /* Collect all devices required to pack their address */
-    status = ucp_address_gather_devices(worker, key, tl_bitmap, pack_flags,
+    status = ucp_address_gather_devices(worker, NULL, key, tl_bitmap, pack_flags,
                                         addr_version, UINT_MAX, &devices,
                                         &num_devices);
     if (status != UCS_OK) {
@@ -1563,7 +1584,7 @@ ucs_status_t ucp_address_pack(ucp_worker_h worker, ucp_ep_h ep,
     }
 
     /* Collect all devices we want to pack */
-    status = ucp_address_gather_devices(worker, key, tl_bitmap, pack_flags,
+    status = ucp_address_gather_devices(worker, ep, key, tl_bitmap, pack_flags,
                                         addr_version, max_num_paths, &devices,
                                         &num_devices);
     if (status != UCS_OK) {

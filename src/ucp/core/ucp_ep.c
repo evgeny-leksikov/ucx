@@ -178,6 +178,17 @@ int ucp_is_uct_ep_failed(uct_ep_h uct_ep)
     return uct_ep->iface->ops.ep_flush == (uct_ep_flush_func_t)ucp_ep_failed_op;
 }
 
+/* True if the lane holds a live real transport EP: present, not a failed stub,
+ * and no longer a wireup proxy. Used to tolerate recovery re-entry on lanes
+ * that were already swapped to a live EP while their FAILED bit is still set. */
+static int ucp_ep_recovery_is_lane_connected(ucp_ep_h ep, ucp_lane_index_t lane)
+{
+    uct_ep_h uct_ep = ucp_ep_get_lane(ep, lane);
+
+    return (uct_ep != NULL) && !ucp_is_uct_ep_failed(uct_ep) &&
+           !ucp_wireup_ep_test(uct_ep);
+}
+
 void ucp_ep_config_key_reset(ucp_ep_config_key_t *key)
 {
     ucp_lane_index_t i;
@@ -1359,11 +1370,9 @@ static void ucp_ep_check_lanes(ucp_ep_h ep)
                                ep->refcounts.create + ep->refcounts.probe;
     uint8_t num_failed_tl_ep = 0;
     ucp_lane_index_t lane;
-    uct_ep_h uct_ep;
 
     for (lane = 0; lane < ucp_ep_num_lanes(ep); ++lane) {
-        uct_ep = ucp_ep_get_lane(ep, lane);
-        if ((uct_ep != NULL) && ucp_is_uct_ep_failed(uct_ep)) {
+        if (ucp_ep_is_lane_failed_stub(ep, lane)) {
             num_failed_tl_ep++;
         }
     }
@@ -1923,14 +1932,12 @@ ucp_ep_recovery_rebuild_iface_lane(
         ucp_ep_h ep, ucp_lane_index_t lane,
         const ucp_unpacked_address_t *remote_address)
 {
-    uct_ep_h lane_ep = ucp_ep_get_lane(ep, lane);
     const ucp_address_entry_t *ae;
     ucs_status_t status;
 
     /* Tolerate re-entry on an already-recovered (live) lane; see the p2p
      * variant for details. */
-    if ((lane_ep != NULL) && !ucp_is_uct_ep_failed(lane_ep) &&
-        !ucp_wireup_ep_test(lane_ep)) {
+    if (ucp_ep_recovery_is_lane_connected(ep, lane)) {
         return UCS_OK;
     }
 
@@ -2141,14 +2148,12 @@ ucp_ep_recovery_rebuild_p2p_lane(
     uct_ep_h aux_ep;
     ucp_rsc_index_t aux_rsc_index;
     ucp_lane_index_t remote_lane;
-    uct_ep_h lane_ep = ucp_ep_get_lane(ep, lane);
     ucs_status_t status;
 
     /* Tolerate re-entry: the lane may have already been recovered (live ep
      * swapped in by ucp_wireup_eps_progress) in a previous round while its
      * FAILED bit is still set; the next recovery_progress tick clears it. */
-    if ((lane_ep != NULL) && !ucp_is_uct_ep_failed(lane_ep) &&
-        !ucp_wireup_ep_test(lane_ep)) {
+    if (ucp_ep_recovery_is_lane_connected(ep, lane)) {
         return UCS_OK;
     }
 
