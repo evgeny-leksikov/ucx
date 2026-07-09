@@ -2090,6 +2090,9 @@ static void ucp_ep_recovery_probe_comp(uct_completion_t *self)
 
     ucs_debug("ep %p: recovery probe lane %d done: %s", ep, probe->lane,
               ucs_status_string(self->status));
+    /* TEMP RECOVERY-DIAG */
+    ucs_diag("RECOVERY-DIAG ep %p: lane %d probe done: %s", ep, probe->lane,
+             ucs_status_string(self->status));
     ucp_ep_refcount_remove(ep, probe); /* may destroy the EP */
 }
 
@@ -2208,6 +2211,8 @@ ucp_ep_recovery_rebuild_p2p_lane(
           !ucp_ep_recovery_probe_in_flight(probe) &&
           (probe->comp.status == UCS_OK))) {
         if (ucp_ep_recovery_probe_in_flight(probe)) {
+            /* TEMP RECOVERY-DIAG */
+            ucs_diag("RECOVERY-DIAG ep %p: lane %d probe in flight", ep, lane);
             return UCS_INPROGRESS; /* wait for the probe completion */
         }
 
@@ -2237,6 +2242,9 @@ ucp_ep_recovery_rebuild_p2p_lane(
 
         status = ucp_ep_recovery_arm_probe(ep, lane, aux_ep);
         if (status != UCS_OK) {
+            /* TEMP RECOVERY-DIAG */
+            ucs_diag("RECOVERY-DIAG ep %p: lane %d probe armed status=%s", ep,
+                     lane, ucs_status_string(status));
             /* INPROGRESS (async) or a synchronous error: retry next round. */
             return UCS_INPROGRESS;
         }
@@ -2267,6 +2275,8 @@ ucp_ep_recovery_rebuild_p2p_lane(
                             UCP_WIREUP_EP_FLAG_REMOTE_CONNECTED);
     ucs_debug("ep %p: recovered p2p-lane[%d] via rsc[%d]", ep, lane,
               ucp_ep_get_rsc_index(ep, lane));
+    /* TEMP RECOVERY-DIAG */
+    ucs_diag("RECOVERY-DIAG ep %p: lane %d rebuilt (ready)", ep, lane);
     return UCS_OK;
 }
 
@@ -2453,6 +2463,11 @@ int ucp_ep_recovery_progress(ucp_ep_h ep)
     ucs_assert(ep->ext->recovery_arg->retries_left > 0);
 
     recovered = ucp_ep_recovery_get_ready_lanes(ep, failed);
+    /* TEMP RECOVERY-DIAG */
+    ucs_diag("RECOVERY-DIAG ep %p: tick failed=0x%" PRIx64 " recovered=0x%"
+             PRIx64 " retries_left=%u probe_in_flight=%d", ep, (uint64_t)failed,
+             (uint64_t)recovered, ep->ext->recovery_arg->retries_left,
+             ucp_ep_recovery_any_probe_in_flight(ep));
     status    = ucp_ep_reconfig_clear_failed_lanes(ep, recovered);
     if (status != UCS_OK) {
         ucs_error("ep %p: failed to clear FAILED states for lanes 0x%" PRIx64,
@@ -2485,6 +2500,10 @@ int ucp_ep_recovery_progress(ucp_ep_h ep)
     ucs_debug("ep %p: recovery round (retries_left=%u, failed=0x%" PRIx64 ")",
               ep, ep->ext->recovery_arg->retries_left, (uint64_t)failed);
 
+    /* TEMP RECOVERY-DIAG */
+    ucs_diag("RECOVERY-DIAG ep %p: send_request failed=0x%" PRIx64
+             " retries_left=%u", ep, (uint64_t)failed,
+             ep->ext->recovery_arg->retries_left);
     ucp_ep_recovery_send_request(ep);
 
     if (--ep->ext->recovery_arg->retries_left > 0) {

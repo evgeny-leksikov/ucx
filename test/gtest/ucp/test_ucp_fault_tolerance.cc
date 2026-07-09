@@ -441,6 +441,54 @@ protected:
         UCS_TEST_MESSAGE << "Success";
     }
 
+    /* TEMP diagnostic (recovery timeout investigation): dump the injected ep's
+     * recovery state so a failing run tells slow-cadence from stall/give-up. */
+    void dump_recovery_state(const char *when, ucp_ep_h ep) {
+        const ucp_lane_map_t failed = ucp_ep_get_failed_lanes(ep);
+        ucp_ep_recovery_arg_t *arg  = ep->ext->recovery_arg;
+
+        UCS_TEST_MESSAGE << when << ": failed=0x" << std::hex << failed
+                         << std::dec << " recovery_arg="
+                         << (arg != NULL ? "active" : "NULL")
+                         << " retries_left="
+                         << (arg != NULL ? (int)arg->retries_left : -1)
+                         << " probe_count=" << ucp_ep_recovery_probe_count;
+
+        for (ucp_lane_index_t lane = 0; lane < ucp_ep_num_lanes(ep); ++lane) {
+            if (!(failed & UCS_BIT(lane))) {
+                continue;
+            }
+
+            uct_ep_h uct_ep = ucp_ep_get_lane(ep, lane);
+            const char *kind;
+            int ready = -1;
+            if (uct_ep == NULL) {
+                kind = "null";
+            } else if (ucp_is_uct_ep_failed(uct_ep)) {
+                kind = "failed_stub";
+            } else if (ucp_wireup_ep_test(uct_ep)) {
+                kind  = "wireup_proxy";
+                ready = !!(ucp_wireup_ep(uct_ep)->flags &
+                           UCP_WIREUP_EP_FLAG_READY);
+            } else {
+                kind = "live";
+            }
+
+            if (arg != NULL) {
+                const ucp_ep_recovery_probe_t *probe = &arg->probe[lane];
+                UCS_TEST_MESSAGE << "  lane " << (int)lane << ": " << kind
+                                 << " ready=" << ready << " probe{armed="
+                                 << (probe->comp.func != NULL) << " in_flight="
+                                 << (probe->comp.count != 0) << " status="
+                                 << ucs_status_string(probe->comp.status)
+                                 << "}";
+            } else {
+                UCS_TEST_MESSAGE << "  lane " << (int)lane << ": " << kind
+                                 << " ready=" << ready;
+            }
+        }
+    }
+
     void test_recovery(unsigned op_mask) {
         if (op_mask & TEST_OP_ALL_LANES_FAILED) {
             // Recovery is not expected, it depends on timings
@@ -448,6 +496,9 @@ protected:
         }
 
         UCS_TEST_MESSAGE << "Checking recovery status...";
+
+        ucp_ep_h injected_ep = sender().ep(0, INJECTED_EP_INDEX);
+        dump_recovery_state("recovery-before-wait", injected_ep);
 
         wait_for_cond([this]() {
             return ucp_ep_get_failed_lanes(sender().ep(0, INJECTED_EP_INDEX)) == 0;
@@ -457,6 +508,9 @@ protected:
 
         const ucp_lane_map_t failed_lanes =
                 ucp_ep_get_failed_lanes(sender().ep(0, INJECTED_EP_INDEX));
+        if (failed_lanes != 0) {
+            dump_recovery_state("recovery-timeout", injected_ep);
+        }
         ASSERT_EQ(0, failed_lanes)
             << "Failed lanes are not recovered " << std::hex << failed_lanes;
         for (ucp_lane_index_t lane_idx = 0;
