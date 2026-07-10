@@ -71,17 +71,9 @@ protected:
 
     void init() override {
         if (get_variant_value() & TEST_OP_ALL_LANES_FAILED) {
-            /* Defer recovery so all per-lane invalidations accumulate as failed
-             * before recovery fires. Data-path transports detect the failure
-             * via transport completions, so a long defer is harmless. UD has no
-             * such data-path signal and relies on keepalive for detection, so a
-             * long defer would also defer the error callback (making the test
-             * run until the deadline). Use a short defer that still comfortably
-             * outlasts the (sub-second) invalidation loop. */
-            const std::string defer =
-                    has_any_transport({"ud_v", "ud_x"}) ?
-                    "3s" : std::to_string(ucs::test_timeout_in_sec) + "s";
-            modify_config("KEEPALIVE_INTERVAL", defer);
+            // Keep the retry budget minimal, otherwise teardown take too long time
+            // because probe is successful but recovery is not.
+            modify_config("RECOVERY_RETRIES", "3");
         }
 
         ucp_test::init();
