@@ -10,10 +10,29 @@
 #include <string>
 
 extern "C" {
+#include <ucp/core/ucp_ep.h>
 #include <ucp/core/ucp_ep.inl>
 #include <ucp/core/ucp_context.h>
 #include <ucp/wireup/wireup_ep.h>
 }
+
+/* Exception-safe reset for the recovery probe force-fail test hook. */
+class recovery_probe_force_fail_guard {
+public:
+    recovery_probe_force_fail_guard() :
+        m_prev(ucp_ep_recovery_probe_test_force_fail)
+    {
+        ucp_ep_recovery_probe_test_force_fail = 1;
+    }
+
+    ~recovery_probe_force_fail_guard()
+    {
+        ucp_ep_recovery_probe_test_force_fail = m_prev;
+    }
+
+private:
+    int m_prev;
+};
 
 /**
  * Test class for fault tolerance with injected failures
@@ -70,10 +89,13 @@ protected:
     };
 
     void init() override {
+        ucp_ep_recovery_probe_test_force_fail = 0;
+
         if (get_variant_value() & TEST_OP_ALL_LANES_FAILED) {
             // Keep the retry budget minimal, otherwise teardown take too long time
             // because probe is successful but recovery is not.
-            modify_config("RECOVERY_RETRIES", "3");
+            modify_config("RECOVERY_RETRIES", "1");
+            modify_config("KEEPALIVE_INTERVAL", std::to_string(3) + "s");
         }
 
         ucp_test::init();
@@ -87,6 +109,11 @@ protected:
         if (get_variant_value() & TEST_OP_AM) {
             set_am_handler();
         }
+    }
+
+    void cleanup() override {
+        ucp_ep_recovery_probe_test_force_fail = 0;
+        ucp_test::cleanup();
     }
 
     void set_am_handler() {
@@ -763,7 +790,7 @@ UCS_TEST_P(test_ucp_fault_tolerance, broken_route, "MAX_EAGER_LANES=8",
     }
 
     /* Keep the route down: every probe fails, so the gate never opens. */
-    ucp_ep_recovery_probe_test_force_fail = 1;
+    recovery_probe_force_fail_guard force_fail;
 
     /* Inject failures on the initiator's RC AM lanes (all but one live lane),
      * which marks them FAILED and kicks off probe-gated recovery. */
@@ -771,7 +798,6 @@ UCS_TEST_P(test_ucp_fault_tolerance, broken_route, "MAX_EAGER_LANES=8",
 
     ucp_ep_h ep = sender().ep(0, INJECTED_EP_INDEX);
     if (ucp_ep_get_failed_lanes(ep) == 0) {
-        ucp_ep_recovery_probe_test_force_fail = 0;
         UCS_TEST_SKIP_R("no RC p2p lane was marked failed");
     }
 
@@ -780,8 +806,6 @@ UCS_TEST_P(test_ucp_fault_tolerance, broken_route, "MAX_EAGER_LANES=8",
     while (ucs_get_time() < deadline) {
         short_progress_loop();
     }
-
-    ucp_ep_recovery_probe_test_force_fail = 0;
 
     /* Probes must have been re-armed across several recovery rounds ... */
     EXPECT_GT(ucp_ep_recovery_probe_count, probes_before + 1)
@@ -882,7 +906,7 @@ UCS_TEST_P(test_ucp_fault_tolerance, recovery_retries_exhausted_live_lanes,
 
     /* Every probe fails, so a failed lane can never recover and the tiny retry
      * budget is guaranteed to be exhausted. */
-    ucp_ep_recovery_probe_test_force_fail = 1;
+    recovery_probe_force_fail_guard force_fail;
 
     /* Fail all-but-one of the initiator's RC AM lanes: this leaves at least one
      * LIVE lane, so retry exhaustion hits the give-up-but-keep-EP branch. */
@@ -890,7 +914,6 @@ UCS_TEST_P(test_ucp_fault_tolerance, recovery_retries_exhausted_live_lanes,
 
     ucp_ep_h ep = sender().ep(0, INJECTED_EP_INDEX);
     if (ucp_ep_get_failed_lanes(ep) == 0) {
-        ucp_ep_recovery_probe_test_force_fail = 0;
         UCS_TEST_SKIP_R("no RC p2p lane was marked failed");
     }
 
@@ -901,8 +924,6 @@ UCS_TEST_P(test_ucp_fault_tolerance, recovery_retries_exhausted_live_lanes,
     while (ucs_get_time() < deadline) {
         short_progress_loop();
     }
-
-    ucp_ep_recovery_probe_test_force_fail = 0;
 
     /* The EP survived on its live lanes: it was never marked failed (no error
      * callback), and the lanes we gave up on stay FAILED (never recovered). */

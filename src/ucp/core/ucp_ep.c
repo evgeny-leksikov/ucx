@@ -2401,6 +2401,8 @@ ucs_status_t ucp_ep_recovery_arm(ucp_ep_h ep)
     ucp_worker_h worker        = ep->worker;
     ucp_context_h context      = worker->context;
 
+    ucs_assert(!(ep->flags & UCP_EP_FLAG_FAILED));
+
     if (ucp_ep_config(ep)->key.dst_version < 22) {
         ucs_diag("ep: %p: recovery support requires UCX 1.22 or later, "
                  "remote peer version %d is not supported",
@@ -2443,12 +2445,15 @@ int ucp_ep_recovery_progress(ucp_ep_h ep)
         goto done;
     }
 
+    ucs_assert(ucp_ep_config(ep)->key.am_lane != UCP_NULL_LANE);
+
     failed = ucp_ep_get_failed_lanes(ep);
     if (failed == 0) {
         /* Recovery completed between rounds, the ep operates normally */
         ucs_assert(ep->ext->recovery_arg == NULL);
         goto done;
     }
+
 
     if (ep->ext->recovery_arg == NULL) {
         /* Retries were exhausted on an earlier round while live lanes
@@ -2530,11 +2535,10 @@ int ucp_ep_recovery_progress(ucp_ep_h ep)
          */
         ucp_ep_discard_lanes(ep, failed, UCS_ERR_ENDPOINT_TIMEOUT,
                              ep->cfg_index);
+        ucs_free(ep->ext->recovery_arg);
+        ep->ext->recovery_arg = NULL;
+        ret                   = 1;
     }
-
-    ucs_free(ep->ext->recovery_arg);
-    ep->ext->recovery_arg = NULL;
-    ret                   = 1;
 
 done:
     UCS_ASYNC_UNBLOCK(&worker->async);
@@ -2548,6 +2552,11 @@ ucp_ep_failover_reconfig(ucp_ep_h ucp_ep, ucp_lane_map_t failed_lanes,
     ucp_worker_cfg_index_t old_cfg_index = ucp_ep->cfg_index;
     ucs_status_t status;
 
+    if (ucp_ep->flags & UCP_EP_FLAG_FAILED) {
+        /* Already fully failed: do not reconfigure or re-arm recovery. */
+        return UCS_ERR_ENDPOINT_TIMEOUT;
+    }
+
     ucs_diag("ep %p: failover reconfig, failed_lanes 0x%lx", ucp_ep,
              failed_lanes);
 
@@ -2557,8 +2566,17 @@ ucp_ep_failover_reconfig(ucp_ep_h ucp_ep, ucp_lane_map_t failed_lanes,
                     "ep %p: cfg_index %u -> %u after reconfiguration error %s",
                     ucp_ep, old_cfg_index, ucp_ep->cfg_index,
                     ucs_status_string(status));
+        /* No AM lane (or other reconfig failure): fail the whole EP so all
+         * lanes are discarded and flush can complete. Do not arm recovery. */
         return status;
     }
+
+    // if (ucp_ep_failover_am_lane_missing(ucp_ep)) {
+    //     ucs_diag("ep %p: no wireup/AM lane after failover reconfig, "
+    //              "failing endpoint",
+    //              ucp_ep);
+    //     return UCS_ERR_UNREACHABLE;
+    // }
 
     ucp_ep_discard_lanes(ucp_ep, failed_lanes, discard_status, old_cfg_index);
     return ucp_ep_recovery_arm(ucp_ep);
@@ -2573,6 +2591,10 @@ void ucp_ep_set_lanes_failed(ucp_ep_h ucp_ep, ucp_lane_map_t lanes,
     UCP_WORKER_THREAD_CS_CHECK_IS_BLOCKED(ucp_ep->worker);
     ucs_assert(UCS_STATUS_IS_ERR(status));
     ucs_assert(!ucs_async_is_from_async(&ucp_ep->worker->async));
+
+    if (ucp_ep->flags & UCP_EP_FLAG_FAILED) {
+        return;
+    }
 
     if (ucp_ep_err_mode_eq(ucp_ep, UCP_ERR_HANDLING_MODE_FAILOVER) &&
         /* TODO refactor this to mark all lanes as failed */
