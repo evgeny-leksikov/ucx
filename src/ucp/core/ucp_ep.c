@@ -1983,7 +1983,8 @@ ucp_ep_recovery_create_aux(ucp_ep_h ep, ucp_lane_index_t lane,
     ucp_context_h context    = worker->context;
     ucp_rsc_index_t lane_rsc = ucp_ep_get_rsc_index(ep, lane);
     unsigned ep_init_flags   =
-            ucp_ep_err_mode_init_flags(ucp_ep_config(ep)->key.err_mode);
+            ucp_ep_err_mode_init_flags(ucp_ep_config(ep)->key.err_mode) |
+            UCP_EP_INIT_RECOVERY;
     ucp_wireup_select_info_t select_info;
     const ucp_address_entry_t *peer_ae;
     ucp_worker_iface_t *wiface;
@@ -2002,7 +2003,6 @@ ucp_ep_recovery_create_aux(ucp_ep_h ep, ucp_lane_index_t lane,
     status = ucp_wireup_select_aux_transport(ep, ep_init_flags,
                                              ucp_tl_bitmap_max, remote_address,
                                              local_dev_bitmap, remote_dev_bitmap,
-                                             UCT_IFACE_FLAG_EP_CHECK,
                                              &select_info);
     if (status != UCS_OK) {
         ucs_debug("ep %p lane %d: no aux transport for recovery: %s", ep, lane,
@@ -2040,18 +2040,19 @@ uint64_t ucp_ep_recovery_probe_count = 0;
  * broken route so the probe gate keeps holding off lane reconnection. */
 int ucp_ep_recovery_probe_test_force_fail = 0;
 
-static UCS_F_ALWAYS_INLINE int
-ucp_ep_recovery_probe_in_flight(const ucp_ep_recovery_probe_t *probe)
+static UCS_F_ALWAYS_INLINE ucs_status_t
+ucp_ep_recovery_probe_status(const ucp_ep_recovery_probe_t *probe)
 {
-    return probe->comp.count != 0;
-}
+    if (ucs_unlikely(probe->comp.func == NULL)) {
+        return UCS_ERR_UNREACHABLE; /* not armed yet */
+    }
 
-static UCS_F_ALWAYS_INLINE int
-ucp_ep_recovery_probe_succeeded(const ucp_ep_recovery_probe_t *probe)
-{
-    return (probe->comp.func != NULL) &&
-           !ucp_ep_recovery_probe_in_flight(probe) &&
-           (probe->comp.status == UCS_OK);
+    if (probe->comp.count != 0) {
+        ucs_assert(probe->comp.count == 1);
+        return UCS_INPROGRESS;
+    }
+
+    return probe->comp.status;
 }
 
 /* Is any p2p lane still waiting for its aux probe to complete? While true, a
@@ -2066,7 +2067,8 @@ static int ucp_ep_recovery_any_probe_in_flight(ucp_ep_h ep)
     }
 
     for (lane = 0; lane < ucp_ep_num_lanes(ep); ++lane) {
-        if (ucp_ep_recovery_probe_in_flight(&arg->probe[lane])) {
+        if (ucp_ep_recovery_probe_status(&arg->probe[lane]) ==
+            UCS_INPROGRESS) {
             return 1;
         }
     }
@@ -2102,7 +2104,7 @@ ucp_ep_recovery_arm_probe(ucp_ep_h ep, ucp_lane_index_t lane, uct_ep_h aux_ep)
     ucs_status_t status;
 
     ucs_assert(aux_ep != NULL);
-    ucs_assert(!ucp_ep_recovery_probe_in_flight(probe));
+    ucs_assert(probe->comp.count == 0);
 
     probe->ep          = ep;
     probe->lane        = lane;
@@ -2197,12 +2199,13 @@ ucp_ep_recovery_rebuild_p2p_lane(
     ucs_assert(wireup_ep != NULL);
     probe = &ep->ext->recovery_arg->probe[lane];
 
-    /* Probe gate: uct_ep_check on an aux ep before p2p lane connect; see
-     * ucp_ep_recovery_probe_t for state encoding. */
-    if (!ucp_ep_recovery_probe_succeeded(probe)) {
-        if (ucp_ep_recovery_probe_in_flight(probe)) {
-            return UCS_INPROGRESS; /* wait for the probe completion */
-        }
+    /* Probe gate: uct_ep_check on an aux ep before p2p lane connect. */
+    status = ucp_ep_recovery_probe_status(probe);
+    if (status == UCS_INPROGRESS) {
+        return UCS_INPROGRESS; /* wait for the probe completion */
+    }
+
+    if (status != UCS_OK) {
 
         /* Drop a stale aux from a previous (failed) probe before re-arming. */
         if (wireup_ep->aux_ep != NULL) {

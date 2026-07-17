@@ -176,7 +176,6 @@ ucp_wireup_select_aux_transport(ucp_ep_h ep, unsigned ep_init_flags,
                                 const ucp_unpacked_address_t *remote_address,
                                 uint64_t local_dev_bitmap,
                                 uint64_t remote_dev_bitmap,
-                                uint64_t extra_local_iface_mandatory,
                                 ucp_wireup_select_info_t *select_info);
 
 double ucp_wireup_amo_score_func(const ucp_worker_iface_t *wiface,

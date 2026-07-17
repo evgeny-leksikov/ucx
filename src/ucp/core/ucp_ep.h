@@ -169,6 +169,8 @@ enum {
                                                            transports for AM lane */
     UCP_EP_INIT_ERR_MODE_FAILOVER      = UCS_BIT(11), /**< Endpoint requires an
                                                            @ref UCP_ERR_HANDLING_MODE_FAILOVER */
+    UCP_EP_INIT_RECOVERY               = UCS_BIT(12), /**< Aux selection for lane
+                                                           recovery */
 
     /**
      * For consistency with @ref UCP_SA_DATA_MASK_ERR_MODE_FAILOVER
@@ -495,9 +497,8 @@ typedef struct {
 /* Per-lane recovery probe: an aux uct_ep_check() completion whose result gates
  * reconnecting the fresh inner transport EP. It lives in ucp_ep_recovery_arg_t
  * so it survives ucp_wireup_ep_t teardown, and each in-flight probe holds an EP
- * 'probe' reference so the completion always lands on live memory. All state is
- * derived from comp: func != NULL once armed, count != 0 while pending, status
- * is OK/error once count == 0. */
+ * 'probe' reference so the completion always lands on live memory. Each lane
+ * has its own completion (count is 0 or 1); func != NULL once armed. */
 typedef struct ucp_ep_recovery_probe {
     uct_completion_t  comp;   /* Chained onto the aux uct_ep_check() */
     ucp_ep_h          ep;     /* Owner, for the completion callback */
