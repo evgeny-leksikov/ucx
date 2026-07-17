@@ -981,15 +981,12 @@ void ucp_wireup_process_ack(ucp_worker_h worker, ucp_ep_h ep,
     ucp_wireup_remote_connected(ep);
 }
 
-/* Add to @a tl_bitmap the auxiliary resources living on the same physical
- * device as each provided p2p lane, so the packed LANES_ADDR addresses also
- * carry the local aux iface address. The receiver uses it to bind a fresh aux
- * ep and probe the route (uct_ep_check) before connecting the recovered RC
- * lane, without an extra wireup round-trip. Aux transports are selected by
- * iface capability (same-device, CONNECT_TO_IFACE + EP_CHECK), the same way
- * normal wireup picks the aux lane, rather than by the UCP_TL_RSC_FLAG_AUX
- * config flag (which is only set for transports enabled aux-only in UCX_TLS,
- * so it misses UD when UD is a primary transport, e.g. shm,ib). */
+/* Add to @a tl_bitmap same-device ifaces with CONNECT_TO_IFACE and EP_CHECK so
+ * LANES_ADDR carries probe-capable aux addresses for recovery. This is broader
+ * than normal wireup aux selection; the receiver narrows via
+ * ucp_wireup_select_aux_transport with device bitmaps and EP_CHECK mandatory.
+ * Uses iface capability rather than UCP_TL_RSC_FLAG_AUX (which misses
+ * transports that are not aux-only in UCX_TLS). */
 static void
 ucp_wireup_augment_aux_tls(ucp_ep_h ep, ucp_lane_map_t lane_map,
                            ucp_tl_bitmap_t *tl_bitmap)
@@ -1015,14 +1012,9 @@ ucp_wireup_augment_aux_tls(ucp_ep_h ep, ucp_lane_map_t lane_map,
                 continue;
             }
 
-            /* Pack every same-device connectionless iface that supports
-             * uct_ep_check (CONNECT_TO_IFACE + EP_CHECK) as a probe aux,
-             * selected by iface capability rather than the UCP_TL_RSC_FLAG_AUX
-             * config flag. The receiver runs the real aux selection
-             * (ucp_ep_recovery_create_aux -> ucp_wireup_select_aux_transport),
-             * constrained to the failed lane's local and peer devices, and picks
-             * the best-scoring reachable entry among these, so packing several
-             * UD transports per device is safe. */
+            /* Pack every same-device CONNECT_TO_IFACE + EP_CHECK iface; the
+             * receiver picks the best reachable entry via
+             * ucp_wireup_select_aux_transport. */
             iface_flags = ucp_worker_iface_get_attr(ep->worker,
                                                     aux_rsc)->cap.flags;
             if (ucs_test_all_flags(iface_flags,

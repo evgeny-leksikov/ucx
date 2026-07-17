@@ -3069,6 +3069,7 @@ ucp_wireup_select_aux_transport(ucp_ep_h ep, unsigned ep_init_flags,
                                 const ucp_unpacked_address_t *remote_address,
                                 uint64_t local_dev_bitmap,
                                 uint64_t remote_dev_bitmap,
+                                uint64_t extra_local_iface_mandatory,
                                 ucp_wireup_select_info_t *select_info)
 {
     ucp_wireup_select_context_t select_ctx = {};
@@ -3082,6 +3083,7 @@ ucp_wireup_select_aux_transport(ucp_ep_h ep, unsigned ep_init_flags,
     /* Select auxiliary transport that supports async active message callback */
     ucp_wireup_fill_aux_criteria(&criteria, ep_init_flags,
                                  UCP_ADDR_IFACE_FLAG_CB_ASYNC);
+    criteria.local_iface_flags.mandatory |= extra_local_iface_mandatory;
     status = ucp_wireup_select_aux_transport_by_seg_size(&select_ctx,
                                                          &select_params,
                                                          &criteria,
@@ -3095,6 +3097,7 @@ ucp_wireup_select_aux_transport(ucp_ep_h ep, unsigned ep_init_flags,
     /* Fallback to an auxiliary transport without async active message callback
      * requirement */
     ucp_wireup_fill_aux_criteria(&criteria, ep_init_flags, 0);
+    criteria.local_iface_flags.mandatory |= extra_local_iface_mandatory;
     return ucp_wireup_select_aux_transport_by_seg_size(&select_ctx,
                                                        &select_params,
                                                        &criteria,

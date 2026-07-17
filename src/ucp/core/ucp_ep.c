@@ -1968,23 +1968,11 @@ ucp_ep_recovery_rebuild_iface_lane(
     return UCS_OK;
 }
 
-/* Select and create a local aux ep on the same device as the failed RC lane,
- * targeting the matching peer aux iface address, used to probe (uct_ep_check)
- * the route before reconnecting the RC lane.
- *
- * The aux selection is routed through the real wireup selection machinery
- * (ucp_wireup_select_aux_transport), restricted to the failed RC lane's local
- * device (local_dev_bitmap) and the failed RC lane's peer device
- * (remote_dev_bitmap). This applies the same seg-size scoring and reachability
- * checks as normal wireup aux selection, so the chosen local aux rsc
- * (select_info.rsc_index) and the peer aux address entry
- * (select_info.addr_index) agree with what the peer packed into LANES_ADDR and
- * with how the RC lane's aux was originally established. Constraining BOTH ends
- * to the failed lane's devices ensures the probe tests the same rail as the
- * lane being recovered (otherwise it could probe a different, still-up rail and
- * report a false "alive"). Hand-rolling this by iterating tl_rscs (by dev_index
- * + capability) diverged from the real path after seg-size aux scoring (#11144)
- * and tightened reachability (#11575), breaking rc_mlx5 recovery. */
+/* Select and create a local aux ep on the failed p2p lane's device, used to
+ * probe (uct_ep_check) the route before reconnecting. Selection goes through
+ * ucp_wireup_select_aux_transport with device bitmaps and EP_CHECK mandatory,
+ * so it stays aligned with wireup aux scoring/reachability (hand-rolled
+ * iteration diverged after #11144 / #11575). */
 static ucs_status_t
 ucp_ep_recovery_create_aux(ucp_ep_h ep, ucp_lane_index_t lane,
                            const ucp_unpacked_address_t *remote_address,
@@ -2007,13 +1995,14 @@ ucp_ep_recovery_create_aux(ucp_ep_h ep, ucp_lane_index_t lane,
         return UCS_ERR_NO_RESOURCE;
     }
 
-    /* Restrict the local aux to the failed RC lane's device and the peer aux to
-     * the failed RC lane's peer device so the probe tests the same rail as the
-     * lane being recovered. */
+    /* Restrict the local aux to the failed p2p lane's device and the peer aux
+     * to the failed p2p lane's peer device so the probe tests the same rail as
+     * the lane being recovered. */
     local_dev_bitmap = UCS_BIT(context->tl_rscs[lane_rsc].dev_index);
     status = ucp_wireup_select_aux_transport(ep, ep_init_flags,
                                              ucp_tl_bitmap_max, remote_address,
                                              local_dev_bitmap, remote_dev_bitmap,
+                                             UCT_IFACE_FLAG_EP_CHECK,
                                              &select_info);
     if (status != UCS_OK) {
         ucs_debug("ep %p lane %d: no aux transport for recovery: %s", ep, lane,
@@ -2048,13 +2037,21 @@ uint64_t ucp_ep_recovery_probe_count = 0;
 
 /* Test hook: when non-zero, recovery probes are completed synchronously as
  * failed without issuing the real uct_ep_check(), simulating a persistently
- * broken route so the probe gate keeps holding off RC reconnection. */
+ * broken route so the probe gate keeps holding off lane reconnection. */
 int ucp_ep_recovery_probe_test_force_fail = 0;
 
 static UCS_F_ALWAYS_INLINE int
 ucp_ep_recovery_probe_in_flight(const ucp_ep_recovery_probe_t *probe)
 {
     return probe->comp.count != 0;
+}
+
+static UCS_F_ALWAYS_INLINE int
+ucp_ep_recovery_probe_succeeded(const ucp_ep_recovery_probe_t *probe)
+{
+    return (probe->comp.func != NULL) &&
+           !ucp_ep_recovery_probe_in_flight(probe) &&
+           (probe->comp.status == UCS_OK);
 }
 
 /* Is any p2p lane still waiting for its aux probe to complete? While true, a
@@ -2091,9 +2088,6 @@ static void ucp_ep_recovery_probe_comp(uct_completion_t *self)
 
     ucs_debug("ep %p: recovery probe lane %d done: %s", ep, probe->lane,
               ucs_status_string(self->status));
-    /* TEMP RECOVERY-DIAG */
-    ucs_diag("RECOVERY-DIAG ep %p: lane %d probe done: %s", ep, probe->lane,
-             ucs_status_string(self->status));
     ucp_ep_refcount_remove(ep, probe); /* may destroy the EP */
 }
 
@@ -2192,7 +2186,7 @@ ucp_ep_recovery_rebuild_p2p_lane(
         return status;
     }
 
-    /* Create the fresh inner RC EP early (iface-only) so its address is
+    /* Create the fresh inner transport EP early (iface-only) so its address is
      * packable into LANES_ADDR; it is connected only after the probe. */
     status = ucp_ep_recovery_set_next_ep(ep, lane, NULL);
     if (status != UCS_OK) {
@@ -2203,17 +2197,10 @@ ucp_ep_recovery_rebuild_p2p_lane(
     ucs_assert(wireup_ep != NULL);
     probe = &ep->ext->recovery_arg->probe[lane];
 
-    /* Probe gate: confirm the route via an aux uct_ep_check before connecting
-     * the fresh RC QP, so we don't churn reconnecting RC over a broken route.
-     * The probe state lives in the EP-lifetime recovery_arg: comp.func != NULL
-     * once armed, comp.count != 0 while pending, comp.status holds the
-     * outcome. */
-    if (!((probe->comp.func != NULL) &&
-          !ucp_ep_recovery_probe_in_flight(probe) &&
-          (probe->comp.status == UCS_OK))) {
+    /* Probe gate: uct_ep_check on an aux ep before p2p lane connect; see
+     * ucp_ep_recovery_probe_t for state encoding. */
+    if (!ucp_ep_recovery_probe_succeeded(probe)) {
         if (ucp_ep_recovery_probe_in_flight(probe)) {
-            /* TEMP RECOVERY-DIAG */
-            ucs_diag("RECOVERY-DIAG ep %p: lane %d probe in flight", ep, lane);
             return UCS_INPROGRESS; /* wait for the probe completion */
         }
 
@@ -2243,16 +2230,13 @@ ucp_ep_recovery_rebuild_p2p_lane(
 
         status = ucp_ep_recovery_arm_probe(ep, lane, aux_ep);
         if (status != UCS_OK) {
-            /* TEMP RECOVERY-DIAG */
-            ucs_diag("RECOVERY-DIAG ep %p: lane %d probe armed status=%s", ep,
-                     lane, ucs_status_string(status));
             /* INPROGRESS (async) or a synchronous error: retry next round. */
             return UCS_INPROGRESS;
         }
         /* Synchronous probe success - fall through to connect. */
     }
 
-    /* Probe succeeded: connect the fresh inner RC EP to the peer. */
+    /* Probe succeeded: connect the fresh inner transport EP to the peer. */
     status = ucp_wireup_ep_connect_to_ep_v2(ucp_ep_get_lane(ep, lane),
                                             address_entry, ep_entry);
     if (status != UCS_OK) {
@@ -2276,8 +2260,6 @@ ucp_ep_recovery_rebuild_p2p_lane(
                             UCP_WIREUP_EP_FLAG_REMOTE_CONNECTED);
     ucs_debug("ep %p: recovered p2p-lane[%d] via rsc[%d]", ep, lane,
               ucp_ep_get_rsc_index(ep, lane));
-    /* TEMP RECOVERY-DIAG */
-    ucs_diag("RECOVERY-DIAG ep %p: lane %d rebuilt (ready)", ep, lane);
     return UCS_OK;
 }
 
@@ -2469,11 +2451,6 @@ int ucp_ep_recovery_progress(ucp_ep_h ep)
     ucs_assert(ep->ext->recovery_arg->retries_left > 0);
 
     recovered = ucp_ep_recovery_get_ready_lanes(ep, failed);
-    /* TEMP RECOVERY-DIAG */
-    ucs_diag("RECOVERY-DIAG ep %p: tick failed=0x%" PRIx64 " recovered=0x%"
-             PRIx64 " retries_left=%u probe_in_flight=%d", ep, (uint64_t)failed,
-             (uint64_t)recovered, ep->ext->recovery_arg->retries_left,
-             ucp_ep_recovery_any_probe_in_flight(ep));
     status    = ucp_ep_reconfig_clear_failed_lanes(ep, recovered);
     if (status != UCS_OK) {
         ucs_error("ep %p: failed to clear FAILED states for lanes 0x%" PRIx64,
@@ -2506,10 +2483,6 @@ int ucp_ep_recovery_progress(ucp_ep_h ep)
     ucs_debug("ep %p: recovery round (retries_left=%u, failed=0x%" PRIx64 ")",
               ep, ep->ext->recovery_arg->retries_left, (uint64_t)failed);
 
-    /* TEMP RECOVERY-DIAG */
-    ucs_diag("RECOVERY-DIAG ep %p: send_request failed=0x%" PRIx64
-             " retries_left=%u", ep, (uint64_t)failed,
-             ep->ext->recovery_arg->retries_left);
     ucp_ep_recovery_send_request(ep);
 
     if (--ep->ext->recovery_arg->retries_left > 0) {
@@ -2525,8 +2498,8 @@ int ucp_ep_recovery_progress(ucp_ep_h ep)
                     "failed lanes 0x%" PRIx64, ep, (uint64_t)failed);
         /* Tear down the not-ready recovery proxies that
          * ucp_ep_recovery_rebuild_p2p_lane() left in the failed lane slots
-         * (fresh wireup_ep with an unconnected inner RC + aux that never
-         * became ready because the probe kept failing). Leaving them in place
+         * (fresh wireup_ep with an unconnected inner transport EP + aux that
+         * never became ready because the probe kept failing). Leaving them in place
          * hangs any later data send or the EP teardown flush forever on the
          * proxy pending queue. Discarding purges those pending queues and
          * swaps in the failed_tl stub, so the failed lanes route around
@@ -2571,13 +2544,6 @@ ucp_ep_failover_reconfig(ucp_ep_h ucp_ep, ucp_lane_map_t failed_lanes,
          * lanes are discarded and flush can complete. Do not arm recovery. */
         return status;
     }
-
-    // if (ucp_ep_failover_am_lane_missing(ucp_ep)) {
-    //     ucs_diag("ep %p: no wireup/AM lane after failover reconfig, "
-    //              "failing endpoint",
-    //              ucp_ep);
-    //     return UCS_ERR_UNREACHABLE;
-    // }
 
     ucp_ep_discard_lanes(ucp_ep, failed_lanes, discard_status, old_cfg_index);
     return ucp_ep_recovery_arm(ucp_ep);

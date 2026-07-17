@@ -92,8 +92,8 @@ protected:
         ucp_ep_recovery_probe_test_force_fail = 0;
 
         if (get_variant_value() & TEST_OP_ALL_LANES_FAILED) {
-            // Keep the retry budget minimal, otherwise teardown take too long time
-            // because probe is successful but recovery is not.
+            /* Keep the retry budget minimal, otherwise teardown takes too long
+             * because probe is successful but recovery is not. */
             modify_config("RECOVERY_RETRIES", "1");
             modify_config("KEEPALIVE_INTERVAL", std::to_string(3) + "s");
         }
@@ -460,54 +460,6 @@ protected:
         UCS_TEST_MESSAGE << "Success";
     }
 
-    /* TEMP diagnostic (recovery timeout investigation): dump the injected ep's
-     * recovery state so a failing run tells slow-cadence from stall/give-up. */
-    void dump_recovery_state(const char *when, ucp_ep_h ep) {
-        const ucp_lane_map_t failed = ucp_ep_get_failed_lanes(ep);
-        ucp_ep_recovery_arg_t *arg  = ep->ext->recovery_arg;
-
-        UCS_TEST_MESSAGE << when << ": failed=0x" << std::hex << failed
-                         << std::dec << " recovery_arg="
-                         << (arg != NULL ? "active" : "NULL")
-                         << " retries_left="
-                         << (arg != NULL ? (int)arg->retries_left : -1)
-                         << " probe_count=" << ucp_ep_recovery_probe_count;
-
-        for (ucp_lane_index_t lane = 0; lane < ucp_ep_num_lanes(ep); ++lane) {
-            if (!(failed & UCS_BIT(lane))) {
-                continue;
-            }
-
-            uct_ep_h uct_ep = ucp_ep_get_lane(ep, lane);
-            const char *kind;
-            int ready = -1;
-            if (uct_ep == NULL) {
-                kind = "null";
-            } else if (ucp_is_uct_ep_failed(uct_ep)) {
-                kind = "failed_stub";
-            } else if (ucp_wireup_ep_test(uct_ep)) {
-                kind  = "wireup_proxy";
-                ready = !!(ucp_wireup_ep(uct_ep)->flags &
-                           UCP_WIREUP_EP_FLAG_READY);
-            } else {
-                kind = "live";
-            }
-
-            if (arg != NULL) {
-                const ucp_ep_recovery_probe_t *probe = &arg->probe[lane];
-                UCS_TEST_MESSAGE << "  lane " << (int)lane << ": " << kind
-                                 << " ready=" << ready << " probe{armed="
-                                 << (probe->comp.func != NULL) << " in_flight="
-                                 << (probe->comp.count != 0) << " status="
-                                 << ucs_status_string(probe->comp.status)
-                                 << "}";
-            } else {
-                UCS_TEST_MESSAGE << "  lane " << (int)lane << ": " << kind
-                                 << " ready=" << ready;
-            }
-        }
-    }
-
     void test_recovery(unsigned op_mask) {
         if (op_mask & TEST_OP_ALL_LANES_FAILED) {
             // Recovery is not expected, it depends on timings
@@ -515,9 +467,6 @@ protected:
         }
 
         UCS_TEST_MESSAGE << "Checking recovery status...";
-
-        ucp_ep_h injected_ep = sender().ep(0, INJECTED_EP_INDEX);
-        dump_recovery_state("recovery-before-wait", injected_ep);
 
         wait_for_cond([this]() {
             return ucp_ep_get_failed_lanes(sender().ep(0, INJECTED_EP_INDEX)) == 0;
@@ -527,9 +476,6 @@ protected:
 
         const ucp_lane_map_t failed_lanes =
                 ucp_ep_get_failed_lanes(sender().ep(0, INJECTED_EP_INDEX));
-        if (failed_lanes != 0) {
-            dump_recovery_state("recovery-timeout", injected_ep);
-        }
         ASSERT_EQ(0, failed_lanes)
             << "Failed lanes are not recovered " << std::hex << failed_lanes;
         for (ucp_lane_index_t lane_idx = 0;
@@ -718,6 +664,15 @@ protected:
 protected:
     static constexpr uint64_t m_seed = 0x12345678;
 
+    void skip_unless_rc_probe_gate() {
+        if (get_variant_value() != TEST_OP_AM) {
+            UCS_TEST_SKIP_R("pure AM variant only");
+        }
+        if (!has_any_transport({"rc_x", "rc_v", "rc_mlx5", "rc_verbs", "ib"})) {
+            UCS_TEST_SKIP_R("probe gate applies to RC p2p lanes only");
+        }
+    }
+
     const ucp_request_param_t m_req_empty_param = { 0 };
     std::vector<uint8_t> m_am_rbuf              = std::vector<uint8_t>(am_msg_size());
     volatile bool m_am_received                 = false;
@@ -757,14 +712,7 @@ UCS_TEST_P(test_ucp_fault_tolerance, target_failure, "MAX_EAGER_LANES=8",
 UCS_TEST_P(test_ucp_fault_tolerance, probe_gated_recovery, "MAX_EAGER_LANES=8",
            "RECOVERY_RETRIES=100")
 {
-    if (get_variant_value() != TEST_OP_AM) {
-        UCS_TEST_SKIP_R("pure AM variant only");
-    }
-    /* The probe gate is only used to recover RC p2p lanes; other transports
-     * rebuild without a probe. */
-    if (!has_any_transport({"rc_x", "rc_v", "rc_mlx5", "rc_verbs", "ib"})) {
-        UCS_TEST_SKIP_R("probe gate applies to RC p2p lanes only");
-    }
+    skip_unless_rc_probe_gate();
 
     const uint64_t probes_before = ucp_ep_recovery_probe_count;
 
@@ -782,12 +730,7 @@ UCS_TEST_P(test_ucp_fault_tolerance, probe_gated_recovery, "MAX_EAGER_LANES=8",
 UCS_TEST_P(test_ucp_fault_tolerance, broken_route, "MAX_EAGER_LANES=8",
            "RECOVERY_RETRIES=1000")
 {
-    if (get_variant_value() != TEST_OP_AM) {
-        UCS_TEST_SKIP_R("pure AM variant only");
-    }
-    if (!has_any_transport({"rc_x", "rc_v", "rc_mlx5", "rc_verbs", "ib"})) {
-        UCS_TEST_SKIP_R("probe gate applies to RC p2p lanes only");
-    }
+    skip_unless_rc_probe_gate();
 
     /* Keep the route down: every probe fails, so the gate never opens. */
     recovery_probe_force_fail_guard force_fail;
@@ -824,12 +767,7 @@ UCS_TEST_P(test_ucp_fault_tolerance, broken_route, "MAX_EAGER_LANES=8",
 UCS_TEST_P(test_ucp_fault_tolerance, teardown_with_outstanding_probe,
            "MAX_EAGER_LANES=8", "RECOVERY_RETRIES=1000")
 {
-    if (get_variant_value() != TEST_OP_AM) {
-        UCS_TEST_SKIP_R("pure AM variant only");
-    }
-    if (!has_any_transport({"rc_x", "rc_v", "rc_mlx5", "rc_verbs", "ib"})) {
-        UCS_TEST_SKIP_R("probe gate applies to RC p2p lanes only");
-    }
+    skip_unless_rc_probe_gate();
 
     /* Kick off probe-gated recovery on the initiator's RC AM lanes. */
     test_am_with_injected_failure(FAILURE_SIDE_INITIATOR, TEST_OP_AM);
@@ -897,12 +835,7 @@ UCS_TEST_P(test_ucp_fault_tolerance, teardown_with_outstanding_probe,
 UCS_TEST_P(test_ucp_fault_tolerance, recovery_retries_exhausted_live_lanes,
            "MAX_EAGER_LANES=8", "RECOVERY_RETRIES=2", "KEEPALIVE_INTERVAL=0.1s")
 {
-    if (get_variant_value() != TEST_OP_AM) {
-        UCS_TEST_SKIP_R("pure AM variant only");
-    }
-    if (!has_any_transport({"rc_x", "rc_v", "rc_mlx5", "rc_verbs", "ib"})) {
-        UCS_TEST_SKIP_R("probe gate applies to RC p2p lanes only");
-    }
+    skip_unless_rc_probe_gate();
 
     /* Every probe fails, so a failed lane can never recover and the tiny retry
      * budget is guaranteed to be exhausted. */

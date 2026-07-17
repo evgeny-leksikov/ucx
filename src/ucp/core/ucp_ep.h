@@ -493,7 +493,7 @@ typedef struct {
 
 
 /* Per-lane recovery probe: an aux uct_ep_check() completion whose result gates
- * reconnecting the fresh RC QP. It lives in ucp_ep_recovery_arg_t (EP lifetime)
+ * reconnecting the fresh inner transport EP. It lives in ucp_ep_recovery_arg_t
  * so it survives ucp_wireup_ep_t teardown, and each in-flight probe holds an EP
  * 'probe' reference so the completion always lands on live memory. All state is
  * derived from comp: func != NULL once armed, count != 0 while pending, status

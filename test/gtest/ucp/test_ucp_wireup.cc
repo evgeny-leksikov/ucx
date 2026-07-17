@@ -2324,7 +2324,7 @@ UCS_TEST_P(test_ucp_wireup_msg_lane, select_aux_transport_highest_seg_size) {
     ucp_wireup_select_info_t select_info = {};
     ucs_status_t status = ucp_wireup_select_aux_transport(
             e->ep(), ep_init_flags, tl_bitmap, &test_address, UINT64_MAX,
-            UINT64_MAX, &select_info);
+            UINT64_MAX, 0, &select_info);
     ASSERT_UCS_OK(status);
 
     EXPECT_EQ(aux_info.max_rsc_index, select_info.rsc_index);

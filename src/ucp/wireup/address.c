@@ -371,11 +371,6 @@ static int ucp_address_pack_v1_extra_info(ucp_object_version_t addr_version,
  * bit set while already holding a healthy wireup proxy that must be packed.
  * ep is NULL only for the ep-less length path (CM), which never has failed
  * lanes, so nothing is skipped there. */
-static int ucp_address_lane_ep_is_failed(ucp_ep_h ep, ucp_lane_index_t lane)
-{
-    return (ep != NULL) && ucp_ep_is_lane_failed_stub(ep, lane);
-}
-
 static ucs_status_t
 ucp_address_gather_devices(ucp_worker_h worker, ucp_ep_h ep,
                            const ucp_ep_config_key_t *key,
@@ -422,7 +417,7 @@ ucp_address_gather_devices(ucp_worker_h worker, ucp_ep_h ep,
                  * recovery are not failed stubs and are still packed. */
                 if ((key->lanes[lane].rsc_index == rsc_index) &&
                     ucp_ep_config_connect_p2p(worker, key, rsc_index) &&
-                    !ucp_address_lane_ep_is_failed(ep, lane)) {
+                    !((ep != NULL) && ucp_ep_is_lane_failed_stub(ep, lane))) {
                     dev->tl_addrs_size += !ucp_worker_is_unified_mode(worker);
                     dev->tl_addrs_size += iface_attr->ep_addr_len;
                     dev->tl_addrs_size += sizeof(uint8_t); /* lane index */
@@ -1411,7 +1406,7 @@ ucp_address_do_pack(ucp_worker_h worker, ucp_ep_h ep, void *buffer, size_t size,
                      * and is packed so the peer can reconnect it. Must match
                      * the accounting in ucp_address_gather_devices. */
                     if ((ucp_ep_get_rsc_index(ep, lane) != rsc_index) ||
-                        ucp_address_lane_ep_is_failed(ep, lane)) {
+                        ((ep != NULL) && ucp_ep_is_lane_failed_stub(ep, lane))) {
                         continue;
                     }
 
