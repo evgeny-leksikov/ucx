@@ -259,7 +259,8 @@ static ucp_ep_h ucp_ep_allocate(ucp_worker_h worker, const char *peer_name)
 #if UCS_ENABLE_ASSERT
     ep->refcounts.create                  =
     ep->refcounts.flush                   =
-    ep->refcounts.discard                 = 0;
+    ep->refcounts.discard                 =
+    ep->refcounts.probe                   = 0;
 #endif
     ep->ext->user_data                    = NULL;
     ep->ext->cm_idx                       = UCP_NULL_RESOURCE;
